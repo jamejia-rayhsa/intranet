@@ -1,0 +1,91 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: intranet_postgres_dev
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-intranet_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password_123}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+      - ./config/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      target: development
+    container_name: intranet_backend_dev
+    environment:
+      NODE_ENV: development
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-intranet_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password_123}
+      JWT_SECRET: ${JWT_SECRET:-dev_secret_change_me}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+      AZURE_AD_CLIENT_ID: ${AZURE_AD_CLIENT_ID:-}
+      AZURE_AD_TENANT_ID: ${AZURE_AD_TENANT_ID:-}
+      AZURE_AD_REDIRECT_URI: ${AZURE_AD_REDIRECT_URI:-http://localhost:3000/auth/ms365/callback}
+      MSSQL_HOST: ${MSSQL_HOST:-mssql}
+      MSSQL_PORT: ${MSSQL_PORT:-1433}
+      MSSQL_USER: ${MSSQL_USER:-sa}
+      MSSQL_PASSWORD: ${MSSQL_PASSWORD:-dev_password_123}
+      MSSQL_DB: ${MSSQL_DB:-bi_data}
+    ports:
+      - "${BACKEND_PORT:-4000}:4000"
+    volumes:
+      - ./modules:/app/modules
+      - ./config:/app/config
+      - uploads_data:/app/uploads
+      - /app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: npm run dev:backend
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      target: development
+    container_name: intranet_frontend_dev
+    environment:
+      NODE_ENV: development
+      VITE_API_URL: http://localhost:4000/api
+    ports:
+      - "${FRONTEND_PORT:-3000}:5173"
+    volumes:
+      - ./modules/portal/frontend:/app/modules/portal/frontend
+      - ./modules/auditoria/frontend:/app/modules/auditoria/frontend
+      - ./modules/tickets/frontend:/app/modules/tickets/frontend
+      - ./modules/rh/frontend:/app/modules/rh/frontend
+      - /app/node_modules
+    depends_on:
+      - backend
+    command: npm run dev:frontend
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: intranet_pgadmin_dev
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@intranet.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data_dev:
+  uploads_data:

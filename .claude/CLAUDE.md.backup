@@ -1,0 +1,67 @@
+# CLAUDE.md — uliweb (Intranet corporativa)
+
+## Stack técnico
+
+- **DB:** PostgreSQL
+- **Backend:** Node.js + Express
+- **Frontend:** React 18 + Vite (único frontend, sirve todos los módulos)
+- **Infraestructura:** Docker + WSL2 (Linux 6.6)
+- **Auth:** JWT + Azure AD
+
+## Estructura de módulos
+
+| Módulo | Puerto | Directorio |
+|---|---|---|
+| Portal (API principal) | 4000 | `modules/portal/backend/` |
+| Tickets | 4001 | `modules/tickets/backend/` |
+| RH | 4002 | `modules/rh/backend/` |
+| Auditoría | 4003 | `modules/auditoria/backend/` |
+| Frontend (único) | — | `modules/portal/frontend/` |
+
+## Patrones de código obligatorios
+
+### Backend
+
+- **DB pool:** `const { grupo } = require('../config/database')` — `pg.Pool`
+- **Respuestas API exitosas:** `{ exito: true, datos: {...} }`
+- **Respuestas API de error:** `{ exito: false, mensaje: '...' }`
+- **Auth middleware (nuevo, Fase 2+):** `verificarPermiso(modulo, opcion, tipo)` — un rol por usuario vía `usuarios.rol_id`
+- **Auth middleware (legado):** `autorizar(['portal.admin'])` — multi-rol vía tabla `usuario_rol` (solo en código no migrado)
+
+### Frontend
+
+- **Variables CSS globales:** `--color-primario`, `--color-secundario`, `--color-fondo`, `--color-borde`, `--color-texto-claro`, `--color-exito`, `--color-advertencia`, `--color-error`, `--color-superficie`
+- **PROHIBIDO usar CSS vars en props de Recharts** (`fill`, `stroke`): usar siempre valores hex directos.
+- **`API_BASE`** se deriva quitando `/api` de `VITE_API_URL` (ej: para servir archivos estáticos).
+- **Respuestas paginadas de noticias:** acceder con `respuesta.datos?.noticias || []`.
+
+## Componentes reutilizables disponibles
+
+Ubicados en `modules/portal/frontend/components/`:
+
+- `TarjetaKPI.jsx` — props: `titulo`, `valor`, `color`, `icono`
+- `GraficaBarras.jsx` — props: `datos`, `series`, `alto`
+- `GraficaDona.jsx` — props: `datos`, `alto`
+
+## Tests
+
+- Framework: **Jest + Supertest**
+- Nombres de describe/it en **español**
+- Mockear siempre `config/database` en tests de backend
+
+## Flujo de trabajo
+
+- Usar **subagent-driven-development** para ejecutar planes multi-paso
+- Crear worktrees en `~/.config/superpowers/worktrees/uliweb/<nombre-branch>`
+- Hacer commits frecuentes — el equipo se apaga entre sesiones
+- Mantener el plan actualizado con checkboxes para poder retomar
+
+## Estado del proyecto
+
+El plan de revisión integral de 3 fases está **COMPLETO** y mergeado a `main`.
+
+- Fase 1 (Auditoría): `963d572`
+- Fase 2 (Portal): `acbd6de`
+- Fase 3 (Tickets + RH): `15a15bb`
+
+Spec en: `docs/superpowers/specs/2026-04-11-revision-integral-intranet-design.md`

@@ -1,0 +1,15 @@
+{
+  "name": "auditoria-backend",
+  "version": "1.0.0",
+  "description": "Backend del módulo de auditoría transversal",
+  "scripts": {
+    "test": "jest --coverage"
+  },
+  "dependencies": {
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.2.2"
+  }
+}

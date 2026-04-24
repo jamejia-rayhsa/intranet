@@ -1,0 +1,37 @@
+{
+  "name": "intranet-corporativa",
+  "version": "1.0.0",
+  "description": "Intranet corporativa modular PERN + Docker + WSL",
+  "private": true,
+  "workspaces": [
+    "modules/portal/backend",
+    "modules/portal/frontend",
+    "modules/auditoria/backend",
+    "modules/rh/backend",
+    "modules/tickets/backend"
+  ],
+  "scripts": {
+    "dev": "docker compose -f docker-compose.dev.yml up",
+    "dev:down": "docker compose -f docker-compose.dev.yml down",
+    "dev:restart": "docker compose -f docker-compose.dev.yml restart",
+    "test": "docker compose -f docker-compose.test.yml up --abort-on-container-exit",
+    "test:down": "docker compose -f docker-compose.test.yml down",
+    "prod:up": "docker compose -f docker-compose.prod.yml up -d",
+    "prod:down": "docker compose -f docker-compose.prod.yml down",
+    "dev:backend": "npm run dev --workspace=modules/portal/backend",
+    "dev:frontend": "npm run dev --workspace=modules/portal/frontend",
+    "build:frontend": "npm run build --workspace=modules/portal/frontend",
+    "start:frontend": "npm run preview --workspace=modules/portal/frontend",
+    "lint": "eslint modules/",
+    "db:migrate": "npm run migrate --workspace=modules/portal/backend",
+    "db:seed": "npm run seed --workspace=modules/portal/backend"
+  },
+  "devDependencies": {
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

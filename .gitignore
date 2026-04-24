@@ -1,0 +1,35 @@
+# Variables de entorno
+.env
+.env.*
+!.env.dev
+!.env.test
+!.env.prod.example
+
+# Dependencias
+node_modules/
+
+# Archivos de compilación
+dist/
+build/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Docker
+postgres_data_dev/
+postgres_data_prod/
+
+# SSL (producción)
+config/nginx/ssl/
+
+# Cobertura de pruebas
+coverage/
+.superpowers/

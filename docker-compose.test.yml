@@ -1,0 +1,58 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: intranet_postgres_test
+    environment:
+      POSTGRES_DB: intranet_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: test_password_123
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./config/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      target: development
+    container_name: intranet_backend_test
+    environment:
+      NODE_ENV: test
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: intranet_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: test_password_123
+      JWT_SECRET: test_secret_for_ci
+      JWT_EXPIRES_IN: 1h
+      AZURE_AD_CLIENT_ID: test_client_id
+      AZURE_AD_TENANT_ID: test_tenant_id
+      AZURE_AD_REDIRECT_URI: http://localhost:3000/auth/ms365/callback
+    ports:
+      - "4001:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: npm run test --workspace=modules/portal/backend
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      target: development
+    container_name: intranet_frontend_test
+    environment:
+      NODE_ENV: test
+      VITE_API_URL: http://localhost:4001/api
+    ports:
+      - "3001:5173"
+    depends_on:
+      - backend
