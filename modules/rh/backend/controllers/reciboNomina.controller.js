@@ -80,7 +80,7 @@ const ControladorReciboNomina = {
         );
         rutaArchivo = `/uploads/recibos/${nombreArchivo}`;
         const rutaDestino = `${ServicioArchivoRH.obtenerRutaRecibos()}/${nombreArchivo}`;
-        require("fs").renameSync(req.file.path, rutaDestino);
+        await require("fs").promises.rename(req.file.path, rutaDestino);
       }
 
       const recibo = await ReciboNomina.crear({

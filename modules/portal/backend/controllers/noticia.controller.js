@@ -120,7 +120,7 @@ const ControladorNoticia = {
       const total = await Noticia.contarImagenes(id);
       if (total >= MAX_IMAGENES) {
         // Eliminar el archivo que acabó de subirse
-        fs.unlink(req.file.path, () => {});
+        fs.promises.unlink(req.file.path).catch(() => {});
         return res.status(400).json({
           exito: false,
           mensaje: `Límite de imágenes alcanzado. Máximo permitido: ${MAX_IMAGENES}`,
@@ -145,9 +145,7 @@ const ControladorNoticia = {
 
       // Eliminar archivo físico
       const rutaFisica = path.join(process.cwd(), imagen.ruta_archivo);
-      if (fs.existsSync(rutaFisica)) {
-        fs.unlinkSync(rutaFisica);
-      }
+      await fs.promises.unlink(rutaFisica).catch(() => {});
 
       await Noticia.eliminarImagen(imagen.id);
       res.json({ exito: true, mensaje: "Imagen eliminada" });

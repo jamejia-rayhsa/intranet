@@ -22,9 +22,7 @@ const ServicioArchivo = {
 
   async eliminarArchivo(rutaArchivo) {
     const rutaCompleta = path.join(process.cwd(), rutaArchivo);
-    if (fs.existsSync(rutaCompleta)) {
-      fs.unlinkSync(rutaCompleta);
-    }
+    await fs.promises.unlink(rutaCompleta).catch(() => {});
   },
 
   validarTipoArchivo(tipoMime) {

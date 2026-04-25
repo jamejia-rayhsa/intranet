@@ -4,7 +4,7 @@ const AuditoriaService = {
   async registrarAccion(req, modulo, tabla, registroId, accion, valoresPrevios, valoresNuevos) {
     try {
       const usuario_id = req.user?.usuario_id || req.user?.id || null;
-      const ip = req.headers['x-forwarded-for'] || req.connection?.remoteAddress || req.socket?.remoteAddress || null;
+      const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || null;
       const userAgent = req.headers['user-agent'] || null;
 
       return await Auditoria.crear({

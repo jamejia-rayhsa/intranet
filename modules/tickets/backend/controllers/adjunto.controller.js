@@ -27,7 +27,7 @@ const ControladorAdjunto = {
       const rutaRelativa = `/uploads/tickets/${nombreArchivo}`;
       const rutaDestino = `${ServicioArchivo.obtenerRutaAlmacenamiento()}/${nombreArchivo}`;
 
-      require("fs").renameSync(req.file.path, rutaDestino);
+      await require("fs").promises.rename(req.file.path, rutaDestino);
 
       const adjunto = await TicketAdjunto.crear({
         ticket_id: req.params.ticketId,
