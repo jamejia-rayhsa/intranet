@@ -15,7 +15,7 @@ function RutaProtegida({ children }) {
   const { usuario, cargando } = usarAuth();
 
   if (cargando) {
-    return <div className="cargando">Cargando...</div>;
+    return <div className="cargando-app">Cargando...</div>;
   }
 
   if (!usuario) {
@@ -27,7 +27,8 @@ function RutaProtegida({ children }) {
 
 function App() {
   const [modulos, setModulos] = useState([]);
-  const { usuario } = usarAuth();
+  const [sidebarAbierto, setSidebarAbierto] = useState(false);
+  const { usuario, cargando } = usarAuth();
 
   useEffect(() => {
     if (usuario) {
@@ -43,33 +44,69 @@ function App() {
     }
   }, [usuario]);
 
+  if (cargando) {
+    return <div className="cargando-app">Cargando...</div>;
+  }
+
+  if (!usuario) {
+    return (
+      <Routes>
+        <Route path="/inicio-sesion" element={<PortalLogin />} />
+        <Route path="/registro" element={<PortalRegistro />} />
+        <Route path="*" element={<Navigate to="/inicio-sesion" />} />
+      </Routes>
+    );
+  }
+
   return (
-    <div className="aplicacion">
-      {usuario && <MenuDinamico modulos={modulos} />}
-      <main className="contenido-principal">
-        <Routes>
-          <Route path="/inicio-sesion" element={<PortalLogin />} />
-          <Route path="/registro" element={<PortalRegistro />} />
-          <Route path="/" element={<PortalHome />} />
-          <Route path="/noticias" element={<PortalNoticias />} />
-          <Route
-            path="/admin/modulos"
-            element={
-              <RutaProtegida>
-                <PortalAdminModulos />
-              </RutaProtegida>
-            }
-          />
-          <Route
-            path="/admin/roles"
-            element={
-              <RutaProtegida>
-                <PortalAdminRoles />
-              </RutaProtegida>
-            }
-          />
-        </Routes>
-      </main>
+    <div className="app-shell">
+      {sidebarAbierto && (
+        <div className="sidebar-overlay" onClick={() => setSidebarAbierto(false)} />
+      )}
+      <MenuDinamico
+        modulos={modulos}
+        abierto={sidebarAbierto}
+        onCerrar={() => setSidebarAbierto(false)}
+      />
+      <div className="app-main">
+        <header className="app-topbar">
+          <button
+            className="topbar-hamburguesa"
+            onClick={() => setSidebarAbierto(!sidebarAbierto)}
+            aria-label="Menú"
+          >
+            ☰
+          </button>
+          <div className="topbar-usuario">
+            <span className="topbar-nombre">{usuario.nombre}</span>
+            <div className="topbar-avatar">
+              {usuario.nombre?.charAt(0).toUpperCase()}
+            </div>
+          </div>
+        </header>
+        <main className="app-contenido">
+          <Routes>
+            <Route path="/" element={<PortalHome />} />
+            <Route path="/noticias" element={<PortalNoticias />} />
+            <Route
+              path="/admin/modulos"
+              element={
+                <RutaProtegida>
+                  <PortalAdminModulos />
+                </RutaProtegida>
+              }
+            />
+            <Route
+              path="/admin/roles"
+              element={
+                <RutaProtegida>
+                  <PortalAdminRoles />
+                </RutaProtegida>
+              }
+            />
+          </Routes>
+        </main>
+      </div>
     </div>
   );
 }
