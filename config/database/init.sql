@@ -159,34 +159,34 @@ ON CONFLICT (nombre) DO NOTHING;
 
 -- ============================================
 -- USUARIOS DE PRUEBA
--- admin@empresa.com        → Admin123!
--- portal@empresa.com       → Portal123!
--- auditoria@empresa.com    → Auditoria123!
--- rh@empresa.com           → Rh123!
--- empleado@empresa.com     → Empleado123!
--- tickets@empresa.com      → Tickets123!
--- tecnico@empresa.com      → Tecnico123!
+-- admin@rayhsa.com.mx        → Admin123!
+-- portal@rayhsa.com.mx       → Portal123!
+-- auditoria@rayhsa.com.mx    → Auditoria123!
+-- rh@rayhsa.com.mx           → Rh123!
+-- empleado@rayhsa.com.mx     → Empleado123!
+-- tickets@rayhsa.com.mx      → Tickets123!
+-- tecnico@rayhsa.com.mx      → Tecnico123!
 -- ============================================
 INSERT INTO usuarios (correo, nombre, apellido, auth_tipo, hash_password, activo) VALUES
-  ('admin@empresa.com',     'Super',   'Admin',    'local', '$2b$10$j0ocH.ZStdD1LD36spnMZeE/quNQLQr/RhC2M6vrAMQHKh/gLX4qe', true),
-  ('portal@empresa.com',    'Portal',  'Admin',    'local', '$2b$10$BN201A2PNES0eL5kF0QgS.zESEv/ppKXN3Vq1..P8pIbb6qhSwUcK', true),
-  ('auditoria@empresa.com', 'Auditor', 'Viewer',   'local', '$2b$10$bHYvgo1OthTEdNc4uumpb.Q8C4aZeX.EQyAETuPpDGt91lq7uDhpi', true),
-  ('rh@empresa.com',        'RH',      'Admin',    'local', '$2b$10$Yjj76UHHuxhHVVgB/SKdhOwhBKLJ8jk9L.vUcjlNqs63CHrAFdYT.', true),
-  ('empleado@empresa.com',  'RH',      'Empleado', 'local', '$2b$10$WOefWZu/ZxUBpITmnLuMyOAKr9NwybUKbG0RpdbgXgt99C0Msg8VS',  true),
-  ('tickets@empresa.com',   'Tickets', 'Admin',    'local', '$2b$10$h0sGFq7.FAdfiagp4pUQO.cuSwxPp1SimPwIZLPjiqSFffpAKxaSa',  true),
-  ('tecnico@empresa.com',   'Tickets', 'Tecnico',  'local', '$2b$10$hNqv4lIGXLfn9uvZ.6NjPuZ9IRtZ1xV.bVV09W0gBWJLevPYPY9QO', true)
+  ('admin@rayhsa.com.mx',     'Super',   'Admin',    'local', '$2b$10$j0ocH.ZStdD1LD36spnMZeE/quNQLQr/RhC2M6vrAMQHKh/gLX4qe', true),
+  ('portal@rayhsa.com.mx',    'Portal',  'Admin',    'local', '$2b$10$BN201A2PNES0eL5kF0QgS.zESEv/ppKXN3Vq1..P8pIbb6qhSwUcK', true),
+  ('auditoria@rayhsa.com.mx', 'Auditor', 'Viewer',   'local', '$2b$10$bHYvgo1OthTEdNc4uumpb.Q8C4aZeX.EQyAETuPpDGt91lq7uDhpi', true),
+  ('rh@rayhsa.com.mx',        'RH',      'Admin',    'local', '$2b$10$Yjj76UHHuxhHVVgB/SKdhOwhBKLJ8jk9L.vUcjlNqs63CHrAFdYT.', true),
+  ('empleado@rayhsa.com.mx',  'RH',      'Empleado', 'local', '$2b$10$WOefWZu/ZxUBpITmnLuMyOAKr9NwybUKbG0RpdbgXgt99C0Msg8VS',  true),
+  ('tickets@rayhsa.com.mx',   'Tickets', 'Admin',    'local', '$2b$10$h0sGFq7.FAdfiagp4pUQO.cuSwxPp1SimPwIZLPjiqSFffpAKxaSa',  true),
+  ('tecnico@rayhsa.com.mx',   'Tickets', 'Tecnico',  'local', '$2b$10$hNqv4lIGXLfn9uvZ.6NjPuZ9IRtZ1xV.bVV09W0gBWJLevPYPY9QO', true)
 ON CONFLICT (correo) DO NOTHING;
 
 -- Asignar roles a usuarios
 INSERT INTO usuario_rol (usuario_id, rol_id)
 SELECT u.id, r.id FROM usuarios u, roles r
-WHERE (u.correo = 'admin@empresa.com'     AND r.nombre = 'super_admin')
-   OR (u.correo = 'portal@empresa.com'    AND r.nombre = 'portal_admin')
-   OR (u.correo = 'auditoria@empresa.com' AND r.nombre = 'auditoria_viewer')
-   OR (u.correo = 'rh@empresa.com'        AND r.nombre = 'rh_admin')
-   OR (u.correo = 'empleado@empresa.com'  AND r.nombre = 'rh_empleado')
-   OR (u.correo = 'tickets@empresa.com'   AND r.nombre = 'tickets_admin')
-   OR (u.correo = 'tecnico@empresa.com'   AND r.nombre = 'tickets_tecnico')
+WHERE (u.correo = 'admin@rayhsa.com.mx'     AND r.nombre = 'super_admin')
+   OR (u.correo = 'portal@rayhsa.com.mx'    AND r.nombre = 'portal_admin')
+   OR (u.correo = 'auditoria@rayhsa.com.mx' AND r.nombre = 'auditoria_viewer')
+   OR (u.correo = 'rh@rayhsa.com.mx'        AND r.nombre = 'rh_admin')
+   OR (u.correo = 'empleado@rayhsa.com.mx'  AND r.nombre = 'rh_empleado')
+   OR (u.correo = 'tickets@rayhsa.com.mx'   AND r.nombre = 'tickets_admin')
+   OR (u.correo = 'tecnico@rayhsa.com.mx'   AND r.nombre = 'tickets_tecnico')
 ON CONFLICT DO NOTHING;
 
 -- ============================================
@@ -281,7 +281,7 @@ CREATE TABLE IF NOT EXISTS recibos_nomina (
 -- Empleado de prueba vinculado al usuario rh_empleado
 INSERT INTO empleados (usuario_id, nombre, apellido, fecha_ingreso, estatus)
 SELECT u.id, 'María', 'Empleado', '2024-01-15', 'activo'
-FROM usuarios u WHERE u.correo = 'empleado@empresa.com'
+FROM usuarios u WHERE u.correo = 'empleado@rayhsa.com.mx'
 ON CONFLICT DO NOTHING;
 
 -- ============================================
