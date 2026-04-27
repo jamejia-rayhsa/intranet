@@ -60,17 +60,16 @@ body {
 
 /* === LAYOUT SHELL (sidebar + topbar) === */
 .app-shell {
-  display: flex;
   min-height: 100vh;
 }
 
 .app-sidebar {
-  width: var(--ancho-sidebar);
-  background: var(--color-primario);
   position: fixed;
   top: 0;
   left: 0;
+  width: var(--ancho-sidebar);
   height: 100vh;
+  background: var(--color-primario);
   display: flex;
   flex-direction: column;
   z-index: 100;
@@ -275,13 +274,10 @@ body {
 }
 
 .app-main {
-  flex: 1;
   margin-left: var(--ancho-sidebar);
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  width: calc(100% - var(--ancho-sidebar));
-  min-width: 0; /* evita desbordamiento en flex */
 }
 
 .app-topbar {
@@ -480,7 +476,6 @@ body {
 
   .app-main {
     margin-left: 0;
-    width: 100%;
   }
 
   .topbar-hamburguesa {
@@ -508,8 +503,6 @@ body {
 .contenido-principal {
   flex: 1;
   padding: 2rem;
-  max-width: 1200px;
-  margin: 0 auto;
   width: 100%;
 }
 
@@ -1627,8 +1620,256 @@ button:disabled {
   margin-bottom: 2rem;
 }
 
-.formulario-edicion .dato input,
-.formulario-edicion /* RH SubMenu */
+/* Inputs dentro de .dato (modo edición expediente) */
+.dato input,
+.dato select,
+.dato textarea {
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--color-borde);
+  border-radius: var(--radio-borde);
+  font-size: 0.875rem;
+  font-family: var(--fuente-base);
+  color: var(--color-texto);
+  background: var(--color-superficie);
+  width: 100%;
+  transition: border-color var(--transicion), box-shadow var(--transicion);
+}
+
+.dato input:focus,
+.dato select:focus,
+.dato textarea:focus {
+  outline: none;
+  border-color: var(--color-primario);
+  box-shadow: 0 0 0 3px rgba(0, 46, 109, 0.12);
+}
+
+/* Pestañas del expediente */
+.expediente-pestanas {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 2px solid var(--color-borde);
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.pestana-btn {
+  padding: 0.6rem 1.25rem;
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  font-family: var(--fuente-base);
+  color: var(--color-texto-claro);
+  transition: color var(--transicion), border-color var(--transicion);
+  white-space: nowrap;
+}
+
+.pestana-btn:hover {
+  color: var(--color-primario);
+}
+
+.pestana-btn.activa {
+  color: var(--color-primario);
+  border-bottom-color: var(--color-primario);
+  font-weight: 600;
+}
+
+/* Acciones en encabezado (Guardar / Cancelar) */
+.expediente-acciones {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.boton-guardar {
+  background: var(--color-primario);
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1.1rem;
+  border-radius: var(--radio-borde);
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 600;
+  font-family: var(--fuente-base);
+  transition: background var(--transicion);
+}
+
+.boton-guardar:hover {
+  background: var(--color-primario-claro);
+}
+
+.boton-cancelar {
+  background: var(--color-superficie);
+  color: var(--color-texto);
+  border: 1px solid var(--color-borde);
+  padding: 0.5rem 1.1rem;
+  border-radius: var(--radio-borde);
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  font-family: var(--fuente-base);
+  transition: background var(--transicion);
+}
+
+.boton-cancelar:hover {
+  background: var(--color-fondo);
+}
+
+/* Campo de ancho completo en grid */
+.dato-completo {
+  grid-column: 1 / -1;
+}
+
+.nombre-completo-display {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--color-texto);
+}
+
+/* Subsección (ej. Hijos) */
+.expediente-subseccion {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--color-borde);
+}
+
+.subseccion-encabezado {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.subseccion-encabezado h3 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-texto);
+  margin: 0;
+}
+
+.boton-agregar-hijo {
+  background: var(--color-primario);
+  color: #fff;
+  border: none;
+  padding: 0.3rem 0.85rem;
+  border-radius: var(--radio-borde);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-family: var(--fuente-base);
+  transition: background var(--transicion);
+}
+
+.boton-agregar-hijo:hover {
+  background: var(--color-primario-claro);
+}
+
+.formulario-hijo {
+  background: var(--color-fondo);
+  border: 1px solid var(--color-borde);
+  border-radius: var(--radio-borde);
+  padding: 1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sin-datos {
+  color: var(--color-texto-claro);
+  font-size: 0.875rem;
+  text-align: center;
+  padding: 1.5rem 0;
+}
+
+/* Tabla de hijos */
+.tabla-hijos {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+}
+
+.tabla-hijos thead th {
+  background: var(--color-superficie-alt);
+  color: var(--color-texto-claro);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 2px solid var(--color-borde);
+  text-align: left;
+}
+
+.tabla-hijos tbody tr {
+  border-bottom: 1px solid var(--color-borde);
+  transition: background var(--transicion);
+}
+
+.tabla-hijos tbody tr:hover {
+  background: var(--color-superficie-alt);
+}
+
+.tabla-hijos tbody td {
+  padding: 0.6rem 0.75rem;
+  color: var(--color-texto-medio);
+  vertical-align: middle;
+}
+
+.boton-eliminar-hijo {
+  background: none;
+  border: none;
+  color: var(--color-error);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: var(--radio-borde);
+  transition: background var(--transicion);
+}
+
+.boton-eliminar-hijo:hover {
+  background: var(--color-error-suave);
+}
+
+/* Desvinculación */
+.desvinculacion-bloque {
+  background: var(--color-error-suave);
+  border: 1px solid #fecaca;
+  border-radius: var(--radio-borde);
+  padding: 1rem;
+}
+
+/* Documentos */
+.documentos-encabezado {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.25rem;
+}
+
+.documentos-encabezado h2 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-texto);
+  margin: 0;
+}
+
+.formulario-subir-doc {
+  background: var(--color-fondo);
+  border: 1px solid var(--color-borde);
+  border-radius: var(--radio-borde);
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* RH SubMenu */
 .rh-submenu {
   display: flex;
   gap: 0.25rem;

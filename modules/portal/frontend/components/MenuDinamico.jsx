@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { usarAuth } from '../context/AuthContext';
 
@@ -71,19 +71,40 @@ function moduloContienePath(nombre, pathname) {
   });
 }
 
+function SidebarLogo() {
+  const imgRef = useRef(null);
+  const [imgError, setImgError] = useState(false);
+
+  if (imgError) {
+    return (
+      <span style={{ color: '#fff', fontWeight: 800, fontSize: '1.15rem', letterSpacing: '0.04em' }}>
+        RAYHSA
+      </span>
+    );
+  }
+
+  return (
+    <img
+      ref={imgRef}
+      src="/logo-rayhsa.png"
+      alt="RAYHSA"
+      onError={() => setImgError(true)}
+      style={{ height: '38px', width: 'auto', objectFit: 'contain' }}
+    />
+  );
+}
+
 export default function MenuDinamico({ modulos = [], abierto, onCerrar }) {
   const { usuario, cerrarSesion } = usarAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [abiertas, setAbiertas] = useState(() => {
-    // Inicializa con el módulo que contiene la ruta actual
-    const set = new Set();
-    Object.keys(SUB_RUTAS).forEach(nombre => {
-      if (moduloContienePath(nombre, location.pathname)) set.add(nombre);
-    });
-    if (location.pathname.startsWith('/admin')) set.add('admin');
-    return set;
+  const [seccionAbierta, setSeccionAbierta] = useState(() => {
+    if (location.pathname.startsWith('/admin')) return 'admin';
+    for (const nombre of Object.keys(SUB_RUTAS)) {
+      if (moduloContienePath(nombre, location.pathname)) return nombre;
+    }
+    return null;
   });
 
   useEffect(() => {
@@ -91,12 +112,7 @@ export default function MenuDinamico({ modulos = [], abierto, onCerrar }) {
   }, [location.pathname]);
 
   function toggleSeccion(nombre) {
-    setAbiertas(prev => {
-      const next = new Set(prev);
-      if (next.has(nombre)) next.delete(nombre);
-      else next.add(nombre);
-      return next;
-    });
+    setSeccionAbierta(prev => (prev === nombre ? null : nombre));
   }
 
   function handleCerrarSesion() {
@@ -115,8 +131,7 @@ export default function MenuDinamico({ modulos = [], abierto, onCerrar }) {
   return (
     <aside className={`app-sidebar${abierto ? ' abierto' : ''}`}>
       <div className="sidebar-logo">
-        <span style={{ fontSize: '1.4rem', lineHeight: 1 }}>🏢</span>
-        <span className="sidebar-empresa">{NOMBRE_EMPRESA}</span>
+        <SidebarLogo />
       </div>
 
       <nav className="sidebar-nav">
@@ -138,7 +153,7 @@ export default function MenuDinamico({ modulos = [], abierto, onCerrar }) {
             );
           }
 
-          const estaAbierto = abiertas.has(m.nombre);
+          const estaAbierto = seccionAbierta === m.nombre;
           const tieneActivo = moduloContienePath(m.nombre, location.pathname);
 
           return (
@@ -171,7 +186,7 @@ export default function MenuDinamico({ modulos = [], abierto, onCerrar }) {
         })}
 
         {esAdmin && (() => {
-          const estaAbierto = abiertas.has('admin');
+          const estaAbierto = seccionAbierta === 'admin';
           const tieneActivo = location.pathname.startsWith('/admin');
           return (
             <div className="sidebar-grupo">
