@@ -38,7 +38,7 @@ COPY modules/auditoria/backend/package.json ./modules/auditoria/backend/package.
 COPY modules/rh/backend/package.json ./modules/rh/backend/package.json
 COPY modules/tickets/backend/package.json ./modules/tickets/backend/package.json
 
-RUN npm ci --only=production
+RUN npm ci
 
 COPY modules/ ./modules/
 COPY config/ ./config/
@@ -47,6 +47,8 @@ ARG VITE_API_URL=/api
 ENV VITE_API_URL=${VITE_API_URL}
 
 RUN npm run build:frontend
+
+RUN npm prune --omit=dev
 
 EXPOSE 5173
 
