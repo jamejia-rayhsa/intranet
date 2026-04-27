@@ -454,3 +454,52 @@ JOIN (VALUES
 WHERE r.nombre = 'tickets_tecnico'
 ON CONFLICT DO NOTHING;
 
+-- ============================================
+-- MIGRACIÓN: Campos extendidos de empleados
+-- ============================================
+
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'empleados' AND column_name = 'apellido'
+  ) THEN
+    ALTER TABLE empleados RENAME COLUMN apellido TO apellido_paterno;
+  END IF;
+END $$;
+
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS apellido_materno VARCHAR(100);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS nss VARCHAR(11);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS infonavit VARCHAR(20);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS fonacot VARCHAR(20);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS numero_nomina VARCHAR(50);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS fecha_imss DATE;
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS fecha_renovacion DATE;
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS tipo_contrato VARCHAR(50);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS celular_corporativo VARCHAR(20);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS estado_nacimiento VARCHAR(100);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS genero VARCHAR(20);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS estado_civil VARCHAR(30);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS escolaridad VARCHAR(50);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS celular_personal VARCHAR(20);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS telefono_emergencia VARCHAR(20);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS parentesco_emergencia VARCHAR(50);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS contacto_emergencia VARCHAR(100);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS correo_personal VARCHAR(255);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS calle VARCHAR(255);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS colonia VARCHAR(100);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS codigo_postal VARCHAR(10);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS municipio VARCHAR(100);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS estado_residencia VARCHAR(100);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS banco VARCHAR(100);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS clabe VARCHAR(18);
+ALTER TABLE empleados ADD COLUMN IF NOT EXISTS cp_fiscal VARCHAR(10);
+
+CREATE TABLE IF NOT EXISTS empleado_hijos (
+  id SERIAL PRIMARY KEY,
+  empleado_id INT NOT NULL REFERENCES empleados(id) ON DELETE CASCADE,
+  nombre VARCHAR(100),
+  fecha_nacimiento DATE,
+  escolaridad VARCHAR(50),
+  orden INT DEFAULT 0,
+  fecha_creacion TIMESTAMP DEFAULT NOW()
+);
