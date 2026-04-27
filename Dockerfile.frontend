@@ -43,6 +43,9 @@ RUN npm ci --only=production
 COPY modules/ ./modules/
 COPY config/ ./config/
 
+ARG VITE_API_URL=/api
+ENV VITE_API_URL=${VITE_API_URL}
+
 RUN npm run build:frontend
 
 EXPOSE 5173

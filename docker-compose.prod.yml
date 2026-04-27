@@ -51,10 +51,11 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
       target: production
+      args:
+        VITE_API_URL: /api
     container_name: intranet_frontend_prod
     environment:
       NODE_ENV: production
-      VITE_API_URL: ${API_URL}
     restart: always
     depends_on:
       - backend
