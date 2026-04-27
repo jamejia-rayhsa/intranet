@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { usarAuth } from '../context/AuthContext';
 
@@ -58,14 +58,46 @@ const ICONOS_MODULOS = {
   comercial: '💼',
 };
 
+function moduloContienePath(nombre, pathname) {
+  const subRutas = SUB_RUTAS[nombre];
+  if (!subRutas) {
+    const ruta = RUTAS_MODULOS[nombre] || `/${nombre}`;
+    if (ruta === '/') return pathname === '/';
+    return pathname === ruta || pathname.startsWith(ruta + '/');
+  }
+  return subRutas.some(sr => {
+    if (sr.path === '/') return pathname === '/';
+    return pathname === sr.path || pathname.startsWith(sr.path + '/');
+  });
+}
+
 export default function MenuDinamico({ modulos = [], abierto, onCerrar }) {
   const { usuario, cerrarSesion } = usarAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
+  const [abiertas, setAbiertas] = useState(() => {
+    // Inicializa con el módulo que contiene la ruta actual
+    const set = new Set();
+    Object.keys(SUB_RUTAS).forEach(nombre => {
+      if (moduloContienePath(nombre, location.pathname)) set.add(nombre);
+    });
+    if (location.pathname.startsWith('/admin')) set.add('admin');
+    return set;
+  });
+
   useEffect(() => {
     onCerrar?.();
   }, [location.pathname]);
+
+  function toggleSeccion(nombre) {
+    setAbiertas(prev => {
+      const next = new Set(prev);
+      if (next.has(nombre)) next.delete(nombre);
+      else next.add(nombre);
+      return next;
+    });
+  }
 
   function handleCerrarSesion() {
     cerrarSesion();
@@ -93,51 +125,85 @@ export default function MenuDinamico({ modulos = [], abierto, onCerrar }) {
           const label = m.nombre.charAt(0).toUpperCase() + m.nombre.slice(1);
           const icono = ICONOS_MODULOS[m.nombre] || '📁';
 
+          // Módulo sin sub-rutas — link directo
           if (!subRutas) {
             const ruta = RUTAS_MODULOS[m.nombre] || `/${m.nombre}`;
             return (
               <div key={m.id} className="sidebar-grupo">
-                <Link to={ruta} className={esActivo(ruta) ? 'activo' : ''}>
-                  <span style={{ fontSize: '0.95rem' }}>{icono}</span> {label}
+                <Link to={ruta} className={`sidebar-link-directo${esActivo(ruta) ? ' activo' : ''}`}>
+                  <span className="sidebar-icono">{icono}</span>
+                  <span>{label}</span>
                 </Link>
               </div>
             );
           }
 
+          const estaAbierto = abiertas.has(m.nombre);
+          const tieneActivo = moduloContienePath(m.nombre, location.pathname);
+
           return (
             <div key={m.id} className="sidebar-grupo">
-              <span className="sidebar-seccion-titulo">{icono} {label}</span>
-              {subRutas.map(sr => (
-                <Link
-                  key={sr.path}
-                  to={sr.path}
-                  className={esActivo(sr.path) ? 'activo' : ''}
-                >
-                  {sr.label}
-                </Link>
-              ))}
+              <button
+                className={`sidebar-seccion-btn${tieneActivo ? ' con-activo' : ''}`}
+                onClick={() => toggleSeccion(m.nombre)}
+                aria-expanded={estaAbierto}
+              >
+                <span className="sidebar-seccion-label">
+                  <span className="sidebar-icono">{icono}</span>
+                  {label}
+                </span>
+                <span className={`sidebar-chevron${estaAbierto ? ' abierto' : ''}`}>›</span>
+              </button>
+
+              <div className={`sidebar-subitems${estaAbierto ? ' abierto' : ''}`}>
+                {subRutas.map(sr => (
+                  <Link
+                    key={sr.path}
+                    to={sr.path}
+                    className={esActivo(sr.path) ? 'activo' : ''}
+                  >
+                    {sr.label}
+                  </Link>
+                ))}
+              </div>
             </div>
           );
         })}
 
-        {esAdmin && (
-          <div className="sidebar-grupo">
-            <span className="sidebar-seccion-titulo">⚙️ Admin</span>
-            {ADMIN_ITEMS.map(item => (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={location.pathname === item.path ? 'activo' : ''}
+        {esAdmin && (() => {
+          const estaAbierto = abiertas.has('admin');
+          const tieneActivo = location.pathname.startsWith('/admin');
+          return (
+            <div className="sidebar-grupo">
+              <button
+                className={`sidebar-seccion-btn${tieneActivo ? ' con-activo' : ''}`}
+                onClick={() => toggleSeccion('admin')}
+                aria-expanded={estaAbierto}
               >
-                {item.label}
-              </Link>
-            ))}
-          </div>
-        )}
+                <span className="sidebar-seccion-label">
+                  <span className="sidebar-icono">⚙️</span>
+                  Admin
+                </span>
+                <span className={`sidebar-chevron${estaAbierto ? ' abierto' : ''}`}>›</span>
+              </button>
+              <div className={`sidebar-subitems${estaAbierto ? ' abierto' : ''}`}>
+                {ADMIN_ITEMS.map(item => (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    className={location.pathname === item.path ? 'activo' : ''}
+                  >
+                    {item.label}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
       </nav>
 
       <div className="sidebar-pie">
-        <div style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.45)', marginBottom: '0.5rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.4)', marginBottom: '0.5rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {usuario?.correo || usuario?.nombre}
         </div>
         <button className="sidebar-cerrar-sesion" onClick={handleCerrarSesion}>
