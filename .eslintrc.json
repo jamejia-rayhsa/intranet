@@ -14,6 +14,12 @@
   },
   "overrides": [
     {
+      "files": ["**/*.test.js", "**/*.spec.js"],
+      "env": {
+        "jest": true
+      }
+    },
+    {
       "files": ["modules/*/frontend/**/*.{js,jsx}"],
       "env": {
         "browser": true,
