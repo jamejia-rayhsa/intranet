@@ -26,7 +26,8 @@ import AuditoriaDashboard from "../../auditoria/frontend/pages/AuditoriaDashboar
 import RHDashboard from "../../rh/frontend/pages/RHDashboard";
 import RHAdminPage from "../../rh/frontend/pages/RHAdminPage";
 import EmpleadoPage from "../../rh/frontend/pages/EmpleadoPage";
-import PerfilPage from "../../rh/frontend/pages/PerfilPage";
+import VacacionesPage from "../../rh/frontend/pages/VacacionesPage";
+import VacacionesListadoPage from "../../rh/frontend/pages/VacacionesListadoPage";
 import PuestosPage from "../../rh/frontend/pages/PuestosPage";
 import DepartamentosPage from "../../rh/frontend/pages/DepartamentosPage";
 import UbicacionesPage from "../../rh/frontend/pages/UbicacionesPage";
@@ -212,10 +213,18 @@ function AppRutas() {
           }
         />
         <Route
-          path="/rh/perfil"
+          path="/rh/vacaciones"
           element={
             <RutaProtegida>
-              <PerfilPage />
+              <VacacionesPage />
+            </RutaProtegida>
+          }
+        />
+        <Route
+          path="/rh/vacaciones/listado"
+          element={
+            <RutaProtegida>
+              <VacacionesListadoPage />
             </RutaProtegida>
           }
         />

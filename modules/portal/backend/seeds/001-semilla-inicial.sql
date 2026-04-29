@@ -135,14 +135,19 @@ CROSS JOIN (VALUES ('consulta'), ('edicion')) AS t(tipo)
 WHERE r.nombre = 'rh_admin'
 ON CONFLICT DO NOTHING;
 
--- rh_empleado: solo consulta de permisos y recibos propios
+-- rh_empleado: consulta de permisos y recibos; consulta + edición de vacaciones (crea sus propias solicitudes)
 INSERT INTO rol_opcion_permisos (rol_id, opcion_id, tipo)
-SELECT r.id, mo.id, 'consulta'
+SELECT r.id, mo.id, t.tipo
 FROM roles r
 JOIN modulos m ON m.nombre = 'rh'
 JOIN modulo_opciones mo ON mo.modulo_id = m.id
+JOIN (VALUES
+  ('Permisos',    'consulta'),
+  ('Recibos',     'consulta'),
+  ('Vacaciones',  'consulta'),
+  ('Vacaciones',  'edicion')
+) AS t(opcion_nombre, tipo) ON t.opcion_nombre = mo.nombre
 WHERE r.nombre = 'rh_empleado'
-  AND mo.nombre IN ('Permisos', 'Recibos')
 ON CONFLICT DO NOTHING;
 
 -- tickets_admin: acceso total a módulo tickets
