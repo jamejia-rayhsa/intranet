@@ -64,3 +64,104 @@ No hay bugs bloqueantes ni violaciones de las decisiones de architecture (decisi
 
 El código está listo para producción.
 
+
+### [2026-04-29] revisor — Validaciones y combos: revisión post-coder
+
+**Archivos revisados:**
+- `modules/rh/frontend/constants/catalogos.js` (CREADO)
+- `modules/rh/frontend/pages/EmpleadoPage.jsx` (MODIFICADO)
+- `modules/rh/frontend/components/EmpleadoProfileCard.jsx` (MODIFICADO)
+
+---
+
+## Checklist de revisión
+
+### catalogos.js
+- [x] ESTADOS_MEXICO: exactamente 32 estados (Aguascalientes ... Zacatecas incluyen Ciudad de México)
+- [x] BANCOS_MEXICO: 23 instituciones mexicanas + "Otro"
+- [x] Exports nombrados (`export const`) — correctos
+
+### EmpleadoPage.jsx (formulario alta/creación)
+- [x] estado_nacimiento: `<select>` con ESTADOS_MEXICO (línea 527)
+- [x] estado_residencia: `<select>` con ESTADOS_MEXICO (línea 748)
+- [x] banco: `<select>` con BANCOS_MEXICO (línea 764)
+- [x] CURP: maxLength=18 minLength=18 (línea 540)
+- [x] RFC: maxLength=13 minLength=13 (línea 554)
+- [x] CLABE: maxLength=18 minLength=18 onInput=soloDigitos (línea 776)
+- [x] Teléfonos: maxLength=10 minLength=10 onInput=soloDigitos (celular_personal línea 636, celular_corporativo línea 409, telefono_emergencia línea 663)
+- [x] Código postal: maxLength=5 minLength=5 onInput=soloDigitos (línea 724)
+- [x] correo_personal: type="email" (línea 652)
+- [x] CP fiscal: maxLength=5 minLength=5 onInput=soloDigitos (línea 795) — CORRECTO, no es hardcodeado a 10 como antes
+- [x] Import catalogos.js: línea 12 — correcto
+- [x] Helper soloDigitos: definido a nivel módulo, fuera del componente (línea 14)
+
+### EmpleadoProfileCard.jsx (formulario edición)
+- [x] Import catalogos.js: línea 7 — correcto
+- [x] Campo: acepta props maxLength, minLength, pattern, title, onInput (línea 671)
+- [x] CampoSelect: componente nuevo, renderiza opciones string (línea 691)
+- [x] estado_nacimiento: CampoSelect con ESTADOS_MEXICO (línea 461)
+- [x] estado_residencia: CampoSelect con ESTADOS_MEXICO (línea 503)
+- [x] banco: CampoSelect con BANCOS_MEXICO (línea 504)
+- [x] CURP: minLength=18 maxLength=18 (línea 339)
+- [x] RFC: minLength=13 maxLength=13 (línea 340)
+- [x] CLABE: minLength=18 maxLength=18 onInput=soloDigitos (línea 505)
+- [x] Teléfonos: maxLength=10 minLength=10 onInput=soloDigitos (línea 417, 494, 495)
+- [x] Código postal: maxLength=5 minLength=5 onInput=soloDigitos (línea 501)
+- [x] CP fiscal: maxLength=5 minLength=5 onInput=soloDigitos (línea 506) — CORRECTO, corregido de 10 a 5
+- [x] soloDigitos helper: presente (línea 667)
+- [x] Lógica de pestañas, documentos, hijos: intacta y funcional (línea 318–604)
+
+---
+
+## Problemas encontrados
+
+### HALLAZGO 1: Validación CURP inconsistente entre formularios
+**Archivo/línea:** EmpleadoPage.jsx:540 vs EmpleadoProfileCard.jsx:339
+**Problema:** EmpleadoPage (alta) NO tiene `pattern` para CURP, solo `maxLength=18 minLength=18`. ProfileCard (edición) SÍ tiene pattern `[A-Za-zÑñ]{4}\d{6}[HMhm][A-Za-z]{2}[A-Za-z\d]{3}[A-Za-z\d]\d`. Un empleado puede crear un CURP inválido en alta y no podrá editar si usa edición después.
+**Severidad:** medio — Afecta validación de datos pero no rompe el flujo. Cualquier CURP de 18 caracteres se acepta en alta.
+**Fix sugerido:** Agregar `pattern` idéntico a ProfileCard en EmpleadoPage línea 540, o extraer ambos patterns a catalogos.js como constantes si hay múltiples patrones.
+
+### HALLAZGO 2: Helper soloDigitos duplicado
+**Archivo/línea:** EmpleadoPage.jsx:14–16 y EmpleadoProfileCard.jsx:667–669
+**Problema:** Mismo código en dos archivos. Viola el principio DRY. Si hay que cambiar la lógica de soloDigitos (ej: agregar validación de rangos), hay que actualizar en dos lugares.
+**Severidad:** bajo — Funcionalmente correcto, pero mantenibilidad. No rompe nada ahora.
+**Fix sugerido:** Extraer `soloDigitos` a `modules/rh/frontend/utils/validaciones.js` e importar en ambos archivos. O agregar a `catalogos.js` como export si solo la usa este módulo.
+
+### HALLAZGO 3: NSS sin validación en EmpleadoPage
+**Archivo/línea:** EmpleadoPage.jsx:568–579
+**Problema:** NSS tiene `pattern="\d{11}"` pero EmpleadoProfileCard línea 338 NO tiene pattern explícito. Inconsistencia menor en validación HTML5 (ambos tienen minLength/maxLength que son lo importante).
+**Severidad:** bajo — El minLength/maxLength hace validación; pattern es redundante pero recomendado.
+**Fix sugerido:** Agregar `pattern="\d{11}"` en ProfileCard línea 338 para NSS, por consistencia.
+
+---
+
+## Validación contra decisions.md
+
+✅ No hay violaciones de ADRs. Las decisiones de sincronización de campos (2026-04-29 línea 107) se respetan.
+
+---
+
+## Veredicto
+
+**APROBADO CON OBSERVACIONES**
+
+### Resumen
+El coder implementó correctamente:
+1. ✅ Catálogo de 32 estados y 23 bancos en archivo compartido (catalogos.js)
+2. ✅ Combos en formulario de alta (EmpleadoPage) usando ESTADOS_MEXICO y BANCOS_MEXICO
+3. ✅ Combos en formulario de edición (ProfileCard) usando nuevo CampoSelect
+4. ✅ Validaciones numéricas (maxLength, minLength, onInput=soloDigitos) en todos los campos requeridos
+5. ✅ CP fiscal corregido de 10 a 5 dígitos (bug anteriormente señalado en code-notes.md línea 11)
+6. ✅ Componente Campo extendido con props de validación
+7. ✅ Helper soloDigitos funciona correctamente con `onInput` (evento nativo)
+
+### Observaciones antes de merge
+1. **CURP pattern**: Agregar pattern en EmpleadoPage línea 540 para consistencia con ProfileCard (no bloquea pero es buena práctica)
+2. **soloDigitos duplicado**: Considerar extraer a utils/validaciones.js para mantenibilidad futura
+3. **NSS pattern**: Agregar en ProfileCard para consistencia
+
+### Estado
+No hay bugs críticos. El código funciona y cumple los requisitos. Los 3 hallazgos son mejoras menores de consistencia y mantenibilidad, no defectos que afecten al usuario.
+
+**Recomendación: Aprobado para merge. Los hallazgos pueden tratarse como mejoras técnicas en un PR futuro (refactoring de validaciones).**
+

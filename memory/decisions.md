@@ -133,3 +133,48 @@ type: project
 - `modules/rh/backend/models/empleado.model.js`
 - `modules/rh/backend/controllers/empleado.controller.js`
 - `modules/rh/frontend/pages/EmpleadoPage.jsx`
+
+---
+
+### [2026-04-29] orquestador — Validaciones y combos en formularios de empleado
+
+**Contexto:** El usuario pidió convertir campos de texto libre a combos seleccionables (estados de la república, bancos) y agregar validaciones de longitud/formato en ambos formularios de empleado (alta y edición).
+
+**Decisiones tomadas:**
+
+1. **Constantes compartidas en `modules/rh/frontend/constants/catalogos.js`**
+   - `ESTADOS_MEXICO` — 32 estados oficiales de la República Mexicana
+   - `BANCOS_MEXICO` — 23 instituciones bancarias mexicanas más "Otro"
+   - **Por qué:** DRY — ambos formularios importan del mismo archivo; cambiar un banco o estado en un solo lugar actualiza ambas vistas
+
+2. **Combos `<select>` para campos categóricos**
+   - `estado_nacimiento` y `estado_residencia` → `<select>` con ESTADOS_MEXICO en ambos forms
+   - `banco` → `<select>` con BANCOS_MEXICO en ambos forms
+   - `EmpleadoProfileCard` usa nuevo componente helper `CampoSelect` consistente con el patrón `Campo` existente
+
+3. **Validaciones HTML5 nativas — sin librerías externas**
+   - CURP: `minLength=18 maxLength=18`, pattern de 18 caracteres
+   - RFC: `minLength=13 maxLength=13` (personas físicas)
+   - CLABE: `minLength=18 maxLength=18 pattern="\d{18}"`
+   - Teléfonos (celular_personal, celular_corporativo, telefono_emergencia): `minLength=10 maxLength=10 pattern="\d{10}"`
+   - Código postal: `minLength=5 maxLength=5 pattern="\d{5}"`
+   - Correo personal: `type="email"` (ya existía)
+   - **Por qué:** Sin dependencias externas, funciona con el navegador nativo, fácil de mantener
+
+4. **Helper `soloDigitos(e)`** — filtra no-dígitos en `onInput` para teléfonos, CLABE, CP
+   - Bloquea la entrada de caracteres no numéricos en tiempo real
+   - No aplica a CURP ni RFC (admiten letras)
+
+5. **`Campo` extendido** en `EmpleadoProfileCard` para aceptar `pattern`, `minLength`, `title`, `onInput`
+
+**Observaciones del revisor (no bloqueantes):**
+- Pattern CURP falta en EmpleadoPage (solo en ProfileCard) — mejora futura
+- `soloDigitos` duplicado en 2 archivos — candidato a extraer a `utils/validaciones.js`
+- NSS sin pattern en ProfileCard — mejora futura por consistencia
+
+**Revisión:** APROBADO CON OBSERVACIONES — sin bugs bloqueantes (revisor 2026-04-29)
+
+**Archivos creados/modificados:**
+- `modules/rh/frontend/constants/catalogos.js` (NUEVO)
+- `modules/rh/frontend/pages/EmpleadoPage.jsx`
+- `modules/rh/frontend/components/EmpleadoProfileCard.jsx`

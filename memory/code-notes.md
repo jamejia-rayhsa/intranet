@@ -1,5 +1,21 @@
 # code-notes — Memory Palace
 
+### [2026-04-29] coder — Validaciones y combos formularios empleado
+
+**Decisión de código:** Implementé validaciones HTML5 nativas y selects con catálogos en los dos formularios de empleado del módulo RH. Archivos tocados:
+
+- `modules/rh/frontend/constants/catalogos.js` — NUEVO. Exporta `ESTADOS_MEXICO` (32 estados) y `BANCOS_MEXICO` (23 bancos). Compartido por ambos formularios para mantener los datos sincronizados en un solo lugar.
+- `modules/rh/frontend/pages/EmpleadoPage.jsx` — Formulario de ALTA: import de catálogos, helper `soloDigitos` a nivel de módulo (fuera del componente), campos `estado_nacimiento` y `estado_residencia` convertidos de `<input>` a `<select>` con `ESTADOS_MEXICO`, campo `banco` convertido a `<select>` con `BANCOS_MEXICO`, validaciones (`maxLength`, `minLength`, `pattern`, `title`, `onInput={soloDigitos}`) añadidas a CURP(18), RFC(13), NSS(11 dígitos), celular_personal(10 tel), celular_corporativo(10 tel), telefono_emergencia(10 tel), codigo_postal(5 dígitos), clabe(18 dígitos), cp_fiscal(5 dígitos).
+- `modules/rh/frontend/components/EmpleadoProfileCard.jsx` — Formulario de EDICIÓN: import de catálogos, componente `Campo` extendido con props `minLength`, `pattern`, `title`, `onInput`, nuevo componente `CampoSelect` (label + select con opciones string), helper `soloDigitos`. Campos `estado_nacimiento`, `estado_residencia` y `banco` reemplazados por `<CampoSelect>`. Mismas validaciones numéricas en NSS, CURP, RFC, celulares, CLABE, CP, CP fiscal.
+
+**Trampa evitada:** El componente `Campo` en EmpleadoProfileCard ya tenía un `maxLength={10}` hardcodeado en el campo `codigo_postal` — se cambió a `maxLength={5}` (correcto para CP mexicano) y se añadió `onInput={soloDigitos}`. El CP fiscal también tenía `maxLength={10}` incorrecto — corregido a 5.
+
+**Trampa evitada:** `soloDigitos` usa `e.target.value = ...` (mutación directa) en lugar de `setState`. Funciona con `onInput` (evento nativo del DOM que dispara antes que `onChange`). NO usar en campos como CURP y RFC que admiten letras — solo en campos puramente numéricos (NSS, teléfonos, CLABE, CP).
+
+**Trampa evitada:** El pattern del CURP en el componente `Campo` de ProfileCard se pasa como string sin doble barra (`\d` no `\\d`) porque JSX interpreta el atributo como string literal dentro de las llaves — a diferencia del HTML puro donde se escribe directamente en el atributo. En EmpleadoPage.jsx los patterns en JSX dentro de strings de atributo también usan una sola barra.
+
+**Patrón reusable:** `CampoSelect` acepta un array de strings planos como `opciones` (no objetos `{id, nombre}`). Esto funciona para catálogos como estados y bancos donde el valor guardado en BD ES el nombre. Para catálogos con FK (departamentos, puestos, jefes) se siguen usando `<select>` inline con objetos. (EmpleadoProfileCard.jsx línea 691)
+
 ### [2026-04-29] coder — Alta empleado: sincronización 40 campos
 
 **Decisión de código:** Sincronicé el formulario de alta de empleado con el esquema completo de la tabla `empleados`. Archivos modificados:

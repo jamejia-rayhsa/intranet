@@ -9,6 +9,11 @@ import { obtenerDepartamentos } from "../services/departamentos.service";
 import { obtenerPuestos } from "../services/puestos.service";
 import { obtenerUbicaciones } from "../services/ubicaciones.service";
 import EmpleadoProfileCard from "../components/EmpleadoProfileCard";
+import { ESTADOS_MEXICO, BANCOS_MEXICO } from "../constants/catalogos";
+
+function soloDigitos(e) {
+  e.target.value = e.target.value.replace(/\D/g, "");
+}
 
 const etiquetasEstatus = {
   activo: "Activo",
@@ -402,11 +407,16 @@ export default function EmpleadoPage() {
                 <div className="campo">
                   <label>Celular corporativo</label>
                   <input
-                    type="text"
+                    type="tel"
                     name="celular_corporativo"
                     value={formulario.celular_corporativo}
                     onChange={manejarCambio}
                     placeholder="10 dígitos"
+                    maxLength={10}
+                    minLength={10}
+                    onInput={soloDigitos}
+                    pattern="\d{10}"
+                    title="10 dígitos sin espacios"
                   />
                 </div>
               </div>
@@ -514,13 +524,14 @@ export default function EmpleadoPage() {
                 </div>
                 <div className="campo">
                   <label>Estado de nacimiento</label>
-                  <input
-                    type="text"
+                  <select
                     name="estado_nacimiento"
                     value={formulario.estado_nacimiento}
                     onChange={manejarCambio}
-                    placeholder="Ej. Jalisco"
-                  />
+                  >
+                    <option value="">Seleccionar</option>
+                    {ESTADOS_MEXICO.map((e) => <option key={e} value={e}>{e}</option>)}
+                  </select>
                 </div>
               </div>
               <div style={estiloGrid3}>
@@ -533,7 +544,9 @@ export default function EmpleadoPage() {
                     onChange={manejarCambio}
                     placeholder="18 caracteres"
                     maxLength={18}
+                    minLength={18}
                     style={{ textTransform: "uppercase" }}
+                    title="CURP de 18 caracteres"
                   />
                 </div>
                 <div className="campo">
@@ -545,7 +558,9 @@ export default function EmpleadoPage() {
                     onChange={manejarCambio}
                     placeholder="13 caracteres"
                     maxLength={13}
+                    minLength={13}
                     style={{ textTransform: "uppercase" }}
+                    title="RFC de 13 caracteres"
                   />
                 </div>
                 <div className="campo">
@@ -557,6 +572,10 @@ export default function EmpleadoPage() {
                     onChange={manejarCambio}
                     placeholder="11 dígitos"
                     maxLength={11}
+                    minLength={11}
+                    onInput={soloDigitos}
+                    pattern="\d{11}"
+                    title="NSS de 11 dígitos"
                   />
                 </div>
               </div>
@@ -615,11 +634,16 @@ export default function EmpleadoPage() {
                 <div className="campo">
                   <label>Celular personal</label>
                   <input
-                    type="text"
+                    type="tel"
                     name="celular_personal"
                     value={formulario.celular_personal}
                     onChange={manejarCambio}
                     placeholder="10 dígitos"
+                    maxLength={10}
+                    minLength={10}
+                    onInput={soloDigitos}
+                    pattern="\d{10}"
+                    title="10 dígitos sin espacios"
                   />
                 </div>
                 <div className="campo">
@@ -637,11 +661,16 @@ export default function EmpleadoPage() {
                 <div className="campo">
                   <label>Teléfono de emergencia</label>
                   <input
-                    type="text"
+                    type="tel"
                     name="telefono_emergencia"
                     value={formulario.telefono_emergencia}
                     onChange={manejarCambio}
                     placeholder="10 dígitos"
+                    maxLength={10}
+                    minLength={10}
+                    onInput={soloDigitos}
+                    pattern="\d{10}"
+                    title="10 dígitos sin espacios"
                   />
                 </div>
                 <div className="campo">
@@ -698,6 +727,10 @@ export default function EmpleadoPage() {
                     value={formulario.codigo_postal}
                     onChange={manejarCambio}
                     maxLength={5}
+                    minLength={5}
+                    onInput={soloDigitos}
+                    pattern="\d{5}"
+                    title="5 dígitos numéricos"
                     placeholder="5 dígitos"
                   />
                 </div>
@@ -712,13 +745,14 @@ export default function EmpleadoPage() {
                 </div>
                 <div className="campo">
                   <label>Estado</label>
-                  <input
-                    type="text"
+                  <select
                     name="estado_residencia"
                     value={formulario.estado_residencia}
                     onChange={manejarCambio}
-                    placeholder="Ej. Jalisco"
-                  />
+                  >
+                    <option value="">Seleccionar</option>
+                    {ESTADOS_MEXICO.map((e) => <option key={e} value={e}>{e}</option>)}
+                  </select>
                 </div>
               </div>
 
@@ -727,13 +761,14 @@ export default function EmpleadoPage() {
               <div style={estiloGrid3}>
                 <div className="campo">
                   <label>Banco</label>
-                  <input
-                    type="text"
+                  <select
                     name="banco"
                     value={formulario.banco}
                     onChange={manejarCambio}
-                    placeholder="Ej. BBVA, Santander"
-                  />
+                  >
+                    <option value="">Seleccionar</option>
+                    {BANCOS_MEXICO.map((b) => <option key={b} value={b}>{b}</option>)}
+                  </select>
                 </div>
                 <div className="campo">
                   <label>CLABE interbancaria</label>
@@ -743,6 +778,10 @@ export default function EmpleadoPage() {
                     value={formulario.clabe}
                     onChange={manejarCambio}
                     maxLength={18}
+                    minLength={18}
+                    onInput={soloDigitos}
+                    pattern="\d{18}"
+                    title="CLABE de 18 dígitos numéricos"
                     placeholder="18 dígitos"
                   />
                 </div>
@@ -754,6 +793,10 @@ export default function EmpleadoPage() {
                     value={formulario.cp_fiscal}
                     onChange={manejarCambio}
                     maxLength={5}
+                    minLength={5}
+                    onInput={soloDigitos}
+                    pattern="\d{5}"
+                    title="Código postal fiscal de 5 dígitos"
                     placeholder="5 dígitos"
                   />
                 </div>

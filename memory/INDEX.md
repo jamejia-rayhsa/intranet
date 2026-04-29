@@ -13,6 +13,9 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-04-29] orquestador → decisions.md — ADR: Validaciones y combos formularios empleado (estados, bancos, HTML5)
+- [2026-04-29] revisor → reviews.md — Validaciones y combos: revisión post-coder (APROBADO CON OBSERVACIONES)
+- [2026-04-29] coder → code-notes.md — Validaciones y combos formularios empleado (catalogos.js creado, 2 formularios actualizados)
 - [2026-04-29] revisor → reviews.md — Alta empleado: validación post-coder (APROBADO CON OBSERVACIONES)
 - [2026-04-29] investigador → research.md — Auditoría módulo RH: brecha alta empleado (EmpleadoPage desactualizado)
 - [2026-04-29] coder → code-notes.md — Alta empleado: sincronización 40 campos (3 archivos, bug apellido corregido)

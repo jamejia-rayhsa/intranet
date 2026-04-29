@@ -4,6 +4,7 @@ import {
   actualizarEmpleado,
   obtenerEmpleados,
 } from "../services/empleados.service";
+import { ESTADOS_MEXICO, BANCOS_MEXICO } from "../constants/catalogos";
 import ChecklistDocumentos from "./ChecklistDocumentos";
 import { obtenerDepartamentos } from "../services/departamentos.service";
 import { obtenerPuestos } from "../services/puestos.service";
@@ -334,9 +335,9 @@ export default function EmpleadoProfileCard({ empleadoId, alVolver }) {
                     <option value="suspendido">Suspendido</option>
                   </select>
                 </div>
-                <Campo label="NSS" name="nss" value={formulario.nss} onChange={manejarCambio} maxLength={11} />
-                <Campo label="CURP" name="curp" value={formulario.curp} onChange={manejarCambio} maxLength={18} />
-                <Campo label="RFC" name="rfc" value={formulario.rfc} onChange={manejarCambio} maxLength={13} />
+                <Campo label="NSS" name="nss" value={formulario.nss} onChange={manejarCambio} maxLength={11} minLength={11} pattern="\d{11}" title="NSS de 11 dígitos" onInput={soloDigitos} />
+                <Campo label="CURP" name="curp" value={formulario.curp} onChange={manejarCambio} maxLength={18} minLength={18} pattern="[A-Za-zÑñ]{4}\d{6}[HMhm][A-Za-z]{2}[A-Za-z\d]{3}[A-Za-z\d]\d" title="CURP de 18 caracteres" />
+                <Campo label="RFC" name="rfc" value={formulario.rfc} onChange={manejarCambio} maxLength={13} minLength={13} title="RFC de 13 caracteres" />
                 <Campo label="INFONAVIT" name="infonavit" value={formulario.infonavit} onChange={manejarCambio} />
                 <Campo label="FONACOT" name="fonacot" value={formulario.fonacot} onChange={manejarCambio} />
               </>
@@ -413,7 +414,7 @@ export default function EmpleadoProfileCard({ empleadoId, alVolver }) {
                     ))}
                   </select>
                 </div>
-                <Campo label="Celular Corporativo" name="celular_corporativo" value={formulario.celular_corporativo} onChange={manejarCambio} />
+                <Campo label="Celular Corporativo" name="celular_corporativo" value={formulario.celular_corporativo} onChange={manejarCambio} maxLength={10} minLength={10} pattern="\d{10}" title="10 dígitos numéricos sin espacios" onInput={soloDigitos} />
                 <div className="dato">
                   <label>Correo Corporativo</label>
                   <span>{empleado.usuario_correo || "No asignado"}</span>
@@ -457,7 +458,7 @@ export default function EmpleadoProfileCard({ empleadoId, alVolver }) {
             {editando ? (
               <>
                 <Campo label="Fecha de Nacimiento" name="fecha_nacimiento" value={formulario.fecha_nacimiento} onChange={manejarCambio} type="date" />
-                <Campo label="Estado de Nacimiento" name="estado_nacimiento" value={formulario.estado_nacimiento} onChange={manejarCambio} />
+                <CampoSelect label="Estado de Nacimiento" name="estado_nacimiento" value={formulario.estado_nacimiento} onChange={manejarCambio} opciones={ESTADOS_MEXICO} />
                 <div className="dato">
                   <label htmlFor="edit-genero">Género</label>
                   <select id="edit-genero" name="genero" value={formulario.genero} onChange={manejarCambio}>
@@ -490,19 +491,19 @@ export default function EmpleadoProfileCard({ empleadoId, alVolver }) {
                     <option value="posgrado">Posgrado</option>
                   </select>
                 </div>
-                <Campo label="Celular Personal" name="celular_personal" value={formulario.celular_personal} onChange={manejarCambio} />
-                <Campo label="No. de Emergencia" name="telefono_emergencia" value={formulario.telefono_emergencia} onChange={manejarCambio} />
+                <Campo label="Celular Personal" name="celular_personal" value={formulario.celular_personal} onChange={manejarCambio} maxLength={10} minLength={10} pattern="\d{10}" title="10 dígitos numéricos sin espacios" onInput={soloDigitos} />
+                <Campo label="No. de Emergencia" name="telefono_emergencia" value={formulario.telefono_emergencia} onChange={manejarCambio} maxLength={10} minLength={10} pattern="\d{10}" title="10 dígitos numéricos sin espacios" onInput={soloDigitos} />
                 <Campo label="Parentesco" name="parentesco_emergencia" value={formulario.parentesco_emergencia} onChange={manejarCambio} />
                 <Campo label="Contacto de Emergencia" name="contacto_emergencia" value={formulario.contacto_emergencia} onChange={manejarCambio} />
                 <Campo label="Correo Personal" name="correo_personal" value={formulario.correo_personal} onChange={manejarCambio} type="email" />
                 <Campo label="Calle y Número" name="calle" value={formulario.calle} onChange={manejarCambio} />
                 <Campo label="Colonia" name="colonia" value={formulario.colonia} onChange={manejarCambio} />
-                <Campo label="C.P." name="codigo_postal" value={formulario.codigo_postal} onChange={manejarCambio} maxLength={10} />
+                <Campo label="C.P." name="codigo_postal" value={formulario.codigo_postal} onChange={manejarCambio} maxLength={5} minLength={5} pattern="\d{5}" title="Código postal de 5 dígitos" onInput={soloDigitos} />
                 <Campo label="Alcaldía o Municipio" name="municipio" value={formulario.municipio} onChange={manejarCambio} />
-                <Campo label="Residencia (Estado)" name="estado_residencia" value={formulario.estado_residencia} onChange={manejarCambio} />
-                <Campo label="Banco" name="banco" value={formulario.banco} onChange={manejarCambio} />
-                <Campo label="CLABE Interbancaria" name="clabe" value={formulario.clabe} onChange={manejarCambio} maxLength={18} />
-                <Campo label="C.P. Fiscal" name="cp_fiscal" value={formulario.cp_fiscal} onChange={manejarCambio} maxLength={10} />
+                <CampoSelect label="Residencia (Estado)" name="estado_residencia" value={formulario.estado_residencia} onChange={manejarCambio} opciones={ESTADOS_MEXICO} />
+                <CampoSelect label="Banco" name="banco" value={formulario.banco} onChange={manejarCambio} opciones={BANCOS_MEXICO} />
+                <Campo label="CLABE Interbancaria" name="clabe" value={formulario.clabe} onChange={manejarCambio} maxLength={18} minLength={18} pattern="\d{18}" title="CLABE interbancaria de 18 dígitos numéricos" onInput={soloDigitos} />
+                <Campo label="C.P. Fiscal" name="cp_fiscal" value={formulario.cp_fiscal} onChange={manejarCambio} maxLength={5} minLength={5} pattern="\d{5}" title="Código postal fiscal de 5 dígitos" onInput={soloDigitos} />
               </>
             ) : (
               <>
@@ -663,7 +664,11 @@ export default function EmpleadoProfileCard({ empleadoId, alVolver }) {
   );
 }
 
-function Campo({ label, name, value, onChange, type = "text", maxLength }) {
+function soloDigitos(e) {
+  e.target.value = e.target.value.replace(/\D/g, "");
+}
+
+function Campo({ label, name, value, onChange, type = "text", maxLength, minLength, pattern, title, onInput }) {
   return (
     <div className="dato">
       <label htmlFor={`edit-${name}`}>{label}</label>
@@ -674,7 +679,25 @@ function Campo({ label, name, value, onChange, type = "text", maxLength }) {
         value={value}
         onChange={onChange}
         maxLength={maxLength}
+        minLength={minLength}
+        pattern={pattern}
+        title={title}
+        onInput={onInput}
       />
+    </div>
+  );
+}
+
+function CampoSelect({ label, name, value, onChange, opciones, placeholder = "Seleccionar" }) {
+  return (
+    <div className="dato">
+      <label htmlFor={`edit-${name}`}>{label}</label>
+      <select id={`edit-${name}`} name={name} value={value} onChange={onChange}>
+        <option value="">{placeholder}</option>
+        {opciones.map((op) => (
+          <option key={op} value={op}>{op}</option>
+        ))}
+      </select>
     </div>
   );
 }
