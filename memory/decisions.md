@@ -101,3 +101,35 @@ type: project
 - `modules/rh/frontend/pages/VacacionesPage.jsx` — eliminar sección de equipo
 - `modules/portal/frontend/components/MenuDinamico.jsx` — agregar entrada de listado
 - `modules/portal/frontend/main.jsx` — agregar ruta `/rh/vacaciones/listado`
+
+---
+
+### [2026-04-29] orquestador — Alta empleado: sincronización formulario con esquema DB
+
+**Contexto:** El usuario reportó que la página de alta de empleado no coincidía con los campos actualizados en la migración 001. La investigación del equipo confirmó que el formulario capturaba 9 de 38 campos y usaba `apellido` en lugar de `apellido_paterno`.
+
+**Decisiones tomadas:**
+
+1. **Modelo `Empleado.crear()` ampliado de 12 a 38 campos**
+   - El INSERT ahora incluye todos los campos de la tabla `empleados` excepto los auto-calculados (`id`, `fecha_creacion`, `fecha_actualizacion`, `fecha_baja`, `motivo_baja`)
+   - `estatus` tiene default `|| 'activo'` en el modelo
+
+2. **Bug crítico corregido: `apellido` → `apellido_paterno`**
+   - El controller desestructura `apellido_paterno` del body (antes: `apellido`)
+   - Mapping explícito en `Usuario.crear()`: `apellido: apellido_paterno` — el modelo de `usuarios` sigue esperando `apellido` (no se toca para no romper el resto del sistema)
+   - Validación actualizada: `!nombre || !apellido_paterno`
+
+3. **Formulario modal reescrito con 7 secciones scrollables**
+   - Datos básicos / Datos laborales / Datos personales / Contacto / Domicilio / Datos financieros / Crear usuario
+   - `formularioInicial` extraído como constante para reusar en reset
+   - Select de `jefe_inmediato_id` cargado con empleados activos (límite: 200)
+   - Columna de tabla corregida: `empleado.apellido` → `empleado.apellido_paterno`
+
+4. **Observación conocida (no bloqueante):** Select de jefe inmediato carga máximo 200 empleados. No es problema para el tamaño actual de la empresa.
+
+**Revisión:** APROBADO CON OBSERVACIONES — sin bugs bloqueantes (revisor 2026-04-29)
+
+**Archivos modificados:**
+- `modules/rh/backend/models/empleado.model.js`
+- `modules/rh/backend/controllers/empleado.controller.js`
+- `modules/rh/frontend/pages/EmpleadoPage.jsx`

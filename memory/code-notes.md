@@ -1,5 +1,23 @@
 # code-notes — Memory Palace
 
+### [2026-04-29] coder — Alta empleado: sincronización 40 campos
+
+**Decisión de código:** Sincronicé el formulario de alta de empleado con el esquema completo de la tabla `empleados`. Archivos modificados:
+
+- `modules/rh/backend/models/empleado.model.js` — método `crear()` ampliado de 12 campos a 38. INSERT explícito con `$1`–`$38`. Campos opcionales con `|| null`; `estatus` con `|| "activo"`.
+- `modules/rh/backend/controllers/empleado.controller.js` — desestructuración completa de `req.body` (31 campos nuevos). Corregido `apellido` → `apellido_paterno` en validación, en `Usuario.crear()` y en `Empleado.crear()`. Mensaje de validación actualizado a "Nombre y apellido paterno son obligatorios".
+- `modules/rh/frontend/pages/EmpleadoPage.jsx` — formulario modal rediseñado con 7 secciones scrollables (Datos básicos, Laborales, Personales, Contacto, Domicilio, Financieros, Acceso). Estado inicial (`formularioInicial`) extraído a constante para reutilizar en el reset. `empleadosJefes` cargado junto con los catálogos en `cargarCatalogos()`. Columna "Nombre" en tabla corregida: `{empleado.apellido}` → `{empleado.apellido_paterno}`.
+
+**Bugs corregidos:**
+1. `apellido` → `apellido_paterno` en controller (línea 14, 57, 60, 91, 124) y frontend (líneas 49, 172, 334–335, 906): el formulario de alta volcaba apellido_paterno a NULL en BD porque el field name no coincidía con la columna.
+2. `{empleado.apellido}` → `{empleado.apellido_paterno}` en la tabla de listado (línea 906 del JSX nuevo): la columna mostraba undefined para todos los empleados.
+
+**Trampa evitada:** El modelo `Usuario.crear()` sigue esperando el campo `apellido` (no `apellido_paterno`). En el controller se hace el mapping explícito: `apellido: apellido_paterno` para no romper la creación de usuario. NO cambiar el modelo de usuario.
+
+**Trampa evitada:** `cargarCatalogos()` se llama una sola vez en `useEffect` inicial (junto con `cargarRoles()`). Añadir la llamada a `obtenerEmpleados` para jefes dentro del mismo `Promise.all` evita un fetch extra y mantiene consistencia.
+
+**Patrón reusable:** El estado inicial del formulario se extrae a `const formularioInicial = { ... }` fuera del componente. El reset en `manejarEnvio` usa `{ ...formularioInicial, fecha_ingreso: new Date()... }` para no repetir el objeto completo. (EmpleadoPage.jsx línea 43)
+
 ### [2026-04-28] coder — Listado separado vacaciones + seed
 
 **Decisión de código:** Implementé separación de listado, visibilidad por rol y seed de datos. Archivos tocados:

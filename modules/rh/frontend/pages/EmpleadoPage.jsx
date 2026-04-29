@@ -22,8 +22,74 @@ const coloresEstatus = {
   suspendido: "badge-suspendido",
 };
 
+const estiloSeccion = {
+  borderBottom: "1px solid var(--color-borde)",
+  paddingBottom: "0.75rem",
+  marginBottom: "0.75rem",
+  fontWeight: 700,
+  color: "var(--color-primario)",
+  fontSize: "0.88rem",
+  marginTop: "1rem",
+};
+
+const estiloGrid2 = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: "0.75rem",
+};
+
+const estiloGrid3 = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr 1fr",
+  gap: "0.75rem",
+};
+
+const formularioInicial = {
+  nombre: "",
+  apellido_paterno: "",
+  apellido_materno: "",
+  fecha_nacimiento: "",
+  curp: "",
+  rfc: "",
+  nss: "",
+  genero: "",
+  estado_civil: "",
+  escolaridad: "",
+  estado_nacimiento: "",
+  celular_personal: "",
+  correo_personal: "",
+  telefono_emergencia: "",
+  parentesco_emergencia: "",
+  contacto_emergencia: "",
+  calle: "",
+  colonia: "",
+  codigo_postal: "",
+  municipio: "",
+  estado_residencia: "",
+  numero_nomina: "",
+  fecha_imss: "",
+  fecha_ingreso: new Date().toISOString().split("T")[0],
+  fecha_renovacion: "",
+  tipo_contrato: "",
+  celular_corporativo: "",
+  jefe_inmediato_id: "",
+  banco: "",
+  clabe: "",
+  cp_fiscal: "",
+  infonavit: "",
+  fonacot: "",
+  puesto_id: "",
+  departamento_id: "",
+  ubicacion_id: "",
+  estatus: "activo",
+  correo: "",
+  contraseña: "",
+  rol_id: "",
+};
+
 export default function EmpleadoPage() {
   const [empleados, setEmpleados] = useState([]);
+  const [empleadosJefes, setEmpleadosJefes] = useState([]);
   const [roles, setRoles] = useState([]);
   const [departamentos, setDepartamentos] = useState([]);
   const [puestos, setPuestos] = useState([]);
@@ -37,18 +103,7 @@ export default function EmpleadoPage() {
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
   const [error, setError] = useState("");
   const [crearUsuario, setCrearUsuario] = useState(false);
-  const [formulario, setFormulario] = useState({
-    nombre: "",
-    apellido: "",
-    correo: "",
-    contraseña: "",
-    puesto_id: "",
-    departamento_id: "",
-    ubicacion_id: "",
-    fecha_ingreso: new Date().toISOString().split("T")[0],
-    estatus: "activo",
-    rol_id: "",
-  });
+  const [formulario, setFormulario] = useState(formularioInicial);
 
   useEffect(() => {
     cargarEmpleados();
@@ -58,14 +113,17 @@ export default function EmpleadoPage() {
 
   async function cargarCatalogos() {
     try {
-      const [respDeptos, respPuestos, respUbicaciones] = await Promise.all([
-        obtenerDepartamentos(),
-        obtenerPuestos(),
-        obtenerUbicaciones(),
-      ]);
+      const [respDeptos, respPuestos, respUbicaciones, respJefes] =
+        await Promise.all([
+          obtenerDepartamentos(),
+          obtenerPuestos(),
+          obtenerUbicaciones(),
+          obtenerEmpleados({ limite: 200, estatus: "activo" }),
+        ]);
       if (respDeptos.exito) setDepartamentos(respDeptos.datos);
       if (respPuestos.exito) setPuestos(respPuestos.datos);
       if (respUbicaciones.exito) setUbicaciones(respUbicaciones.datos);
+      if (respJefes.exito) setEmpleadosJefes(respJefes.datos.empleados || []);
     } catch (error) {
       console.error("Error al cargar catálogos:", error);
     }
@@ -111,11 +169,42 @@ export default function EmpleadoPage() {
     try {
       const datosEnvio = {
         nombre: formulario.nombre,
-        apellido: formulario.apellido,
+        apellido_paterno: formulario.apellido_paterno,
+        apellido_materno: formulario.apellido_materno || null,
+        fecha_nacimiento: formulario.fecha_nacimiento || null,
+        curp: formulario.curp || null,
+        rfc: formulario.rfc || null,
+        nss: formulario.nss || null,
+        genero: formulario.genero || null,
+        estado_civil: formulario.estado_civil || null,
+        escolaridad: formulario.escolaridad || null,
+        estado_nacimiento: formulario.estado_nacimiento || null,
+        celular_personal: formulario.celular_personal || null,
+        correo_personal: formulario.correo_personal || null,
+        telefono_emergencia: formulario.telefono_emergencia || null,
+        parentesco_emergencia: formulario.parentesco_emergencia || null,
+        contacto_emergencia: formulario.contacto_emergencia || null,
+        calle: formulario.calle || null,
+        colonia: formulario.colonia || null,
+        codigo_postal: formulario.codigo_postal || null,
+        municipio: formulario.municipio || null,
+        estado_residencia: formulario.estado_residencia || null,
+        numero_nomina: formulario.numero_nomina || null,
+        fecha_imss: formulario.fecha_imss || null,
+        fecha_ingreso: formulario.fecha_ingreso,
+        fecha_renovacion: formulario.fecha_renovacion || null,
+        tipo_contrato: formulario.tipo_contrato || null,
+        celular_corporativo: formulario.celular_corporativo || null,
+        jefe_inmediato_id: formulario.jefe_inmediato_id || null,
+        banco: formulario.banco || null,
+        clabe: formulario.clabe || null,
+        cp_fiscal: formulario.cp_fiscal || null,
+        infonavit: formulario.infonavit || null,
+        fonacot: formulario.fonacot || null,
         puesto_id: formulario.puesto_id || null,
         departamento_id: formulario.departamento_id || null,
         ubicacion_id: formulario.ubicacion_id || null,
-        fecha_ingreso: formulario.fecha_ingreso,
+        estatus: formulario.estatus,
         crear_usuario: crearUsuario,
       };
       if (crearUsuario) {
@@ -127,16 +216,8 @@ export default function EmpleadoPage() {
       }
       await crearEmpleado(datosEnvio);
       setFormulario({
-        nombre: "",
-        apellido: "",
-        correo: "",
-        contraseña: "",
-        puesto_id: "",
-        departamento_id: "",
-        ubicacion_id: "",
+        ...formularioInicial,
         fecha_ingreso: new Date().toISOString().split("T")[0],
-        estatus: "activo",
-        rol_id: "",
       });
       setMostrarFormulario(false);
       setCrearUsuario(false);
@@ -180,177 +261,603 @@ export default function EmpleadoPage() {
       </div>
 
       {mostrarFormulario && (
-        <div className="formulario-modal">
-          <h2>Nuevo Empleado</h2>
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.45)",
+            zIndex: 1000,
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "center",
+            padding: "2rem 1rem",
+            overflowY: "auto",
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setMostrarFormulario(false);
+              setCrearUsuario(false);
+              setError("");
+            }
+          }}
+        >
+          <div
+            style={{
+              background: "var(--color-fondo, #fff)",
+              borderRadius: "0.75rem",
+              padding: "1.75rem 2rem",
+              width: "100%",
+              maxWidth: "720px",
+              maxHeight: "85vh",
+              overflowY: "auto",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+            }}
+          >
+            <h2 style={{ marginTop: 0, color: "var(--color-primario)" }}>
+              Nuevo Empleado
+            </h2>
 
-          {error && <div className="mensaje-error">{error}</div>}
-
-          <form onSubmit={manejarEnvio}>
-            <div className="campo">
-              <label htmlFor="nombre">Nombre</label>
-              <input
-                type="text"
-                id="nombre"
-                name="nombre"
-                value={formulario.nombre}
-                onChange={manejarCambio}
-                required
-              />
-            </div>
-
-            <div className="campo">
-              <label htmlFor="apellido">Apellido</label>
-              <input
-                type="text"
-                id="apellido"
-                name="apellido"
-                value={formulario.apellido}
-                onChange={manejarCambio}
-                required
-              />
-            </div>
-
-            <div className="campo">
-              <label htmlFor="departamento_id">Departamento</label>
-              <select
-                id="departamento_id"
-                name="departamento_id"
-                value={formulario.departamento_id}
-                onChange={manejarCambio}
+            {error && (
+              <div
+                style={{
+                  background: "#fee2e2",
+                  color: "#dc2626",
+                  padding: "0.6rem 1rem",
+                  borderRadius: "0.375rem",
+                  marginBottom: "1rem",
+                  fontSize: "0.9rem",
+                }}
               >
-                <option value="">Seleccionar</option>
-                {departamentos.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.nombre}
-                  </option>
-                ))}
-              </select>
-            </div>
+                {error}
+              </div>
+            )}
 
-            <div className="campo">
-              <label htmlFor="puesto_id">Puesto</label>
-              <select
-                id="puesto_id"
-                name="puesto_id"
-                value={formulario.puesto_id}
-                onChange={manejarCambio}
-              >
-                <option value="">Seleccionar</option>
-                {puestos
-                  .filter(
-                    (p) =>
-                      !formulario.departamento_id ||
-                      p.departamento_id ===
-                        parseInt(formulario.departamento_id),
-                  )
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.nombre}
-                    </option>
-                  ))}
-              </select>
-            </div>
-
-            <div className="campo">
-              <label htmlFor="ubicacion_id">Ubicación</label>
-              <select
-                id="ubicacion_id"
-                name="ubicacion_id"
-                value={formulario.ubicacion_id}
-                onChange={manejarCambio}
-              >
-                <option value="">Seleccionar</option>
-                {ubicaciones.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.nombre}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="campo">
-              <label htmlFor="fecha_ingreso">Fecha de Ingreso</label>
-              <input
-                type="date"
-                id="fecha_ingreso"
-                name="fecha_ingreso"
-                value={formulario.fecha_ingreso}
-                onChange={manejarCambio}
-              />
-            </div>
-
-            <div className="campo-casilla">
-              <input
-                type="checkbox"
-                id="crear_usuario"
-                checked={crearUsuario}
-                onChange={(e) => setCrearUsuario(e.target.checked)}
-              />
-              <label htmlFor="crear_usuario">
-                Crear usuario para este empleado
-              </label>
-            </div>
-
-            {crearUsuario && (
-              <>
+            <form onSubmit={manejarEnvio}>
+              {/* ── DATOS BÁSICOS ─────────────────────────────── */}
+              <div style={estiloSeccion}>Datos básicos</div>
+              <div style={estiloGrid3}>
                 <div className="campo">
-                  <label htmlFor="correo">Correo electrónico</label>
+                  <label>Nombre *</label>
                   <input
-                    type="email"
-                    id="correo"
-                    name="correo"
-                    value={formulario.correo}
+                    type="text"
+                    name="nombre"
+                    value={formulario.nombre}
                     onChange={manejarCambio}
-                    required={crearUsuario}
+                    required
+                    placeholder="Nombre(s)"
                   />
                 </div>
-
                 <div className="campo">
-                  <label htmlFor="contraseña">Contraseña temporal</label>
+                  <label>Apellido paterno *</label>
                   <input
-                    type="password"
-                    id="contraseña"
-                    name="contraseña"
-                    value={formulario.contraseña}
+                    type="text"
+                    name="apellido_paterno"
+                    value={formulario.apellido_paterno}
                     onChange={manejarCambio}
-                    required={crearUsuario}
-                    minLength={6}
+                    required
+                    placeholder="Apellido paterno"
                   />
                 </div>
-
                 <div className="campo">
-                  <label htmlFor="rol_id">Rol del usuario</label>
+                  <label>Apellido materno</label>
+                  <input
+                    type="text"
+                    name="apellido_materno"
+                    value={formulario.apellido_materno}
+                    onChange={manejarCambio}
+                    placeholder="Apellido materno"
+                  />
+                </div>
+              </div>
+              <div style={estiloGrid2}>
+                <div className="campo">
+                  <label>Fecha de ingreso</label>
+                  <input
+                    type="date"
+                    name="fecha_ingreso"
+                    value={formulario.fecha_ingreso}
+                    onChange={manejarCambio}
+                  />
+                </div>
+                <div className="campo">
+                  <label>Estatus</label>
                   <select
-                    id="rol_id"
-                    name="rol_id"
-                    value={formulario.rol_id}
+                    name="estatus"
+                    value={formulario.estatus}
                     onChange={manejarCambio}
                   >
-                    <option value="">Sin rol</option>
-                    {roles.map((rol) => (
-                      <option key={rol.id} value={rol.id}>
-                        {rol.nombre}
+                    <option value="activo">Activo</option>
+                    <option value="suspendido">Suspendido</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* ── DATOS LABORALES ───────────────────────────── */}
+              <div style={estiloSeccion}>Datos laborales</div>
+              <div style={estiloGrid3}>
+                <div className="campo">
+                  <label>Número de nómina</label>
+                  <input
+                    type="text"
+                    name="numero_nomina"
+                    value={formulario.numero_nomina}
+                    onChange={manejarCambio}
+                    placeholder="Ej. 00123"
+                  />
+                </div>
+                <div className="campo">
+                  <label>Tipo de contrato</label>
+                  <select
+                    name="tipo_contrato"
+                    value={formulario.tipo_contrato}
+                    onChange={manejarCambio}
+                  >
+                    <option value="">Seleccionar</option>
+                    <option value="Determinado">Determinado</option>
+                    <option value="Indeterminado">Indeterminado</option>
+                    <option value="Honorarios">Honorarios</option>
+                    <option value="Confianza">Confianza</option>
+                  </select>
+                </div>
+                <div className="campo">
+                  <label>Celular corporativo</label>
+                  <input
+                    type="text"
+                    name="celular_corporativo"
+                    value={formulario.celular_corporativo}
+                    onChange={manejarCambio}
+                    placeholder="10 dígitos"
+                  />
+                </div>
+              </div>
+              <div style={estiloGrid2}>
+                <div className="campo">
+                  <label>Fecha de alta IMSS</label>
+                  <input
+                    type="date"
+                    name="fecha_imss"
+                    value={formulario.fecha_imss}
+                    onChange={manejarCambio}
+                  />
+                </div>
+                <div className="campo">
+                  <label>Fecha de renovación</label>
+                  <input
+                    type="date"
+                    name="fecha_renovacion"
+                    value={formulario.fecha_renovacion}
+                    onChange={manejarCambio}
+                  />
+                </div>
+              </div>
+              <div style={estiloGrid3}>
+                <div className="campo">
+                  <label>Departamento</label>
+                  <select
+                    name="departamento_id"
+                    value={formulario.departamento_id}
+                    onChange={manejarCambio}
+                  >
+                    <option value="">Seleccionar</option>
+                    {departamentos.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.nombre}
                       </option>
                     ))}
                   </select>
                 </div>
-              </>
-            )}
+                <div className="campo">
+                  <label>Puesto</label>
+                  <select
+                    name="puesto_id"
+                    value={formulario.puesto_id}
+                    onChange={manejarCambio}
+                  >
+                    <option value="">Seleccionar</option>
+                    {puestos
+                      .filter(
+                        (p) =>
+                          !formulario.departamento_id ||
+                          p.departamento_id ===
+                            parseInt(formulario.departamento_id),
+                      )
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nombre}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div className="campo">
+                  <label>Ubicación</label>
+                  <select
+                    name="ubicacion_id"
+                    value={formulario.ubicacion_id}
+                    onChange={manejarCambio}
+                  >
+                    <option value="">Seleccionar</option>
+                    {ubicaciones.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.nombre}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="campo">
+                <label>Jefe inmediato</label>
+                <select
+                  name="jefe_inmediato_id"
+                  value={formulario.jefe_inmediato_id}
+                  onChange={manejarCambio}
+                >
+                  <option value="">Sin jefe asignado</option>
+                  {empleadosJefes.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.nombre} {e.apellido_paterno}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-            <div className="formulario-botones">
-              <button type="submit">Crear</button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMostrarFormulario(false);
-                  setCrearUsuario(false);
-                  setError("");
-                }}
+              {/* ── DATOS PERSONALES ──────────────────────────── */}
+              <div style={estiloSeccion}>Datos personales</div>
+              <div style={estiloGrid2}>
+                <div className="campo">
+                  <label>Fecha de nacimiento</label>
+                  <input
+                    type="date"
+                    name="fecha_nacimiento"
+                    value={formulario.fecha_nacimiento}
+                    onChange={manejarCambio}
+                  />
+                </div>
+                <div className="campo">
+                  <label>Estado de nacimiento</label>
+                  <input
+                    type="text"
+                    name="estado_nacimiento"
+                    value={formulario.estado_nacimiento}
+                    onChange={manejarCambio}
+                    placeholder="Ej. Jalisco"
+                  />
+                </div>
+              </div>
+              <div style={estiloGrid3}>
+                <div className="campo">
+                  <label>CURP</label>
+                  <input
+                    type="text"
+                    name="curp"
+                    value={formulario.curp}
+                    onChange={manejarCambio}
+                    placeholder="18 caracteres"
+                    maxLength={18}
+                    style={{ textTransform: "uppercase" }}
+                  />
+                </div>
+                <div className="campo">
+                  <label>RFC</label>
+                  <input
+                    type="text"
+                    name="rfc"
+                    value={formulario.rfc}
+                    onChange={manejarCambio}
+                    placeholder="13 caracteres"
+                    maxLength={13}
+                    style={{ textTransform: "uppercase" }}
+                  />
+                </div>
+                <div className="campo">
+                  <label>NSS</label>
+                  <input
+                    type="text"
+                    name="nss"
+                    value={formulario.nss}
+                    onChange={manejarCambio}
+                    placeholder="11 dígitos"
+                    maxLength={11}
+                  />
+                </div>
+              </div>
+              <div style={estiloGrid3}>
+                <div className="campo">
+                  <label>Género</label>
+                  <select
+                    name="genero"
+                    value={formulario.genero}
+                    onChange={manejarCambio}
+                  >
+                    <option value="">Seleccionar</option>
+                    <option value="Masculino">Masculino</option>
+                    <option value="Femenino">Femenino</option>
+                    <option value="No binario">No binario</option>
+                    <option value="Prefiero no decir">Prefiero no decir</option>
+                  </select>
+                </div>
+                <div className="campo">
+                  <label>Estado civil</label>
+                  <select
+                    name="estado_civil"
+                    value={formulario.estado_civil}
+                    onChange={manejarCambio}
+                  >
+                    <option value="">Seleccionar</option>
+                    <option value="Soltero">Soltero</option>
+                    <option value="Casado">Casado</option>
+                    <option value="Divorciado">Divorciado</option>
+                    <option value="Viudo">Viudo</option>
+                    <option value="Unión libre">Unión libre</option>
+                  </select>
+                </div>
+                <div className="campo">
+                  <label>Escolaridad</label>
+                  <select
+                    name="escolaridad"
+                    value={formulario.escolaridad}
+                    onChange={manejarCambio}
+                  >
+                    <option value="">Seleccionar</option>
+                    <option value="Primaria">Primaria</option>
+                    <option value="Secundaria">Secundaria</option>
+                    <option value="Bachillerato">Bachillerato</option>
+                    <option value="Técnico">Técnico</option>
+                    <option value="Licenciatura">Licenciatura</option>
+                    <option value="Maestría">Maestría</option>
+                    <option value="Doctorado">Doctorado</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* ── CONTACTO ──────────────────────────────────── */}
+              <div style={estiloSeccion}>Contacto</div>
+              <div style={estiloGrid2}>
+                <div className="campo">
+                  <label>Celular personal</label>
+                  <input
+                    type="text"
+                    name="celular_personal"
+                    value={formulario.celular_personal}
+                    onChange={manejarCambio}
+                    placeholder="10 dígitos"
+                  />
+                </div>
+                <div className="campo">
+                  <label>Correo personal</label>
+                  <input
+                    type="email"
+                    name="correo_personal"
+                    value={formulario.correo_personal}
+                    onChange={manejarCambio}
+                    placeholder="correo@personal.com"
+                  />
+                </div>
+              </div>
+              <div style={estiloGrid3}>
+                <div className="campo">
+                  <label>Teléfono de emergencia</label>
+                  <input
+                    type="text"
+                    name="telefono_emergencia"
+                    value={formulario.telefono_emergencia}
+                    onChange={manejarCambio}
+                    placeholder="10 dígitos"
+                  />
+                </div>
+                <div className="campo">
+                  <label>Contacto de emergencia</label>
+                  <input
+                    type="text"
+                    name="contacto_emergencia"
+                    value={formulario.contacto_emergencia}
+                    onChange={manejarCambio}
+                    placeholder="Nombre completo"
+                  />
+                </div>
+                <div className="campo">
+                  <label>Parentesco</label>
+                  <input
+                    type="text"
+                    name="parentesco_emergencia"
+                    value={formulario.parentesco_emergencia}
+                    onChange={manejarCambio}
+                    placeholder="Ej. Madre, Cónyuge"
+                  />
+                </div>
+              </div>
+
+              {/* ── DOMICILIO ─────────────────────────────────── */}
+              <div style={estiloSeccion}>Domicilio</div>
+              <div style={estiloGrid2}>
+                <div className="campo">
+                  <label>Calle y número</label>
+                  <input
+                    type="text"
+                    name="calle"
+                    value={formulario.calle}
+                    onChange={manejarCambio}
+                    placeholder="Ej. Av. Reforma 123"
+                  />
+                </div>
+                <div className="campo">
+                  <label>Colonia</label>
+                  <input
+                    type="text"
+                    name="colonia"
+                    value={formulario.colonia}
+                    onChange={manejarCambio}
+                  />
+                </div>
+              </div>
+              <div style={estiloGrid3}>
+                <div className="campo">
+                  <label>Código postal</label>
+                  <input
+                    type="text"
+                    name="codigo_postal"
+                    value={formulario.codigo_postal}
+                    onChange={manejarCambio}
+                    maxLength={5}
+                    placeholder="5 dígitos"
+                  />
+                </div>
+                <div className="campo">
+                  <label>Municipio</label>
+                  <input
+                    type="text"
+                    name="municipio"
+                    value={formulario.municipio}
+                    onChange={manejarCambio}
+                  />
+                </div>
+                <div className="campo">
+                  <label>Estado</label>
+                  <input
+                    type="text"
+                    name="estado_residencia"
+                    value={formulario.estado_residencia}
+                    onChange={manejarCambio}
+                    placeholder="Ej. Jalisco"
+                  />
+                </div>
+              </div>
+
+              {/* ── DATOS FINANCIEROS ─────────────────────────── */}
+              <div style={estiloSeccion}>Datos financieros</div>
+              <div style={estiloGrid3}>
+                <div className="campo">
+                  <label>Banco</label>
+                  <input
+                    type="text"
+                    name="banco"
+                    value={formulario.banco}
+                    onChange={manejarCambio}
+                    placeholder="Ej. BBVA, Santander"
+                  />
+                </div>
+                <div className="campo">
+                  <label>CLABE interbancaria</label>
+                  <input
+                    type="text"
+                    name="clabe"
+                    value={formulario.clabe}
+                    onChange={manejarCambio}
+                    maxLength={18}
+                    placeholder="18 dígitos"
+                  />
+                </div>
+                <div className="campo">
+                  <label>CP fiscal</label>
+                  <input
+                    type="text"
+                    name="cp_fiscal"
+                    value={formulario.cp_fiscal}
+                    onChange={manejarCambio}
+                    maxLength={5}
+                    placeholder="5 dígitos"
+                  />
+                </div>
+              </div>
+              <div style={estiloGrid2}>
+                <div className="campo">
+                  <label>Crédito Infonavit</label>
+                  <input
+                    type="text"
+                    name="infonavit"
+                    value={formulario.infonavit}
+                    onChange={manejarCambio}
+                    placeholder="Número de crédito"
+                  />
+                </div>
+                <div className="campo">
+                  <label>Crédito Fonacot</label>
+                  <input
+                    type="text"
+                    name="fonacot"
+                    value={formulario.fonacot}
+                    onChange={manejarCambio}
+                    placeholder="Número de crédito"
+                  />
+                </div>
+              </div>
+
+              {/* ── CREAR USUARIO ─────────────────────────────── */}
+              <div style={estiloSeccion}>Acceso al sistema</div>
+              <div className="campo-casilla">
+                <input
+                  type="checkbox"
+                  id="crear_usuario"
+                  checked={crearUsuario}
+                  onChange={(e) => setCrearUsuario(e.target.checked)}
+                />
+                <label htmlFor="crear_usuario">
+                  Crear usuario para este empleado
+                </label>
+              </div>
+
+              {crearUsuario && (
+                <div style={{ marginTop: "0.75rem" }}>
+                  <div style={estiloGrid2}>
+                    <div className="campo">
+                      <label>Correo electrónico *</label>
+                      <input
+                        type="email"
+                        name="correo"
+                        value={formulario.correo}
+                        onChange={manejarCambio}
+                        required={crearUsuario}
+                        placeholder="usuario@rayhsa.com.mx"
+                      />
+                    </div>
+                    <div className="campo">
+                      <label>Contraseña temporal *</label>
+                      <input
+                        type="password"
+                        name="contraseña"
+                        value={formulario.contraseña}
+                        onChange={manejarCambio}
+                        required={crearUsuario}
+                        minLength={6}
+                        placeholder="Mín. 6 caracteres"
+                      />
+                    </div>
+                  </div>
+                  <div className="campo">
+                    <label>Rol del usuario</label>
+                    <select
+                      name="rol_id"
+                      value={formulario.rol_id}
+                      onChange={manejarCambio}
+                    >
+                      <option value="">Sin rol</option>
+                      {roles.map((rol) => (
+                        <option key={rol.id} value={rol.id}>
+                          {rol.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              <div
+                className="formulario-botones"
+                style={{ marginTop: "1.5rem" }}
               >
-                Cancelar
-              </button>
-            </div>
-          </form>
+                <button type="submit">Crear Empleado</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMostrarFormulario(false);
+                    setCrearUsuario(false);
+                    setError("");
+                  }}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
@@ -396,7 +903,7 @@ export default function EmpleadoPage() {
             {empleados.map((empleado) => (
               <tr key={empleado.id}>
                 <td>
-                  {empleado.nombre} {empleado.apellido}
+                  {empleado.nombre} {empleado.apellido_paterno}
                 </td>
                 <td>{empleado.puesto || "-"}</td>
                 <td>{empleado.departamento || "-"}</td>
