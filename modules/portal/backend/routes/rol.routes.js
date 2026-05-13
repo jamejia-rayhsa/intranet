@@ -9,6 +9,7 @@ router.use(authenticateJWT);
 
 router.get('/', verificarPermiso('portal', 'Roles', 'consulta'), ControladorRol.listar);
 router.post('/', verificarPermiso('portal', 'Roles', 'edicion'), ControladorRol.crear);
+router.put('/:id/permisos', verificarPermiso('portal', 'Roles', 'edicion'), ControladorRol.asignarPermisos);
 router.put('/:id', verificarPermiso('portal', 'Roles', 'edicion'), ControladorRol.actualizar);
 router.delete('/:id', verificarPermiso('portal', 'Roles', 'edicion'), ControladorRol.eliminar);
 

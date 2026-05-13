@@ -13,6 +13,54 @@ const ESTATUS_CONFIG = {
   rechazado: { etiqueta: "Rechazado", color: "var(--color-error)" },
 };
 
+// Constantes de estilo — patrón EmpleadoPage (definidas fuera del componente para evitar recreación en cada render)
+const estiloSeccion = {
+  background: "var(--color-superficie)",
+  border: "1px solid var(--color-borde)",
+  borderRadius: "0.75rem",
+  padding: "1.5rem",
+  marginBottom: "1.5rem",
+};
+
+const estiloTituloSeccion = {
+  fontSize: "1.05rem",
+  fontWeight: 700,
+  color: "var(--color-primario)",
+  marginBottom: "1.25rem",
+  paddingBottom: "0.5rem",
+  borderBottom: "2px solid var(--color-borde)",
+};
+
+const estiloInput = {
+  width: "100%",
+  padding: "0.5rem 0.75rem",
+  border: "1px solid var(--color-borde)",
+  borderRadius: "0.4rem",
+  fontSize: "0.9rem",
+  background: "var(--color-fondo)",
+  color: "inherit",
+  boxSizing: "border-box",
+};
+
+const estiloLabel = {
+  display: "block",
+  fontSize: "0.85rem",
+  fontWeight: 600,
+  marginBottom: "0.3rem",
+  color: "var(--color-texto-claro)",
+};
+
+const estiloBotonPrimario = {
+  background: "var(--color-primario)",
+  color: "#fff",
+  border: "none",
+  borderRadius: "0.4rem",
+  padding: "0.6rem 1.4rem",
+  fontWeight: 600,
+  fontSize: "0.9rem",
+  cursor: "pointer",
+};
+
 function BadgeEstatus({ estatus }) {
   const config = ESTATUS_CONFIG[estatus] || { etiqueta: estatus, color: "var(--color-borde)" };
   return (
@@ -179,42 +227,6 @@ export default function VacacionesPage() {
     }
   }
 
-  const estiloSeccion = {
-    background: "var(--color-superficie)",
-    border: "1px solid var(--color-borde)",
-    borderRadius: "0.75rem",
-    padding: "1.5rem",
-    marginBottom: "1.5rem",
-  };
-
-  const estiloTituloSeccion = {
-    fontSize: "1.05rem",
-    fontWeight: 700,
-    color: "var(--color-primario)",
-    marginBottom: "1.25rem",
-    paddingBottom: "0.5rem",
-    borderBottom: "2px solid var(--color-borde)",
-  };
-
-  const estiloInput = {
-    width: "100%",
-    padding: "0.5rem 0.75rem",
-    border: "1px solid var(--color-borde)",
-    borderRadius: "0.4rem",
-    fontSize: "0.9rem",
-    background: "var(--color-fondo)",
-    color: "inherit",
-    boxSizing: "border-box",
-  };
-
-  const estiloLabel = {
-    display: "block",
-    fontSize: "0.85rem",
-    fontWeight: 600,
-    marginBottom: "0.3rem",
-    color: "var(--color-texto-claro)",
-  };
-
   return (
     <div style={{ maxWidth: "900px", margin: "0 auto", padding: "1.5rem" }}>
       <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginBottom: "0.25rem" }}>
@@ -354,13 +366,7 @@ export default function VacacionesPage() {
             type="submit"
             disabled={enviando || !saldo}
             style={{
-              background: "var(--color-primario)",
-              color: "#fff",
-              border: "none",
-              borderRadius: "0.4rem",
-              padding: "0.6rem 1.4rem",
-              fontWeight: 600,
-              fontSize: "0.9rem",
+              ...estiloBotonPrimario,
               cursor: enviando ? "not-allowed" : "pointer",
               opacity: enviando ? 0.7 : 1,
             }}

@@ -9,7 +9,14 @@ import { obtenerDepartamentos } from "../services/departamentos.service";
 import { obtenerPuestos } from "../services/puestos.service";
 import { obtenerUbicaciones } from "../services/ubicaciones.service";
 import EmpleadoProfileCard from "../components/EmpleadoProfileCard";
-import { ESTADOS_MEXICO, BANCOS_MEXICO } from "../constants/catalogos";
+import {
+  ESTADOS_MEXICO,
+  BANCOS_MEXICO,
+  GENEROS,
+  ESTADOS_CIVILES,
+  NIVELES_ESCOLARIDAD,
+  TIPOS_CONTRATO,
+} from "../constants/catalogos";
 
 function soloDigitos(e) {
   e.target.value = e.target.value.replace(/\D/g, "");
@@ -166,6 +173,13 @@ export default function EmpleadoPage() {
   function manejarCambio(evento) {
     const { name, value } = evento.target;
     setFormulario({ ...formulario, [name]: value });
+  }
+
+  function manejarBlurNombre(e) {
+    const capitalizado = e.target.value
+      .toLowerCase()
+      .replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+    setFormulario((prev) => ({ ...prev, [e.target.name]: capitalizado }));
   }
 
   async function manejarEnvio(evento) {
@@ -328,6 +342,7 @@ export default function EmpleadoPage() {
                     name="nombre"
                     value={formulario.nombre}
                     onChange={manejarCambio}
+                    onBlur={manejarBlurNombre}
                     required
                     placeholder="Nombre(s)"
                   />
@@ -339,6 +354,7 @@ export default function EmpleadoPage() {
                     name="apellido_paterno"
                     value={formulario.apellido_paterno}
                     onChange={manejarCambio}
+                    onBlur={manejarBlurNombre}
                     required
                     placeholder="Apellido paterno"
                   />
@@ -350,6 +366,7 @@ export default function EmpleadoPage() {
                     name="apellido_materno"
                     value={formulario.apellido_materno}
                     onChange={manejarCambio}
+                    onBlur={manejarBlurNombre}
                     placeholder="Apellido materno"
                   />
                 </div>
@@ -398,10 +415,9 @@ export default function EmpleadoPage() {
                     onChange={manejarCambio}
                   >
                     <option value="">Seleccionar</option>
-                    <option value="Determinado">Determinado</option>
-                    <option value="Indeterminado">Indeterminado</option>
-                    <option value="Honorarios">Honorarios</option>
-                    <option value="Confianza">Confianza</option>
+                    {TIPOS_CONTRATO.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
                   </select>
                 </div>
                 <div className="campo">
@@ -588,10 +604,9 @@ export default function EmpleadoPage() {
                     onChange={manejarCambio}
                   >
                     <option value="">Seleccionar</option>
-                    <option value="Masculino">Masculino</option>
-                    <option value="Femenino">Femenino</option>
-                    <option value="No binario">No binario</option>
-                    <option value="Prefiero no decir">Prefiero no decir</option>
+                    {GENEROS.map((g) => (
+                      <option key={g} value={g}>{g}</option>
+                    ))}
                   </select>
                 </div>
                 <div className="campo">
@@ -602,11 +617,9 @@ export default function EmpleadoPage() {
                     onChange={manejarCambio}
                   >
                     <option value="">Seleccionar</option>
-                    <option value="Soltero">Soltero</option>
-                    <option value="Casado">Casado</option>
-                    <option value="Divorciado">Divorciado</option>
-                    <option value="Viudo">Viudo</option>
-                    <option value="Unión libre">Unión libre</option>
+                    {ESTADOS_CIVILES.map((ec) => (
+                      <option key={ec} value={ec}>{ec}</option>
+                    ))}
                   </select>
                 </div>
                 <div className="campo">
@@ -617,13 +630,9 @@ export default function EmpleadoPage() {
                     onChange={manejarCambio}
                   >
                     <option value="">Seleccionar</option>
-                    <option value="Primaria">Primaria</option>
-                    <option value="Secundaria">Secundaria</option>
-                    <option value="Bachillerato">Bachillerato</option>
-                    <option value="Técnico">Técnico</option>
-                    <option value="Licenciatura">Licenciatura</option>
-                    <option value="Maestría">Maestría</option>
-                    <option value="Doctorado">Doctorado</option>
+                    {NIVELES_ESCOLARIDAD.map((ne) => (
+                      <option key={ne} value={ne}>{ne}</option>
+                    ))}
                   </select>
                 </div>
               </div>

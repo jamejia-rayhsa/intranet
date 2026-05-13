@@ -178,3 +178,184 @@ type: project
 - `modules/rh/frontend/constants/catalogos.js` (NUEVO)
 - `modules/rh/frontend/pages/EmpleadoPage.jsx`
 - `modules/rh/frontend/components/EmpleadoProfileCard.jsx`
+
+---
+
+### [2026-04-29] orquestador — Combos unificados, title case en nombres y eliminación de nivel_salarial
+
+**Contexto:** Los formularios de alta y edición de empleado tenían opciones inconsistentes (tipo_contrato con valores distintos en cada form), campos categóricos como texto libre, y sin normalización de mayúsculas en nombres. La tabla de puestos mostraba un campo `nivel_salarial` sin uso real en los flujos de nómina.
+
+**Decisiones tomadas:**
+
+1. **4 nuevas constantes en `catalogos.js`** (DRY — reutilizadas en ambos formularios)
+   - `GENEROS` — ["Masculino", "Femenino", "Otro"]
+   - `ESTADOS_CIVILES` — ["Soltero", "Casado", "Divorciado", "Separado", "Viudo", "Unión libre"]
+   - `NIVELES_ESCOLARIDAD` — 8 niveles (Sin estudios → Doctorado)
+   - `TIPOS_CONTRATO` — ["Determinado", "Indeterminado", "Por obra", "Honorarios", "Confianza", "Prácticas"]
+   - **Por qué:** `tipo_contrato` tenía opciones completamente distintas entre alta y edición (e.g. "Determinado" vs "indefinido") — riesgo de pérdida de datos al editar registros creados con el form de alta.
+
+2. **`<select>` con catálogos centralizados** en EmpleadoPage.jsx y EmpleadoProfileCard.jsx
+   - genero, estado_civil, escolaridad, tipo_contrato → `<select>` en ambos forms
+   - ProfileCard usa el componente `<CampoSelect>` ya existente
+
+3. **`manejarBlurNombre`** — normalización title case en blur (onBlur)
+   - Aplica en nombre, apellido_paterno, apellido_materno en ambos forms
+   - Implementado dentro del componente (no como helper de módulo) porque necesita acceso al setter de estado (setFormulario / setDatosEditados)
+   - `soloDigitos` sí puede ser helper externo porque solo manipula `e.target.value`
+
+4. **`nivel_salarial` eliminado de la capa de aplicación** (frontend + backend modelo)
+   - Eliminado de: estado inicial PuestosPage, JSX formulario, tabla de listado, puesto.model.js CREATE y UPDATE
+   - **NO se crea migración DROP COLUMN** — columna queda en BD inerte. El usuario decide ejecutarla cuando convenga.
+   - El `puesto.controller.js` no desestructuraba el body explícitamente, por lo que no requirió cambios.
+
+**Dato de compatibilidad:** Registros con valores legacy (e.g. "indefinido") en tipo_contrato no romperán el select — el browser mostrará valor vacío. Requiere normalización de datos si se quiere consistencia.
+
+**Revisión:** APROBADO — sin bugs bloqueantes (revisor 2026-04-29)
+
+**Archivos creados/modificados:**
+- `modules/rh/frontend/constants/catalogos.js` — añadidos GENEROS, ESTADOS_CIVILES, NIVELES_ESCOLARIDAD, TIPOS_CONTRATO
+- `modules/rh/frontend/pages/EmpleadoPage.jsx`
+- `modules/rh/frontend/components/EmpleadoProfileCard.jsx`
+- `modules/rh/frontend/pages/PuestosPage.jsx`
+- `modules/rh/backend/models/puesto.model.js`
+
+---
+
+### [2026-04-29] orquestador — Logo sidebar +10%, logo login Rayhsa, filtrado menú por permisos
+
+**Contexto:** El sidebar mostraba el logo pequeño y sin centrado explícito. La página de login usaba un emoji genérico 🏢. El menú dinámico exponía todas las sub-rutas de módulos activos a todos los usuarios, sin filtrar por los permisos del rol — los links aparecían en el sidebar aunque el backend los rechazara.
+
+**Decisiones tomadas:**
+
+1. **Logo sidebar: `height: 38px → 42px` + centrado inline**
+   - 38 × 1.1 = 41.8 → redondeado a 42px (valor limpio)
+   - `<div className="sidebar-logo">` recibe `style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}` para garantizar centrado sin depender del CSS externo
+
+2. **Logo login: emoji 🏢 → `<img src="/logo-rayhsa.png">`**
+   - El archivo `logo-rayhsa.png` existe en `modules/portal/frontend/public/`
+   - `height: 80px, width: auto, objectFit: contain, display: block, margin: 0 auto`
+   - `onError` oculta el `<img>` si no carga (no muestra imagen rota)
+   - Se mantienen el `<h1>{NOMBRE_EMPRESA}</h1>` y el `<p>` de subtítulo
+
+3. **Filtrado de menú por permisos — 3 capas:**
+
+   **Backend — nuevo endpoint `GET /api/permisos/mis-permisos`** (autenticado con `verificarToken`)
+   - Modelo: `Permiso.obtenerPorUsuarioId(usuarioId)` — JOIN completo:
+     `usuario_rol → roles → rol_opcion_permisos → modulo_opciones → modulos`
+   - Retorna: `[{ modulo: string, opcion: string, tipo: string }]`
+   - Ruta registrada **antes** de `/rol/:rol_id` en el router para evitar que Express capture "mis-permisos" como `:rol_id`
+
+   **Frontend main.jsx — cargar permisos tras autenticación**
+   - `useEffect` adicional: fetch a `/api/permisos/mis-permisos` usando `solicitar()` (helper interno del proyecto)
+   - Estado: `permisos = []`, se pasa como prop `permisos={permisos}` a `<MenuDinamico>`
+
+   **Frontend MenuDinamico.jsx — anotar + filtrar SUB_RUTAS**
+   - Cada entrada de `SUB_RUTAS` tiene campo `opcion`: nombre exacto de `modulo_opciones.nombre` del seed (o `null` si no requiere permiso específico, e.g. Dashboard)
+   - Función `tieneAcceso(moduloNombre, opcion)`:
+     - `super_admin` → siempre `true`
+     - `opcion === null` → siempre `true`
+     - `permisos.length === 0` → `true` (fallback: permisos aún cargando, evita menú vacío)
+     - Caso normal: `permisos.some(p => p.modulo.toLowerCase() === modulo && p.opcion === opcion)`
+   - El bloque `ADMIN_ITEMS` conserva su lógica original intacta
+
+4. **Comparación módulo: case-insensitive (`toLowerCase()`), opción: case-sensitive**
+   - Los nombres de módulos pueden tener inconsistencias de case en el seed; las opciones son exactas
+
+**Revisión:** APROBADO CON OBSERVACIONES — sin bugs bloqueantes (revisor 2026-04-29)
+- Observación 1 (baja): guard defensivo `p?.modulo?.toLowerCase()` — mejora futura
+- Observación 2 (baja): contenedor del logo login sigue ocupando espacio en caso de error — mejora futura
+
+**Archivos creados/modificados:**
+- `modules/portal/frontend/components/MenuDinamico.jsx`
+- `modules/portal/frontend/pages/PortalLogin.jsx`
+- `modules/portal/frontend/main.jsx`
+- `modules/portal/backend/models/permiso.model.js`
+- `modules/portal/backend/controllers/permiso.controller.js`
+- `modules/portal/backend/routes/permiso.routes.js`
+
+---
+
+### [2026-05-13] orquestador — Fix dashboard RH (3 SQL bugs) + CSS página Permisos
+
+**Contexto:** El dashboard RH mostraba "Error al obtener el dashboard" al cargar. La página de Permisos/Ausencias no tenía estilos visuales (clases CSS usadas en JSX sin definición CSS).
+
+**Decisiones tomadas:**
+
+1. **3 bugs SQL en `rh.dashboard.controller.js` (causa raíz del error):**
+   - `permisos_ausencia` (singular) → `permisos_ausencias` (plural) — tabla real tiene 's'
+   - `e.apellido` → `e.apellido_paterno` — la tabla `empleados` usa `apellido_paterno` desde la migración 001
+   - `GROUP BY departamento` → `LEFT JOIN departamentos d ON d.id = e.departamento_id ... GROUP BY d.nombre` — `departamento` no existe como columna, solo `departamento_id` (FK normalizada)
+
+2. **Mismo bug en `permisoAusencia.model.js` (detectado por revisor, corregido por orquestador):**
+   - 6 ocurrencias de `permisos_ausencia` → `permisos_ausencias` (INSERT, 3×SELECT, UPDATE, COUNT)
+   - 2 ocurrencias de `e.apellido` → `e.apellido_paterno` en joins con `empleados`
+   - **Lección:** Cuando se corrige un nombre de tabla, buscar en TODO el código backend que referencia esa tabla
+
+3. **CSS para Permisos — nuevo archivo `modules/rh/frontend/styles/permisos.css`**
+   - Crea y define 15 clases: `.rh-admin-page`, `.admin-filtros`, `.filtros-grupo`, `.permisos-lista`, `.lista-encabezado`, `.permisos-tabla`, `.badge`, `.badge-pendiente/.aprobado/.rechazado`, `.boton-aprobar/.rechazar`, `.paginacion`, `.permisos-vacios`, `.cargando`
+   - Usa variables CSS del sistema (`var(--color-primario)`, `var(--color-borde)`, etc.)
+   - Colores semánticos de badges son fijos (verde suave / amarillo / rojo claro) — no variables del sistema
+   - Importado en `RHAdminPage.jsx` con `import "../styles/permisos.css"`
+
+4. **Bug adicional en `RHDashboard.jsx` — URL de fetch incorrecta (causa real del error en producción)**
+   - El componente usaba `fetch` manual con `VITE_API_URL_RH || VITE_API_URL || 'http://localhost:4002'`
+   - Ninguna de esas variables está definida en `.env` → fallback a puerto 4002 que no existe
+   - El backend está en puerto 4000 con prefijo `/api` → URL correcta es `http://localhost:4000/api/rh/dashboard`
+   - Solución: reemplazar `fetch` manual por `solicitar('/rh/dashboard')` (patrón estándar del proyecto)
+   - Regla: **NUNCA usar `VITE_API_URL_RH` ni fetch manual en páginas RH** — siempre `solicitar()` de `utils/api.js`
+
+**Revisión:** APROBADO — bug URL dashboard corregido post-revisión.
+
+**Archivos creados/modificados:**
+- `modules/rh/backend/controllers/rh.dashboard.controller.js` — 3 SQL bugs
+- `modules/rh/backend/models/permisoAusencia.model.js` — 6 tabla + 2 apellido corregidos
+- `modules/rh/frontend/pages/RHDashboard.jsx` — fetch manual → solicitar()
+- `modules/rh/frontend/styles/permisos.css` (NUEVO)
+- `modules/rh/frontend/pages/RHAdminPage.jsx` — import CSS agregado
+
+---
+
+### [2026-04-29] orquestador — Fix bugs admin/roles/sidebar + CSS vacaciones
+
+**Contexto:** 5 problemas reportados en el portal admin y módulo RH:
+1. Botón Resetear Clave falla con 404 — ruta faltante en backend
+2. Página de Roles no carga — endpoint incorrecto en frontend
+3. Botón Editar usuarios — handler ya existía y funcionaba (sin cambio necesario)
+4. Sidebar muestra módulos aunque el usuario no tenga acceso a ninguna sub-ruta
+5. VacacionesPage y VacacionesListadoPage usan colores hardcodeados sin variables CSS
+
+**Decisiones tomadas:**
+
+1. **`POST /api/usuarios/:id/reset-password` — solo faltaba registrar la ruta**
+   - El handler `resetearPassword` YA existía en `usuario.controller.js` (genera contraseña temporal, hashea con bcrypt, actualiza BD, retorna `contrasena_temporal`)
+   - Se registró la ruta en `usuario.routes.js` con el middleware correcto
+   - La ruta va ANTES de otras rutas con `:id` para evitar captura por Express
+
+2. **Roles no cargaba — URL incorrecta en frontend**
+   - `PortalAdminRoles.jsx` llamaba `solicitar('/permisos')` → endpoint inexistente
+   - Corregido a `solicitar('/permisos/opciones')` → endpoint correcto (`GET /api/permisos/opciones`)
+
+3. **`rol.routes.js` — orden de rutas corregido**
+   - `PUT /:id/permisos` registrado ANTES de `PUT /:id` para que Express no capture "permisos" como valor del parámetro `:id`
+
+4. **Sidebar: filtrado a nivel de módulo completo**
+   - `MenuDinamico.jsx`: nueva variable `modulosVisibles` filtra `modulos` antes del `.map()`
+   - Lógica: módulo visible si tiene al menos una sub-ruta accesible para el usuario
+   - Módulos sin SUB_RUTAS configuradas siempre visibles (fallback seguro)
+   - `ADMIN_ITEMS` conserva su lógica original intacta
+   - Respeta el fallback: `permisos.length === 0` → `tieneAcceso` retorna `true` → todos los módulos visibles mientras cargan los permisos
+
+5. **CSS vacaciones — variables CSS en lugar de hex hardcodeados**
+   - `VacacionesPage.jsx` y `VacacionesListadoPage.jsx`: constantes de estilo movidas fuera del componente (patrón EmpleadoPage)
+   - Reemplazados `#007bff`, `#28a745`, `#dc3545` etc. por `var(--color-primario)`, `var(--color-exito)`, `var(--color-error)`
+   - Sin refactor de estructura — misma lógica, solo estilos consistentes con el sistema de diseño
+
+**Revisión:** APROBADO — sin bugs bloqueantes (revisor 2026-04-29)
+
+**Archivos modificados:**
+- `modules/portal/backend/routes/usuario.routes.js` — +ruta reset-password
+- `modules/portal/backend/routes/rol.routes.js` — orden de rutas corregido
+- `modules/portal/frontend/pages/PortalAdminRoles.jsx` — URL permisos corregida
+- `modules/portal/frontend/components/MenuDinamico.jsx` — filtrado módulos completos
+- `modules/rh/frontend/pages/VacacionesPage.jsx` — variables CSS
+- `modules/rh/frontend/pages/VacacionesListadoPage.jsx` — variables CSS

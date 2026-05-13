@@ -51,9 +51,12 @@ export default function PortalLogin() {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', background: 'var(--color-fondo)', minWidth: 0 }}>
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          <div style={{ width: '72px', height: '72px', borderRadius: '16px', background: 'var(--color-primario)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 0.75rem', fontSize: '2rem' }}>
-            🏢
-          </div>
+          <img
+            src="/logo-rayhsa.png"
+            alt="RAYHSA"
+            style={{ height: '80px', width: 'auto', objectFit: 'contain', display: 'block', margin: '0 auto 0.75rem' }}
+            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+          />
           <h1 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--color-texto)', margin: 0 }}>{NOMBRE_EMPRESA}</h1>
           <p style={{ fontSize: '0.85rem', color: 'var(--color-texto-claro)', marginTop: '0.25rem' }}>Acceso al portal corporativo</p>
         </div>

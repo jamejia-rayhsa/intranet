@@ -3,8 +3,7 @@ import { Link } from 'react-router-dom';
 import TarjetaKPI from '../../../portal/frontend/components/TarjetaKPI';
 import GraficaBarras from '../../../portal/frontend/components/GraficaBarras';
 import GraficaDona from '../../../portal/frontend/components/GraficaDona';
-
-const API = import.meta.env.VITE_API_URL_RH || import.meta.env.VITE_API_URL || 'http://localhost:4002';
+import { solicitar } from '../../../portal/frontend/utils/api';
 
 export default function RHDashboard() {
   const [datos, setDatos] = useState(null);
@@ -12,13 +11,9 @@ export default function RHDashboard() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    fetch(`${API}/rh/dashboard`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(r => r.json())
+    solicitar('/rh/dashboard')
       .then(json => { if (json.exito) setDatos(json.datos); else setError(json.mensaje); })
-      .catch(() => setError('Error al conectar con el servidor'))
+      .catch(err => setError(err.message || 'Error al conectar con el servidor'))
       .finally(() => setCargando(false));
   }, []);
 

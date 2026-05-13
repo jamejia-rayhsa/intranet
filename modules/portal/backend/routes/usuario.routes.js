@@ -11,6 +11,7 @@ router.get('/', verificarPermiso('portal', 'Usuarios', 'consulta'), ControladorU
 router.get('/:id', verificarPermiso('portal', 'Usuarios', 'consulta'), ControladorUsuario.obtener);
 router.put('/:id', verificarPermiso('portal', 'Usuarios', 'edicion'), ControladorUsuario.actualizar);
 router.delete('/:id', verificarPermiso('portal', 'Usuarios', 'edicion'), ControladorUsuario.eliminar);
+router.post('/:id/reset-password', verificarPermiso('portal', 'Usuarios', 'edicion'), ControladorUsuario.resetearPassword);
 router.post('/:id/rol', verificarPermiso('portal', 'Usuarios', 'edicion'), ControladorUsuario.asignarRol);
 
 module.exports = router;

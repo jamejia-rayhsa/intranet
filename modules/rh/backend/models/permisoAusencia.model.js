@@ -22,7 +22,7 @@ const PermisoAusencia = {
   async obtenerPorId(id) {
     const consulta = `
       SELECT p.*,
-        e.nombre as empleado_nombre, e.apellido as empleado_apellido
+        e.nombre as empleado_nombre, e.apellido_paterno as empleado_apellido
       FROM permisos_ausencia p
       INNER JOIN empleados e ON p.empleado_id = e.id
       WHERE p.id = $1
@@ -34,7 +34,7 @@ const PermisoAusencia = {
   async listar(filtros = {}) {
     let consulta = `
       SELECT p.*,
-        e.nombre as empleado_nombre, e.apellido as empleado_apellido
+        e.nombre as empleado_nombre, e.apellido_paterno as empleado_apellido
       FROM permisos_ausencia p
       INNER JOIN empleados e ON p.empleado_id = e.id
       WHERE 1=1

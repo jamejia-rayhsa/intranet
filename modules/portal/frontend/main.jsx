@@ -9,6 +9,7 @@ import {
 } from "react-router-dom";
 import { ProveedorAuth, usarAuth } from "./context/AuthContext";
 import { obtenerModulosActivos } from "./services/modulos.service";
+import { solicitar } from "./utils/api";
 import "./styles/globales.css";
 
 import PortalLogin from "./pages/PortalLogin";
@@ -62,6 +63,7 @@ function RutaProtegida({ children, permisosRequeridos = [] }) {
 function LayoutConMenu({ children }) {
   const { usuario } = usarAuth();
   const [modulos, setModulos] = useState([]);
+  const [permisos, setPermisos] = useState([]);
   const [sidebarAbierto, setSidebarAbierto] = useState(false);
 
   useEffect(() => {
@@ -71,6 +73,10 @@ function LayoutConMenu({ children }) {
           if (respuesta.exito) setModulos(respuesta.datos);
         })
         .catch((error) => console.error("Error al cargar módulos:", error));
+
+      solicitar('/permisos/mis-permisos')
+        .then((data) => { if (data.exito) setPermisos(data.datos); })
+        .catch((error) => console.error("Error al cargar permisos:", error));
     }
   }, [usuario]);
 
@@ -85,6 +91,7 @@ function LayoutConMenu({ children }) {
       )}
       <MenuDinamico
         modulos={modulos}
+        permisos={permisos}
         abierto={sidebarAbierto}
         onCerrar={() => setSidebarAbierto(false)}
       />

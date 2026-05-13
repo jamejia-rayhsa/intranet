@@ -27,16 +27,17 @@ const RHDashboardController = {
           ORDER BY DATE_TRUNC('month', fecha_creacion)
         `),
         grupo.query(`
-          SELECT COALESCE(departamento, 'Sin departamento') AS nombre, COUNT(*) AS valor
-          FROM empleados
-          WHERE estatus = 'activo'
-          GROUP BY departamento
+          SELECT COALESCE(d.nombre, 'Sin departamento') AS nombre, COUNT(*) AS valor
+          FROM empleados e
+          LEFT JOIN departamentos d ON e.departamento_id = d.id
+          WHERE e.estatus = 'activo'
+          GROUP BY d.nombre
           ORDER BY valor DESC
           LIMIT 8
         `),
         grupo.query(`
           SELECT
-            e.nombre || ' ' || e.apellido AS empleado,
+            e.nombre || ' ' || e.apellido_paterno AS empleado,
             pa.tipo,
             pa.fecha_inicio,
             pa.fecha_fin,

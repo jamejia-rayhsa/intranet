@@ -4,7 +4,14 @@ import {
   actualizarEmpleado,
   obtenerEmpleados,
 } from "../services/empleados.service";
-import { ESTADOS_MEXICO, BANCOS_MEXICO } from "../constants/catalogos";
+import {
+  ESTADOS_MEXICO,
+  BANCOS_MEXICO,
+  GENEROS,
+  ESTADOS_CIVILES,
+  NIVELES_ESCOLARIDAD,
+  TIPOS_CONTRATO,
+} from "../constants/catalogos";
 import ChecklistDocumentos from "./ChecklistDocumentos";
 import { obtenerDepartamentos } from "../services/departamentos.service";
 import { obtenerPuestos } from "../services/puestos.service";
@@ -210,6 +217,13 @@ export default function EmpleadoProfileCard({ empleadoId, alVolver }) {
     setFormulario({ ...formulario, [name]: value });
   }
 
+  function manejarBlurNombre(e) {
+    const capitalizado = e.target.value
+      .toLowerCase()
+      .replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+    setFormulario((prev) => ({ ...prev, [e.target.name]: capitalizado }));
+  }
+
   async function guardarCambios() {
     setError("");
     try {
@@ -324,9 +338,9 @@ export default function EmpleadoProfileCard({ empleadoId, alVolver }) {
             </div>
             {editando ? (
               <>
-                <Campo label="Nombres" name="nombre" value={formulario.nombre} onChange={manejarCambio} />
-                <Campo label="Apellido Paterno" name="apellido_paterno" value={formulario.apellido_paterno} onChange={manejarCambio} />
-                <Campo label="Apellido Materno" name="apellido_materno" value={formulario.apellido_materno} onChange={manejarCambio} />
+                <Campo label="Nombres" name="nombre" value={formulario.nombre} onChange={manejarCambio} onBlur={manejarBlurNombre} />
+                <Campo label="Apellido Paterno" name="apellido_paterno" value={formulario.apellido_paterno} onChange={manejarCambio} onBlur={manejarBlurNombre} />
+                <Campo label="Apellido Materno" name="apellido_materno" value={formulario.apellido_materno} onChange={manejarCambio} onBlur={manejarBlurNombre} />
                 <div className="dato">
                   <label htmlFor="edit-estatus">Estatus</label>
                   <select id="edit-estatus" name="estatus" value={formulario.estatus} onChange={manejarCambio}>
@@ -394,17 +408,7 @@ export default function EmpleadoProfileCard({ empleadoId, alVolver }) {
                       .map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
                   </select>
                 </div>
-                <div className="dato">
-                  <label htmlFor="edit-tipo_contrato">Tipo de Contrato</label>
-                  <select id="edit-tipo_contrato" name="tipo_contrato" value={formulario.tipo_contrato} onChange={manejarCambio}>
-                    <option value="">Seleccionar</option>
-                    <option value="indefinido">Indefinido</option>
-                    <option value="temporal">Temporal</option>
-                    <option value="por_obra">Por Obra</option>
-                    <option value="honorarios">Honorarios</option>
-                    <option value="practicas">Prácticas</option>
-                  </select>
-                </div>
+                <CampoSelect label="Tipo de Contrato" name="tipo_contrato" value={formulario.tipo_contrato} onChange={manejarCambio} opciones={TIPOS_CONTRATO} />
                 <div className="dato">
                   <label htmlFor="edit-jefe_inmediato_id">Jefe Directo</label>
                   <select id="edit-jefe_inmediato_id" name="jefe_inmediato_id" value={formulario.jefe_inmediato_id} onChange={manejarCambio}>
@@ -459,38 +463,9 @@ export default function EmpleadoProfileCard({ empleadoId, alVolver }) {
               <>
                 <Campo label="Fecha de Nacimiento" name="fecha_nacimiento" value={formulario.fecha_nacimiento} onChange={manejarCambio} type="date" />
                 <CampoSelect label="Estado de Nacimiento" name="estado_nacimiento" value={formulario.estado_nacimiento} onChange={manejarCambio} opciones={ESTADOS_MEXICO} />
-                <div className="dato">
-                  <label htmlFor="edit-genero">Género</label>
-                  <select id="edit-genero" name="genero" value={formulario.genero} onChange={manejarCambio}>
-                    <option value="">Seleccionar</option>
-                    <option value="masculino">Masculino</option>
-                    <option value="femenino">Femenino</option>
-                    <option value="otro">Otro</option>
-                  </select>
-                </div>
-                <div className="dato">
-                  <label htmlFor="edit-estado_civil">Estado Civil</label>
-                  <select id="edit-estado_civil" name="estado_civil" value={formulario.estado_civil} onChange={manejarCambio}>
-                    <option value="">Seleccionar</option>
-                    <option value="soltero">Soltero/a</option>
-                    <option value="casado">Casado/a</option>
-                    <option value="union_libre">Unión Libre</option>
-                    <option value="divorciado">Divorciado/a</option>
-                    <option value="viudo">Viudo/a</option>
-                  </select>
-                </div>
-                <div className="dato">
-                  <label htmlFor="edit-escolaridad">Escolaridad</label>
-                  <select id="edit-escolaridad" name="escolaridad" value={formulario.escolaridad} onChange={manejarCambio}>
-                    <option value="">Seleccionar</option>
-                    <option value="primaria">Primaria</option>
-                    <option value="secundaria">Secundaria</option>
-                    <option value="preparatoria">Preparatoria</option>
-                    <option value="tecnico">Técnico</option>
-                    <option value="licenciatura">Licenciatura</option>
-                    <option value="posgrado">Posgrado</option>
-                  </select>
-                </div>
+                <CampoSelect label="Género" name="genero" value={formulario.genero} onChange={manejarCambio} opciones={GENEROS} />
+                <CampoSelect label="Estado Civil" name="estado_civil" value={formulario.estado_civil} onChange={manejarCambio} opciones={ESTADOS_CIVILES} />
+                <CampoSelect label="Escolaridad" name="escolaridad" value={formulario.escolaridad} onChange={manejarCambio} opciones={NIVELES_ESCOLARIDAD} />
                 <Campo label="Celular Personal" name="celular_personal" value={formulario.celular_personal} onChange={manejarCambio} maxLength={10} minLength={10} pattern="\d{10}" title="10 dígitos numéricos sin espacios" onInput={soloDigitos} />
                 <Campo label="No. de Emergencia" name="telefono_emergencia" value={formulario.telefono_emergencia} onChange={manejarCambio} maxLength={10} minLength={10} pattern="\d{10}" title="10 dígitos numéricos sin espacios" onInput={soloDigitos} />
                 <Campo label="Parentesco" name="parentesco_emergencia" value={formulario.parentesco_emergencia} onChange={manejarCambio} />
@@ -668,7 +643,7 @@ function soloDigitos(e) {
   e.target.value = e.target.value.replace(/\D/g, "");
 }
 
-function Campo({ label, name, value, onChange, type = "text", maxLength, minLength, pattern, title, onInput }) {
+function Campo({ label, name, value, onChange, type = "text", maxLength, minLength, pattern, title, onInput, onBlur }) {
   return (
     <div className="dato">
       <label htmlFor={`edit-${name}`}>{label}</label>
@@ -683,6 +658,7 @@ function Campo({ label, name, value, onChange, type = "text", maxLength, minLeng
         pattern={pattern}
         title={title}
         onInput={onInput}
+        onBlur={onBlur}
       />
     </div>
   );

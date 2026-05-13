@@ -18,7 +18,7 @@ export default function PortalAdminRoles() {
     try {
       const [respuestaRoles, respuestaPermisos] = await Promise.all([
         solicitar('/roles'),
-        solicitar('/permisos'),
+        solicitar('/permisos/opciones'),
       ]);
       if (respuestaRoles.exito) setRoles(respuestaRoles.datos);
       if (respuestaPermisos.exito) setPermisos(respuestaPermisos.datos);

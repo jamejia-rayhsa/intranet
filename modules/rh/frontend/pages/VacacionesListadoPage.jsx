@@ -8,6 +8,46 @@ const ESTATUS_CONFIG = {
   rechazado: { etiqueta: "Rechazado", color: "var(--color-error)" },
 };
 
+// Constantes de estilo — patrón EmpleadoPage (definidas fuera del componente)
+const estiloInput = {
+  padding: "0.45rem 0.75rem",
+  border: "1px solid var(--color-borde)",
+  borderRadius: "0.4rem",
+  fontSize: "0.88rem",
+  background: "var(--color-fondo)",
+  color: "inherit",
+};
+
+const estiloBtnPrimario = {
+  background: "var(--color-primario)",
+  color: "#fff",
+  border: "none",
+  borderRadius: "0.4rem",
+  padding: "0.45rem 1.1rem",
+  fontWeight: 600,
+  fontSize: "0.88rem",
+  cursor: "pointer",
+};
+
+const estiloCard = {
+  background: "var(--color-superficie)",
+  border: "1px solid var(--color-borde)",
+  borderRadius: "0.75rem",
+  padding: "1.5rem",
+};
+
+const estiloFiltros = {
+  display: "flex",
+  gap: "0.75rem",
+  flexWrap: "wrap",
+  alignItems: "center",
+  marginBottom: "1.25rem",
+  background: "var(--color-superficie)",
+  border: "1px solid var(--color-borde)",
+  borderRadius: "0.75rem",
+  padding: "1rem 1.25rem",
+};
+
 function BadgeEstatus({ estatus }) {
   const config = ESTATUS_CONFIG[estatus] || { etiqueta: estatus, color: "var(--color-borde)" };
   return (
@@ -122,26 +162,6 @@ export default function VacacionesListadoPage() {
     }
   }
 
-  const estiloInput = {
-    padding: "0.45rem 0.75rem",
-    border: "1px solid var(--color-borde)",
-    borderRadius: "0.4rem",
-    fontSize: "0.88rem",
-    background: "var(--color-fondo)",
-    color: "inherit",
-  };
-
-  const estiloBtnPrimario = {
-    background: "var(--color-primario)",
-    color: "#fff",
-    border: "none",
-    borderRadius: "0.4rem",
-    padding: "0.45rem 1.1rem",
-    fontWeight: 600,
-    fontSize: "0.88rem",
-    cursor: "pointer",
-  };
-
   return (
     <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "1.5rem" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "0.25rem", flexWrap: "wrap" }}>
@@ -156,7 +176,6 @@ export default function VacacionesListadoPage() {
             fontSize: "0.82rem",
             color: "var(--color-secundario)",
             background: "transparent",
-            border: "1px solid var(--color-borde)",
           }}
         >
           ← Nueva solicitud
@@ -168,20 +187,7 @@ export default function VacacionesListadoPage() {
       </p>
 
       {/* Filtros */}
-      <form
-        onSubmit={aplicarFiltros}
-        style={{
-          display: "flex",
-          gap: "0.75rem",
-          flexWrap: "wrap",
-          alignItems: "center",
-          marginBottom: "1.25rem",
-          background: "var(--color-superficie)",
-          border: "1px solid var(--color-borde)",
-          borderRadius: "0.75rem",
-          padding: "1rem 1.25rem",
-        }}
-      >
+      <form onSubmit={aplicarFiltros} style={estiloFiltros}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
           <label style={{ fontSize: "0.85rem", fontWeight: 600, whiteSpace: "nowrap" }}>Periodo:</label>
           <select
@@ -225,14 +231,7 @@ export default function VacacionesListadoPage() {
       </form>
 
       {/* Tabla */}
-      <div
-        style={{
-          background: "var(--color-superficie)",
-          border: "1px solid var(--color-borde)",
-          borderRadius: "0.75rem",
-          padding: "1.5rem",
-        }}
-      >
+      <div style={estiloCard}>
         {cargando ? (
           <p style={{ color: "var(--color-texto-claro)" }}>Cargando solicitudes...</p>
         ) : error ? (

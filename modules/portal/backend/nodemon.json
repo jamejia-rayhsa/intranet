@@ -1,0 +1,10 @@
+{
+  "watch": [
+    ".",
+    "../../rh/backend",
+    "../../tickets/backend",
+    "../../auditoria/backend"
+  ],
+  "ext": "js,json",
+  "ignore": ["node_modules", "*.test.js"]
+}

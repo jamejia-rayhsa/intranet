@@ -4,6 +4,7 @@ import {
   responderPermiso,
 } from "../services/permisos.service";
 import PermisosList from "../components/PermisosList";
+import "../styles/permisos.css";
 
 const etiquetasEstatus = {
   pendiente: "Pendiente",

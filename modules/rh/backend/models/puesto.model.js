@@ -2,17 +2,16 @@ const { grupo } = require("../config/database");
 
 const Puesto = {
   async crear(datos) {
-    const { nombre, descripcion, departamento_id, nivel_salarial } = datos;
+    const { nombre, descripcion, departamento_id } = datos;
     const consulta = `
-      INSERT INTO puestos (nombre, descripcion, departamento_id, nivel_salarial)
-      VALUES ($1, $2, $3, $4) RETURNING *
+      INSERT INTO puestos (nombre, descripcion, departamento_id)
+      VALUES ($1, $2, $3) RETURNING *
     `;
     return (
       await grupo.query(consulta, [
         nombre,
         descripcion || null,
         departamento_id || null,
-        nivel_salarial || null,
       ])
     ).rows[0];
   },
@@ -44,11 +43,6 @@ const Puesto = {
     if (datos.departamento_id !== undefined) {
       campos.push(`departamento_id = $${c}`);
       valores.push(datos.departamento_id);
-      c++;
-    }
-    if (datos.nivel_salarial !== undefined) {
-      campos.push(`nivel_salarial = $${c}`);
-      valores.push(datos.nivel_salarial);
       c++;
     }
     if (datos.activo !== undefined) {

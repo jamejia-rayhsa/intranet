@@ -1,0 +1,237 @@
+/* ===== Página Permisos/Ausencias ===== */
+
+.rh-admin-page {
+  padding: 1.5rem;
+  max-width: 1100px;
+}
+
+.rh-admin-page > h1 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--color-texto);
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid var(--color-primario);
+}
+
+/* Filtros */
+.admin-filtros {
+  background: var(--color-superficie);
+  border: 1px solid var(--color-borde);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+  box-shadow: var(--sombra-sm);
+}
+
+.admin-filtros h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-texto);
+  margin: 0 0 0.75rem;
+}
+
+.filtros-grupo {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.filtros-grupo button {
+  padding: 0.35rem 0.9rem;
+  border: 1px solid var(--color-borde);
+  border-radius: 20px;
+  background: transparent;
+  color: var(--color-texto-claro);
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: all 0.15s;
+}
+
+.filtros-grupo button:hover {
+  border-color: var(--color-primario);
+  color: var(--color-primario);
+}
+
+.filtros-grupo button.activo {
+  background: var(--color-primario);
+  border-color: var(--color-primario);
+  color: #fff;
+  font-weight: 500;
+}
+
+/* Lista */
+.permisos-lista {
+  background: var(--color-superficie);
+  border: 1px solid var(--color-borde);
+  border-radius: 8px;
+  padding: 1.25rem;
+  box-shadow: var(--sombra-sm);
+}
+
+.lista-encabezado {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--color-borde);
+}
+
+.lista-encabezado h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-texto);
+  margin: 0;
+}
+
+.lista-encabezado > button {
+  padding: 0.4rem 1rem;
+  background: var(--color-primario);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* Tabla */
+.permisos-tabla {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.permisos-tabla th {
+  text-align: left;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-texto-claro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 2px solid var(--color-borde);
+}
+
+.permisos-tabla td {
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid var(--color-borde);
+  color: var(--color-texto);
+  vertical-align: middle;
+}
+
+.permisos-tabla tbody tr:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.badge-pendiente {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.badge-aprobado {
+  background: #d1f2eb;
+  color: #1a7a5e;
+}
+
+.badge-rechazado {
+  background: #fde8e8;
+  color: #c0392b;
+}
+
+/* Botones aprobar / rechazar */
+.boton-aprobar,
+.boton-rechazar {
+  padding: 0.3rem 0.75rem;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 500;
+  margin-right: 0.35rem;
+}
+
+.boton-aprobar { background: #d1f2eb; color: #1a7a5e; }
+.boton-aprobar:hover { background: #a8e6cf; }
+.boton-rechazar { background: #fde8e8; color: #c0392b; }
+.boton-rechazar:hover { background: #f5c6c6; }
+
+/* Paginación */
+.paginacion {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-borde);
+}
+
+.paginacion button {
+  padding: 0.4rem 1rem;
+  border: 1px solid var(--color-borde);
+  border-radius: 6px;
+  background: var(--color-superficie);
+  color: var(--color-texto);
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.paginacion button:disabled { opacity: 0.4; cursor: not-allowed; }
+.paginacion span { font-size: 0.875rem; color: var(--color-texto-claro); }
+
+/* Estado vacío */
+.permisos-vacios {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--color-texto-claro);
+}
+
+.permisos-vacios p { margin-bottom: 1rem; font-size: 0.95rem; }
+
+.permisos-vacios button {
+  padding: 0.5rem 1.25rem;
+  background: var(--color-primario);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+/* Formulario solicitar permiso */
+.permisos-form {
+  background: var(--color-superficie);
+  border: 1px solid var(--color-borde);
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: var(--sombra-sm);
+  max-width: 600px;
+}
+
+.permisos-form h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--color-texto);
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--color-borde);
+}
+
+/* Estado cargando */
+.cargando {
+  text-align: center;
+  padding: 3rem;
+  color: var(--color-texto-claro);
+  font-size: 0.95rem;
+}

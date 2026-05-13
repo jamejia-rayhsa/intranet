@@ -54,6 +54,16 @@ const ControladorPermiso = {
       res.status(500).json({ exito: false, mensaje: 'Error al eliminar permiso', error: error.message });
     }
   },
+
+  async misPermisos(req, res) {
+    try {
+      const permisos = await Permiso.obtenerPorUsuarioId(req.user.usuario_id);
+      res.json({ exito: true, datos: permisos });
+    } catch (err) {
+      console.error('misPermisos:', err);
+      res.status(500).json({ exito: false, mensaje: 'Error al obtener permisos' });
+    }
+  },
 };
 
 module.exports = ControladorPermiso;

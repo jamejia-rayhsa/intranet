@@ -15,3 +15,34 @@ export const BANCOS_MEXICO = [
   "Intercam Banco", "Invex", "Ve por Más", "Banjército", "ABC Capital",
   "Consubanco", "Bankaool", "Pagatodo", "Otro",
 ];
+
+export const GENEROS = ["Masculino", "Femenino", "Otro"];
+
+export const ESTADOS_CIVILES = [
+  "Soltero",
+  "Casado",
+  "Divorciado",
+  "Separado",
+  "Viudo",
+  "Unión libre",
+];
+
+export const NIVELES_ESCOLARIDAD = [
+  "Sin estudios",
+  "Primaria",
+  "Secundaria",
+  "Preparatoria / Bachillerato",
+  "Carrera técnica",
+  "Licenciatura",
+  "Maestría",
+  "Doctorado",
+];
+
+export const TIPOS_CONTRATO = [
+  "Determinado",
+  "Indeterminado",
+  "Por obra",
+  "Honorarios",
+  "Confianza",
+  "Prácticas",
+];

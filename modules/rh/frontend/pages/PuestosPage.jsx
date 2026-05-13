@@ -17,7 +17,6 @@ export default function PuestosPage() {
     nombre: "",
     descripcion: "",
     departamento_id: "",
-    nivel_salarial: "",
   });
   const [error, setError] = useState("");
 
@@ -62,7 +61,6 @@ export default function PuestosPage() {
         nombre: "",
         descripcion: "",
         departamento_id: "",
-        nivel_salarial: "",
       });
       setEditando(null);
       setMostrarFormulario(false);
@@ -77,7 +75,6 @@ export default function PuestosPage() {
       nombre: item.nombre,
       descripcion: item.descripcion || "",
       departamento_id: item.departamento_id || "",
-      nivel_salarial: item.nivel_salarial || "",
     });
     setEditando(item);
     setMostrarFormulario(true);
@@ -109,7 +106,6 @@ export default function PuestosPage() {
               nombre: "",
               descripcion: "",
               departamento_id: "",
-              nivel_salarial: "",
             });
           }}
         >
@@ -150,16 +146,6 @@ export default function PuestosPage() {
               </select>
             </div>
             <div className="campo">
-              <label htmlFor="p-nivel_salarial">Nivel Salarial</label>
-              <input
-                type="text"
-                id="p-nivel_salarial"
-                name="nivel_salarial"
-                value={formulario.nivel_salarial}
-                onChange={manejarCambio}
-              />
-            </div>
-            <div className="campo">
               <label htmlFor="p-descripcion">Descripción</label>
               <textarea
                 id="p-descripcion"
@@ -190,7 +176,6 @@ export default function PuestosPage() {
           <tr>
             <th>Nombre</th>
             <th>Departamento</th>
-            <th>Nivel Salarial</th>
             <th>Acciones</th>
           </tr>
         </thead>
@@ -199,7 +184,6 @@ export default function PuestosPage() {
             <tr key={p.id}>
               <td>{p.nombre}</td>
               <td>{p.departamento_nombre || "-"}</td>
-              <td>{p.nivel_salarial || "-"}</td>
               <td>
                 <button onClick={() => editar(p)}>Editar</button>
                 <button

@@ -13,6 +13,23 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-05-13] orquestador → decisions.md — ADR: Fix dashboard RH (3 SQL bugs) + CSS permisos (4 archivos)
+- [2026-05-13] orquestador → permisoAusencia.model.js — Fix directo: 6× tabla + 2× apellido_paterno
+- [2026-05-13] revisor → reviews.md — Fix dashboard RH + CSS permisos: RECHAZADO (bug modelo permisos detectado y corregido)
+- [2026-05-13] coder → code-notes.md — Fix dashboard RH (3 SQL bugs) + CSS permisos
+- [2026-04-29] orquestador → decisions.md — ADR: Fix bugs admin/roles/sidebar + CSS vacaciones (6 archivos)
+- [2026-04-29] revisor → reviews.md — Fix bugs admin/roles/sidebar + CSS vacaciones (6 archivos, APROBADO)
+- [2026-04-29] coder → code-notes.md — Fix bugs admin/roles/sidebar + CSS vacaciones (6 archivos)
+- [2026-04-29] investigador → research.md — Auditoría bugs admin, roles, sidebar módulos y CSS páginas RH
+- [2026-04-29] investigador → research.md — Dashboard RH (endpoint correcto) y estilos página Permisos (ya con constantes)
+- [2026-04-29] orquestador → decisions.md — ADR: Logo sidebar +10%, login logo Rayhsa, filtrado menú por permisos
+- [2026-04-29] coder → code-notes.md — Logo sidebar, logo login, filtrado permisos menú (6 archivos)
+- [2026-04-29] revisor → reviews.md — Logo sidebar, logo login, filtrado permisos menú: revisión post-coder (APROBADO CON OBSERVACIONES)
+- [2026-04-29] investigador → research.md — Auditoría sidebar logo, login logo y permisos menú dinámico
+- [2026-04-29] orquestador → decisions.md — ADR: Combos unificados, title case, nivel_salarial eliminado (5 archivos)
+- [2026-04-29] coder → code-notes.md — Combos unificados, title case, nivel_salarial (5 archivos, catálogos centralizados)
+- [2026-04-29] revisor → reviews.md — Combos unificados, title case, nivel_salarial: revisión post-coder (APROBADO)
+- [2026-04-29] investigador → research.md — Auditoría nivel_salarial y campos combo (ubicación, estructura puestos, inconsistencias)
 - [2026-04-29] orquestador → decisions.md — ADR: Validaciones y combos formularios empleado (estados, bancos, HTML5)
 - [2026-04-29] revisor → reviews.md — Validaciones y combos: revisión post-coder (APROBADO CON OBSERVACIONES)
 - [2026-04-29] coder → code-notes.md — Validaciones y combos formularios empleado (catalogos.js creado, 2 formularios actualizados)

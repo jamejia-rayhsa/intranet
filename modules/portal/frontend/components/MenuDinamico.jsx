@@ -6,28 +6,28 @@ const NOMBRE_EMPRESA = import.meta.env.VITE_NOMBRE_EMPRESA || 'Intranet';
 
 const SUB_RUTAS = {
   portal: [
-    { path: '/', label: 'Inicio' },
-    { path: '/noticias', label: 'Noticias' },
+    { path: '/', label: 'Inicio', opcion: null },
+    { path: '/noticias', label: 'Noticias', opcion: 'Noticias' },
   ],
   auditoria: [
-    { path: '/auditoria', label: 'Dashboard' },
-    { path: '/auditoria/logs', label: 'Logs' },
+    { path: '/auditoria', label: 'Dashboard', opcion: null },
+    { path: '/auditoria/logs', label: 'Logs', opcion: 'Logs' },
   ],
   rh: [
-    { path: '/rh', label: 'Dashboard' },
-    { path: '/rh/empleados', label: 'Empleados' },
-    { path: '/rh/admin', label: 'Permisos y ausencias' },
-    { path: '/rh/vacaciones', label: 'Vacaciones' },
-    { path: '/rh/vacaciones/listado', label: 'Solicitudes' },
-    { path: '/rh/puestos', label: 'Puestos' },
-    { path: '/rh/departamentos', label: 'Departamentos' },
-    { path: '/rh/ubicaciones', label: 'Ubicaciones' },
+    { path: '/rh', label: 'Dashboard', opcion: null },
+    { path: '/rh/empleados', label: 'Empleados', opcion: 'Empleados' },
+    { path: '/rh/admin', label: 'Permisos y ausencias', opcion: 'Permisos' },
+    { path: '/rh/vacaciones', label: 'Vacaciones', opcion: 'Vacaciones' },
+    { path: '/rh/vacaciones/listado', label: 'Solicitudes', opcion: 'Vacaciones' },
+    { path: '/rh/puestos', label: 'Puestos', opcion: 'Empleados' },
+    { path: '/rh/departamentos', label: 'Departamentos', opcion: 'Empleados' },
+    { path: '/rh/ubicaciones', label: 'Ubicaciones', opcion: 'Empleados' },
   ],
   tickets: [
-    { path: '/tickets', label: 'Dashboard' },
-    { path: '/tickets/lista', label: 'Tickets' },
-    { path: '/tickets/categorias', label: 'Categorías' },
-    { path: '/tickets/encuestas', label: 'Encuestas' },
+    { path: '/tickets', label: 'Dashboard', opcion: null },
+    { path: '/tickets/lista', label: 'Tickets', opcion: 'Tickets' },
+    { path: '/tickets/categorias', label: 'Categorías', opcion: 'Categorías' },
+    { path: '/tickets/encuestas', label: 'Encuestas', opcion: 'Encuestas' },
   ],
 };
 
@@ -90,12 +90,12 @@ function SidebarLogo() {
       src="/logo-rayhsa.png"
       alt="RAYHSA"
       onError={() => setImgError(true)}
-      style={{ height: '38px', width: 'auto', objectFit: 'contain' }}
+      style={{ height: '42px', width: 'auto', objectFit: 'contain' }}
     />
   );
 }
 
-export default function MenuDinamico({ modulos = [], abierto, onCerrar }) {
+export default function MenuDinamico({ modulos = [], permisos = [], abierto, onCerrar }) {
   const { usuario, cerrarSesion } = usarAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -124,19 +124,37 @@ export default function MenuDinamico({ modulos = [], abierto, onCerrar }) {
   const esAdmin = usuario?.roles?.some(r => ROLES_ADMIN.includes(r));
   const modulosActivos = modulos.filter(m => m.activo);
 
+  // Filtra módulos donde el usuario tiene acceso a al menos una sub-ruta
+  const modulosVisibles = modulosActivos.filter((m) => {
+    const subRutas = SUB_RUTAS[m.nombre] || [];
+    if (subRutas.length === 0) return true; // módulos sin sub-rutas siempre se muestran
+    return subRutas.some((sr) => tieneAcceso(m.nombre, sr.opcion));
+  });
+
   function esActivo(ruta) {
     if (ruta === '/') return location.pathname === '/';
     return location.pathname === ruta || location.pathname.startsWith(ruta + '/');
   }
 
+  function tieneAcceso(moduloNombre, opcion) {
+    if (usuario?.rol_nombre === 'super_admin') return true;
+    if (!opcion) return true;
+    if (permisos.length === 0) return true;
+    return permisos.some(
+      (p) =>
+        p.modulo.toLowerCase() === moduloNombre.toLowerCase() &&
+        p.opcion === opcion
+    );
+  }
+
   return (
     <aside className={`app-sidebar${abierto ? ' abierto' : ''}`}>
-      <div className="sidebar-logo">
+      <div className="sidebar-logo" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
         <SidebarLogo />
       </div>
 
       <nav className="sidebar-nav">
-        {modulosActivos.map(m => {
+        {modulosVisibles.map(m => {
           const subRutas = SUB_RUTAS[m.nombre];
           const label = m.nombre.charAt(0).toUpperCase() + m.nombre.slice(1);
           const icono = ICONOS_MODULOS[m.nombre] || '📁';
@@ -172,15 +190,17 @@ export default function MenuDinamico({ modulos = [], abierto, onCerrar }) {
               </button>
 
               <div className={`sidebar-subitems${estaAbierto ? ' abierto' : ''}`}>
-                {subRutas.map(sr => (
-                  <Link
-                    key={sr.path}
-                    to={sr.path}
-                    className={esActivo(sr.path) ? 'activo' : ''}
-                  >
-                    {sr.label}
-                  </Link>
-                ))}
+                {subRutas
+                  .filter((sr) => tieneAcceso(m.nombre, sr.opcion))
+                  .map(sr => (
+                    <Link
+                      key={sr.path}
+                      to={sr.path}
+                      className={esActivo(sr.path) ? 'activo' : ''}
+                    >
+                      {sr.label}
+                    </Link>
+                  ))}
               </div>
             </div>
           );

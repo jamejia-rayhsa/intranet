@@ -3,9 +3,13 @@ const { Router } = require('express');
 const { authenticateJWT } = require('../middleware/auth.middleware');
 const { verificarPermiso } = require('../middleware/permisos.middleware');
 const { grupo } = require('../config/database');
+const ControladorPermiso = require('../controllers/permiso.controller');
 
 const router = Router();
 router.use(authenticateJWT);
+
+// GET /api/permisos/mis-permisos — permisos del usuario autenticado (sin middleware extra; ya pasa por authenticateJWT)
+router.get('/mis-permisos', ControladorPermiso.misPermisos);
 
 // GET /api/permisos/opciones — lista todas las opciones agrupadas por módulo
 router.get('/opciones', verificarPermiso('portal', 'Roles', 'consulta'), async (req, res) => {

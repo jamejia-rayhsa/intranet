@@ -111,3 +111,639 @@
 - `/home/jamejia/intranet/modules/rh/frontend/pages/EmpleadoPage.jsx` (líneas 40-147)
 - `/home/jamejia/intranet/modules/rh/backend/controllers/empleado.controller.js` (líneas 10-134)
 - `/home/jamejia/intranet/modules/rh/backend/models/empleado.model.js` (líneas 3-95)
+
+---
+
+## [2026-04-29] investigador — Auditoría nivel_salarial y campos combo
+
+**Pregunta:** Dónde aparece `nivel_salarial` en el proyecto, estructura de formulario de puestos, y estado actual de campos de empleado (`estado_civil`, `escolaridad`, `genero`, `tipo_contrato`, `nombre/apellidos`).
+
+### 1. nivel_salarial — Ubicación completa
+
+**Apariciones:**
+- **Backend BD:** Campo en tabla `puestos` (VARCHAR(50), nullable)
+  - Migración 001-crear-tablas-rh.sql:30
+  - Migración 004-corregir-tabla-empleados.sql:31 (también aparece en empleados)
+- **Backend Modelo:** `puesto.model.js` líneas 5, 49-52 — captura en crear/actualizar
+- **Backend Controller:** `puesto.controller.js` línea 21 — acepta via req.body
+- **Frontend:** `PuestosPage.jsx` líneas 16-20, 65, 80, 112 — campo en formulario
+
+**Impacto en empleado:**
+- El campo `nivel_salarial` está en tabla `empleados` (migración 004) pero NO aparece en ningún formulario de empleado
+- No se captura en EmpleadoPage.jsx (alta)
+- No se captura en EmpleadoProfileCard.jsx (edición)
+- **Conclusión:** Está en BD pero "huérfano" — sin UI para llenarlo
+
+### 2. Formulario de PUESTOS — estructura actual
+
+**Localización:** `modules/rh/frontend/pages/PuestosPage.jsx` (líneas 16-21, 120-185)
+
+**Tipo:** Modal (`mostrarFormulario` state, línea 120)
+
+**Campos:**
+1. `nombre` — `<input type="text">` (línea 127-134, required)
+2. `departamento_id` — `<select>` (línea 137-150, con opciones cargadas)
+3. `nivel_salarial` — `<input type="text">` (línea 153-160, libre, sin validación)
+4. `descripcion` — `<textarea>` (línea 163-169)
+
+**Función de submit:** `manejarEnvio()` (línea 48-73)
+- Convierte null: `departamento_id: formulario.departamento_id || null`
+- Llama a `crearPuesto()` o `actualizarPuesto()` según `editando` state
+- POST/PATCH a backend, que acepta todo via `req.body`
+
+**Tabla visual:** Muestra `nombre`, `departamento_nombre` (join), `nivel_salarial`, acciones (editar/eliminar)
+
+### 3. Campos estado_civil, escolaridad, genero, tipo_contrato — estado actual
+
+**EmpleadoPage.jsx (Alta/Creación):**
+- ✅ `genero` — `<select>` (línea 584-595, opciones hardcodeadas: Masculino/Femenino/No binario/Prefiero no decir)
+- ✅ `estado_civil` — `<select>` (línea 597-610, opciones: Soltero/Casado/Divorciado/Viudo/Unión libre)
+- ✅ `escolaridad` — `<select>` (línea 612-628, opciones: Primaria/Secundaria/Bachillerato/Técnico/Licenciatura/Maestría/Doctorado)
+- ✅ `tipo_contrato` — `<select>` (línea 394-405, opciones: Determinado/Indeterminado/Honorarios/Confianza)
+- **Patrón:** Todos son `<select>` con opciones inline hardcodeadas; NO importan de catalogos.js
+
+**EmpleadoProfileCard.jsx (Edición):**
+- ✅ `genero` — `<select>` (línea 463-469, opciones: masculino/femenino/otro) — NOTA: opciones diferentes a EmpleadoPage
+- ✅ `estado_civil` — `<select>` (línea 471-480, opciones: soltero/casado/union_libre/divorciado/viudo) — NOTA: format diferente
+- ✅ `escolaridad` — `<select>` (línea 482-492, opciones: primaria/secundaria/preparatoria/tecnico/licenciatura/posgrado) — NOTA: "preparatoria" vs "Bachillerato"
+- ✅ `tipo_contrato` — `<select>` (línea 398-406, opciones: indefinido/temporal/por_obra/honorarios/practicas) — **CONFLICTO: opciones DIFERENTES a EmpleadoPage**
+- **Patrón:** Todos son `<select>` con opciones inline hardcodeadas
+
+**Inconsistencias (CRÍTICA):**
+| Campo | EmpleadoPage | EmpleadoProfileCard | Notas |
+|-------|---|---|---|
+| genero | Masculino/Femenino/No binario/Prefiero no decir | masculino/femenino/otro | Caps diferentes, opciones distintas |
+| estado_civil | Soltero (Caps) | soltero (lowercase) | Case inconsistente |
+| escolaridad | Bachillerato | preparatoria | Distintos valores |
+| tipo_contrato | **Determinado/Indeterminado/Honorarios/Confianza** | **indefinido/temporal/por_obra/honorarios/practicas** | **COMPLETO DESAJUSTE** |
+
+### 4. Campos nombre, apellido_paterno, apellido_materno — onBlur
+
+**EmpleadoPage.jsx:**
+- `nombre` (línea 324-333) — NO tiene onBlur; `<input type="text">`
+- `apellido_paterno` (línea 335-344) — NO tiene onBlur; `<input type="text">`
+- `apellido_materno` (línea 346-354) — NO tiene onBlur; `<input type="text">`
+
+**EmpleadoProfileCard.jsx:**
+- Usa componente `Campo()` helper (línea 671-688)
+- `nombre` (línea 327, via `Campo`) — NO tiene onBlur
+- `apellido_paterno` (línea 328, via `Campo`) — NO tiene onBlur
+- `apellido_materno` (línea 329, via `Campo`) — NO tiene onBlur
+
+**Conclusión:** Ninguno de estos campos tiene onBlur actualmente.
+
+### Implicación para el equipo
+
+1. **nivel_salarial en empleados:** Huérfano en UI — necesita decisión: ¿eliminarlo de BD, o crear UI para capturarlo? Está en migración 004 pero nunca se usa.
+
+2. **Inconsistencia tipo_contrato crítica:** Los valores guardados en una página no coinciden con las opciones de edición. Empleado creado con "Determinado" no podrá editarse sin perder el dato (select no lo reconocerá).
+
+3. **genero/estado_civil/escolaridad:** Tienen valores en multiple formatos (Caps vs lowercase); pueden generar dups en BD o no coincidir en búsquedas.
+
+4. **Oportunidad de centralización:** Estos 4 campos YA tienen selects inline — candidatos a extraer a catalogos.js como hizo el coder con ESTADOS_MEXICO y BANCOS_MEXICO.
+
+5. **Sin onBlur en nombres:** Los campos de nombre/apellidos no tienen validación en blur. Si el usuario quiere normalizar (trim, uppercase) u otro comportamiento, no está implementado.
+
+**Archivos relevantes:**
+- `/home/jamejia/intranet/modules/rh/frontend/pages/PuestosPage.jsx` (líneas 16-20, 48-73, 120-185)
+- `/home/jamejia/intranet/modules/rh/frontend/pages/EmpleadoPage.jsx` (líneas 324-354, 394-405, 584-628)
+- `/home/jamejia/intranet/modules/rh/frontend/components/EmpleadoProfileCard.jsx` (líneas 327-329, 398-406, 463-492)
+- `/home/jamejia/intranet/modules/rh/backend/models/puesto.model.js` (línea 5)
+- `/home/jamejia/intranet/modules/rh/backend/migrations/001-crear-tablas-rh.sql` (línea 30)
+- `/home/jamejia/intranet/modules/rh/backend/migrations/004-corregir-tabla-empleados.sql` (línea 31)
+
+---
+
+## [2026-04-29] investigador — Auditoría sidebar logo, login logo y permisos menú dinámico
+
+**Pregunta:** 
+1. ¿Dónde aparece el logo del sidebar, cuál es su ruta, tamaño y cómo se renderiza?
+2. ¿Cuál es el logo de la página de login y dónde se captura?
+3. ¿Cómo carga el menú dinámico las opciones y filtra según permisos?
+4. ¿Cuál es la estructura de permisos en BD y qué endpoint retorna los módulos permitidos?
+
+### 1. Logo del Sidebar
+
+**Ubicación:** `modules/portal/frontend/components/MenuDinamico.jsx` líneas 75-96
+
+**Componente:**
+```jsx
+function SidebarLogo() {
+  const imgRef = useRef(null);
+  const [imgError, setImgError] = useState(false);
+
+  if (imgError) {
+    return (
+      <span style={{ color: '#fff', fontWeight: 800, fontSize: '1.15rem', letterSpacing: '0.04em' }}>
+        RAYHSA
+      </span>
+    );
+  }
+
+  return (
+    <img
+      ref={imgRef}
+      src="/logo-rayhsa.png"
+      alt="RAYHSA"
+      onError={() => setImgError(true)}
+      style={{ height: '38px', width: 'auto', objectFit: 'contain' }}
+    />
+  );
+}
+```
+
+**Renderizado en sidebar:**
+```jsx
+<div className="sidebar-logo">
+  <SidebarLogo />
+</div>
+```
+
+**Características:**
+- **Ruta de imagen:** `/logo-rayhsa.png` (URL pública, ubicación física: `/modules/portal/frontend/public/logo-rayhsa.png`)
+- **Tamaño:** `height: 38px, width: auto, objectFit: contain`
+- **Fallback:** Si la imagen no carga, muestra texto "RAYHSA" en blanco (color: '#fff', fontWeight: 800, fontSize: 1.15rem)
+- **Contenedor:** Clase CSS `sidebar-logo` (estilos en globales.css, no inline)
+- **No hay centrado explícito:** El centrado viene del CSS de `.sidebar-logo` (probablemente flex)
+
+**Archivos físicos de logo:**
+- `/home/jamejia/intranet/modules/portal/frontend/public/logo-rayhsa.png` ✅ Existe
+- `/home/jamejia/intranet/modules/portal/frontend/public/Logo-rayhsa.jpg` ✅ Existe (alternativa, case-sensitive)
+
+### 2. Logo de la página de Login
+
+**Ubicación:** `modules/portal/frontend/pages/PortalLogin.jsx` líneas 48-59
+
+**JSX del logo:**
+```jsx
+{/* Logo */}
+<div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+  <div style={{ width: '72px', height: '72px', borderRadius: '16px', background: 'var(--color-primario)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 0.75rem', fontSize: '2rem' }}>
+    🏢
+  </div>
+  <h1 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--color-texto)', margin: 0 }}>{NOMBRE_EMPRESA}</h1>
+  <p style={{ fontSize: '0.85rem', color: 'var(--color-texto-claro)', marginTop: '0.25rem' }}>Acceso al portal corporativo</p>
+</div>
+```
+
+**Características:**
+- **Logo actual:** Emoji 🏢 (buidling, no es un archivo)
+- **Contenedor:** Caja de `72px × 72px`, radius 16px, fondo `var(--color-primario)` (color primario del theme)
+- **Centrado:** `display: flex, alignItems: center, justifyContent: center` — perfectamente centrado
+- **Nombre de empresa:** Usa variable `NOMBRE_EMPRESA` (línea 8) — por defecto "Intranet Corporativa"
+- **NO usa archivo de imagen** — el logo es puro CSS + emoji
+
+**Implicación:** Para cambiar el logo de login a uno de Rayhsa, habría que:
+1. Reemplazar el emoji 🏢 con un `<img src="/logo-rayhsa.png" alt="RAYHSA" />`
+2. Ajustar estilos del contenedor para mantener proporción imagen
+
+### 3. Menú Dinámico — Lógica de carga y permisos
+
+**Carga de módulos (Frontend):**
+- **Archivo:** `modules/portal/frontend/main.jsx` líneas 62-75
+- **Flow:**
+  1. `LayoutConMenu` carga con usuario autenticado (línea 77)
+  2. `useEffect` llama a `obtenerModulosActivos()` (línea 69)
+  3. Backend retorna solo módulos con `activo = true`
+  4. Se pasa el array `modulos` a `<MenuDinamico modulos={modulos} />` (línea 86)
+
+**Endpoint de módulos:**
+- **Ruta:** `GET /api/modulos/activos` (pública, sin autenticación)
+- **Controller:** `modules/portal/backend/controllers/modulo.controller.js` línea 14-21
+- **Modelo:** `Modulo.obtenerActivos()` (modulo.model.js línea 22-27)
+- **Retorna:** Módulos de la tabla `modulos` donde `activo = true`, ordenados por nombre
+- **NO filtra por rol/permiso en esta etapa** — todos los usuarios autenticados ven los mismos módulos activos
+
+**Filtrado en MenuDinamico.jsx:**
+- **SUB_RUTAS:** Array hardcodeado (líneas 7-32) — define qué subrutas tiene cada módulo
+- **ICONOS_MODULOS:** Array hardcodeado (línea 53-60) — emojis para cada módulo
+- **Renderizado:** Itera sobre `modulos` prop (línea 139) y renderiza cada uno si está en la lista
+- **Admin items (ADMIN_ITEMS):** Líneas 43-49 — hardcodeado, solo visible si usuario tiene rol `super_admin` o `portal_admin` (línea 124)
+
+**Implicación:**
+- **Las SUB_RUTAS son estáticas** — hardcoded en el componente, no vienen de BD
+- **No hay filtrado de opciones por permiso** — si un módulo está activo, todos los usuarios ven todas sus subrutas
+- **No hay endpoint `/api/permisos` que devuelva menú del usuario** — ese endpoint (`/api/permisos/opciones`, `/api/permisos/rol/:rol_id`) existe pero NO se usa para construir el menú
+- **Permisos se validan en el backend** — vía `verificarPermiso` middleware en cada ruta (ejemplo: modulo.routes.js línea 14)
+
+### 4. Estructura de Permisos en BD (para validar constraint 3)
+
+**Tablas relevantes:**
+- `modulos` — nombre, activo, descripcion, path_reactivo
+- `modulo_opciones` — nombre, descripcion, modulo_id, orden (opciones de cada módulo)
+- `roles` — nombre, descripcion
+- `rol_opcion_permisos` — rol_id, opcion_id, tipo (consulta/edicion)
+
+**Endpoints de permisos:**
+1. `GET /api/permisos/opciones` (línea 11-23 permiso.routes.js)
+   - **Qué retorna:** Todas las opciones agrupadas por módulo: `{ modulo, id, nombre, descripcion, orden }`
+   - **Uso:** Admin para gestionar permisos de roles
+   - **NO se usa en frontend para construir menú**
+
+2. `GET /api/permisos/rol/:rol_id` (línea 26-36)
+   - **Qué retorna:** Permisos de un rol específico: `{ opcion_id, tipo }`
+   - **Uso:** Admin, para saber qué opciones tiene asignadas un rol
+   - **NO se usa en MenuDinamico**
+
+3. `PUT /api/permisos/rol/:rol_id/modulo/:modulo` (línea 39-77)
+   - **Para guardar permisos** de un módulo a un rol
+
+**¿Dónde se valida el permiso?**
+- Backend: `verificarPermiso('modulo', 'opcion', 'tipo')` middleware (modulo.routes.js línea 14)
+- Este middleware verifica si el usuario actual (via JWT) tiene permiso en `rol_opcion_permisos`
+- **Es una validación de acceso, no de visualización** — el menú NO filtra basado en esto
+
+**Implicación crítica:**
+- **MenuDinamico muestra todas las subrutas de los módulos activos, SIN filtrado por permiso del usuario**
+- Si un usuario no tiene permiso para `/rh/empleados`, el link aparece en el sidebar, pero cuando navega allá, el backend rechaza la solicitud
+- **UX problem:** El usuario ve la opción pero no puede usarla (el 404 o error viene del backend, no del frontend)
+
+**Archivos relevantes:**
+- `/home/jamejia/intranet/modules/portal/frontend/components/MenuDinamico.jsx` (líneas 75-96, 7-60, 139-187)
+- `/home/jamejia/intranet/modules/portal/frontend/main.jsx` (líneas 62-75, 86)
+- `/home/jamejia/intranet/modules/portal/frontend/pages/PortalLogin.jsx` (líneas 48-59)
+- `/home/jamejia/intranet/modules/portal/backend/routes/modulo.routes.js` (línea 10)
+- `/home/jamejia/intranet/modules/portal/backend/controllers/modulo.controller.js` (línea 14-21)
+- `/home/jamejia/intranet/modules/portal/backend/routes/permiso.routes.js` (líneas 11-36)
+- `/home/jamejia/intranet/modules/portal/frontend/public/logo-rayhsa.png`
+
+
+---
+
+## [2026-04-29] investigador — Auditoría bugs admin, roles, sidebar módulos y CSS páginas RH
+
+**Preguntas:** 5 bugs y anomalías encontradas durante auditoría de componentes admin y páginas RH
+
+### 1. PREGUNTA: Botón "Editar" en página de usuarios del módulo admin
+
+**Hallazgo:**
+El botón "Editar" **FUNCIONA CORRECTAMENTE** en `PortalAdminUsuarios.jsx`.
+
+- **Ubicación del botón:** `/home/jamejia/intranet/modules/portal/frontend/pages/PortalAdminUsuarios.jsx` línea 323
+- **Handler:** Función `editarUsuario(usuario)` en línea 92-105
+- **Lógica:** Carga los datos del usuario en el formulario modal (estado `mostrarFormulario = true`) y marca `editando = usuario`
+- **Formulario de edición:** El mismo modal (líneas 160-263) se reutiliza para crear y editar
+- **Submit:** Envía PUT a `/usuarios/${editando.id}` si está en modo edición (línea 63)
+
+**Conclusión:** Sin bugs. El flujo editar → modal → PUT funciona normalmente.
+
+---
+
+### 2. PREGUNTA: Reset-password "Ruta no encontrada: POST /api/usuarios/:id/reset-password"
+
+**Hallazgo - CRÍTICO:**
+La ruta **NO EXISTE en el backend.**
+
+**Frontend (llama correctamente):**
+- Archivo: `/home/jamejia/intranet/modules/portal/frontend/pages/PortalAdminUsuarios.jsx` línea 121
+- Código: `POST /usuarios/${usuario.id}/reset-password`
+- Se llama desde función `resetearPassword(usuario)` línea 118-133
+
+**Backend (rutas disponibles):**
+- Archivo: `/home/jamejia/intranet/modules/portal/backend/routes/usuario.routes.js` (16 líneas)
+- Rutas definidas:
+  - `GET /` — listar usuarios
+  - `GET /:id` — obtener usuario
+  - `PUT /:id` — actualizar usuario
+  - `DELETE /:id` — eliminar usuario
+  - `POST /:id/rol` — asignar rol
+- **Falta:** `POST /:id/reset-password`
+
+**Backend app.js:**
+- Línea 36: `app.use("/api/usuarios", require("./routes/usuario.routes"));`
+- Prefijo es `/api/usuarios` ✅ (correcto)
+
+**Implicación:** El frontend intenta POST a una ruta que no existe. Backend retorna 404. El botón "Resetear Clave" en la tabla (línea 325-330) es funcional pero nunca llegará al handler.
+
+---
+
+### 3. PREGUNTA: Página de Roles no carga la lista
+
+**Hallazgo - PARCIAL:**
+La página de Roles (`PortalAdminRoles.jsx`) **CARGA CORRECTAMENTE** si el endpoint `/api/roles` existe.
+
+**Frontend (correcto):**
+- Archivo: `/home/jamejia/intranet/modules/portal/frontend/pages/PortalAdminRoles.jsx` línea 20
+- Código: `solicitar('/roles')`
+- También carga: `solicitar('/permisos')` línea 21
+- **Notas:** No hay ruta completa especificada; `solicitar()` debería añadir `/api` (revisar helper)
+
+**Backend:**
+- Archivo: `/home/jamejia/intranet/modules/portal/backend/app.js` línea 33
+- Ruta: `app.use("/api/roles", require("./routes/rol.routes"));`
+- **Prefijo correcto:** `/api/roles` ✅
+
+**Lógica de carga:**
+- `cargarDatos()` en línea 17-30 usa `Promise.all([solicitar('/roles'), solicitar('/permisos')])`
+- Renderizado: línea 139-163 muestra tabla si `!cargando`
+
+**Implicación:** La estructura es correcta. Si la lista no carga, la causa es:
+1. El helper `solicitar()` no antepone `/api` correctamente (revisar `modules/portal/frontend/utils/api.js`)
+2. Rol.routes.js tiene un error interno
+3. El endpoint GET /roles rechaza por permisos (middleware)
+
+---
+
+### 4. PREGUNTA: Sidebar — módulos sin acceso deberían desaparecer
+
+**Hallazgo - INCOMPLETO:**
+Las sub-rutas SÍ se filtran por permisos, pero **LOS MÓDULOS COMPLETOS NO SE FILTRAN** si todas sus sub-rutas son inaccesibles.
+
+**Ubicación:** `/home/jamejia/intranet/modules/portal/frontend/components/MenuDinamico.jsx` líneas 150-200
+
+**Lógica actual:**
+
+```jsx
+// Línea 150: itera sobre módulos activos
+modulosActivos.map(m => {
+  const subRutas = SUB_RUTAS[m.nombre];
+  // ...
+  return (
+    <div key={m.id} className="sidebar-grupo">
+      {/* Renderiza el botón de módulo */}
+      <button className="sidebar-seccion-btn" ...>
+      {/* Línea 186-196: Filtra SUB_RUTAS por permiso */}
+      <div className="sidebar-subitems">
+        {subRutas
+          .filter((sr) => tieneAcceso(m.nombre, sr.opcion))
+          .map(sr => ...)}
+      </div>
+    </div>
+  );
+})
+```
+
+**Problema:** El `.map()` sobre `modulosActivos` (línea 150) no filtra módulos. Renderiza el módulo AUNQUE todas sus sub-rutas sean inaccesibles.
+
+**Ejemplo:** Un empleado sin acceso a RH:
+1. Permiso: vacío para módulo "rh"
+2. Sub-rutas filtradas: array vacío (línea 187)
+3. Resultado: botón "👥 RH" aparece en sidebar, pero sin sub-items
+4. El botón es clickeable pero no lleva a nada (vacío)
+
+**Solución necesaria:** Filtrar módulos ANTES de renderizar:
+```jsx
+const modulosConAcceso = modulosActivos.filter(m => {
+  const subRutas = SUB_RUTAS[m.nombre];
+  if (!subRutas) return true; // módulos sin subrutas siempre visibles
+  return subRutas.some(sr => tieneAcceso(m.nombre, sr.opcion));
+});
+modulosConAcceso.map(m => ...)
+```
+
+**Archivos relevantes:**
+- `/home/jamejia/intranet/modules/portal/frontend/components/MenuDinamico.jsx` (líneas 98, 150, 186-196)
+
+---
+
+### 5. PREGUNTA: Estilos CSS en páginas Permisos/Ausencias, Vacaciones y Solicitudes
+
+**Hallazgo - INCONSISTENCIA DE PATRONES:**
+
+#### 5a. RHAdminPage (Permisos/Ausencias)
+- **Archivo:** `/home/jamejia/intranet/modules/rh/frontend/pages/RHAdminPage.jsx` (99 líneas)
+- **Estilos:** SOLO className — NO usa inline `style={}`
+- **Patrón:** `<div className="rh-admin-page">`, `<div className="admin-filtros">`, `<div className="paginacion">`
+- **Componente hijo:** `<PermisosList permisos={permisos} onResponder={...} />` (probablemente contiene estilos)
+- **Estatus:** ✅ Usa clases CSS globales (probablemente en `modules/rh/frontend/` o `modules/portal/frontend/`)
+
+#### 5b. VacacionesPage (Formulario de solicitud)
+- **Archivo:** `/home/jamejia/intranet/modules/rh/frontend/pages/VacacionesPage.jsx` (200+ líneas)
+- **Estilos:** MASIVAMENTE inline con `style={{ ... }}`
+- **Ejemplos:**
+  - Líneas 18-33: `BadgeEstatus` con `display: 'inline-block'`, `padding`, `borderRadius`, `background` inline
+  - Líneas 36-68: `TarjetaSaldo` con estilos inline completos (border, borderRadius, padding, flex)
+  - Líneas 182-197: Variables `estiloSeccion`, `estiloTituloSeccion`, `estiloInput` — diccionarios de estilo inline
+- **Patrón:** Estilos calculados en constantes y aplicados con `style={{ ...estiloSeccion }}`
+- **Estatus:** ❌ Prácticamente SIN clases CSS, todo hardcodeado
+
+#### 5c. VacacionesListadoPage (Listado de solicitudes)
+- **Archivo:** `/home/jamejia/intranet/modules/rh/frontend/pages/VacacionesListadoPage.jsx` (200+ líneas)
+- **Estilos:** MASIVAMENTE inline con `style={{ ... }}`
+- **Ejemplos:**
+  - Líneas 125-132: `estiloInput` — diccionario inline
+  - Líneas 134-143: `estiloBtnPrimario` — diccionario inline
+  - Línea 146: `<div style={{ maxWidth: "1100px", ... }}>`
+  - Línea 147: Anidado con estilos inline display, gap, etc.
+- **Patrón:** Estilos inline en cada elemento, con constantes reutilizadas localmente
+- **Estatus:** ❌ TODOS inline
+
+#### 5d. EmpleadoPage (Comparativa — página de referencia)
+- **Archivo:** `/home/jamejia/intranet/modules/rh/frontend/pages/EmpleadoPage.jsx` (600+ líneas)
+- **Estilos:** MEZCLA — `className` + constantes `estiloSeccion`, `estiloGrid2`, `estiloGrid3` (líneas 37-57)
+- **Patrón:** Define constantes de estilo inline al inicio, reutiliza en el render
+- **Ejemplo:** Línea 47-57 define grillas, se usan en todo el formulario modal
+- **Estatus:** ✅ CONSISTENTE — usa constantes inline pero de forma ordenada
+
+### Inconsistencias detectadas
+
+| Página | Patrón | Estatus |
+|--------|--------|--------|
+| RHAdminPage | `className` globales | ✅ Correcto |
+| VacacionesPage | Inline masivo con constantes locales | ❌ Desorganizado |
+| VacacionesListadoPage | Inline con constantes locales | ❌ Desorganizado |
+| EmpleadoPage | Constantes inline + reutilizables | ✅ OK |
+
+### Problemas específicos
+
+1. **Falta de consistencia de clase CSS:** VacacionesPage y VacacionesListadoPage NO usan clases de CSS global (ej: `className="card"`, `className="button-primary"`). Todo inline.
+
+2. **Variables CSS en componentes locales:** Ambas páginas de vacaciones usan `var(--color-primario)` etc. en inline styles (líneas 11-13, 40, 54, etc. en VacacionesPage). **NOTA:** Esto funciona pero no es "limpio" — mejor en CSS global.
+
+3. **Componentes reutilizables sin extraer:** `BadgeEstatus` y `TarjetaSaldo` están definidos inline en VacacionesPage pero podrían estar en `modules/rh/frontend/components/`.
+
+4. **Sin tablas HTML adecuadas:** VacacionesListadoPage no renderiza en las líneas 200+ (continuación no leída). Revisar si usa tablas o divs.
+
+**Archivos relevantes:**
+- `/home/jamejia/intranet/modules/rh/frontend/pages/RHAdminPage.jsx` (líneas 58-78)
+- `/home/jamejia/intranet/modules/rh/frontend/pages/VacacionesPage.jsx` (líneas 10-34, 36-68, 182-197, 200+)
+- `/home/jamejia/intranet/modules/rh/frontend/pages/VacacionesListadoPage.jsx` (líneas 5-28, 125-143, 145+)
+- `/home/jamejia/intranet/modules/rh/frontend/pages/EmpleadoPage.jsx` (líneas 37-57)
+
+**Implicación:** VacacionesPage y VacacionesListadoPage no siguen el patrón del proyecto. Deberían:
+1. Extraer estilos inline a `modules/rh/frontend/styles/vacaciones.css` (o similar)
+2. Usar `className` en lugar de `style={}`
+3. Extraer componentes como `BadgeEstatus` a `modules/rh/frontend/components/BadgeEstatus.jsx`
+4. Mantener constantes de estilo solo para valores dinámicos (colores según rol, etc.)
+
+
+---
+
+## [2026-04-29] investigador — Dashboard RH (error GET /rh/dashboard) y estilos página Permisos/Ausencias
+
+**Preguntas:**
+1. ¿Cuál es la causa raíz del error "error al obtener el dashboard" en RHDashboard.jsx?
+2. ¿Cuál es el estado actual de la página de Permisos/Ausencias (RHAdminPage)?
+3. ¿Qué constantes de estilo usa EmpleadoPage.jsx para que Permisos las replique?
+
+### PREGUNTA 1: Dashboard RH — análisis de endpoint y errores
+
+**Hallazgo: NO hay error en el endpoint — todo está correctamente implementado**
+
+#### Endpoint: `GET /api/rh/dashboard`
+
+**Frontend (RHDashboard.jsx, línea 16):**
+```jsx
+fetch(`${API}/rh/dashboard`, {
+  headers: { Authorization: `Bearer ${token}` },
+})
+```
+
+**Ruta en backend (rh.dashboard.routes.js, línea 8-13):**
+```javascript
+router.get(
+  '/dashboard',
+  authenticateJWT,
+  verificarPermiso('rh', 'Empleados', 'consulta'),
+  RHDashboardController.obtenerDashboard
+);
+```
+- Prefijo registrado en app.js línea 39: `app.use("/api/rh", ...dashboard.routes)`
+- **Ruta completa:** `GET /api/rh/dashboard` ✅
+
+**Controller (rh.dashboard.controller.js, línea 4-74):**
+- Ejecuta 7 queries en paralelo con `Promise.all()`
+- Queries válidas: empleados totales, activos, bajas mes, permisos pendientes, movimientos por mes, por departamento, lista de permisos pendientes
+- Respuesta exitosa: `{ exito: true, datos: { kpis, movimientos_por_mes, por_departamento, permisos_pendientes_lista } }`
+- Manejo de error en catch: retorna `{ exito: false, mensaje: 'Error al obtener el dashboard', error: error.message }`
+
+**Posibles causas de error (si ocurre):**
+1. **Falta de permiso:** Middleware `verificarPermiso('rh', 'Empleados', 'consulta')` rechaza si usuario NO tiene ese permiso en `rol_opcion_permisos`
+2. **Conexión a BD:** Una de las 7 queries falla (ejemplo: tabla `permisos_ausencia` no existe si no se ejecutó migración 001)
+3. **Token inválido:** `authenticateJWT` rechaza si token no está en header o es inválido
+4. **API_URL incorrecto:** `const API = import.meta.env.VITE_API_URL_RH || ... ` — verificar que `VITE_API_URL_RH` es correcto en `.env.local`
+
+**Observación:** No hay bugs evidente en el código. Si reportan error, revisar:
+- Logs del servidor (stderr del backend)
+- Console del navegador (frontend)
+- Variables de entorno y tokens
+
+**Archivos relevantes:**
+- `/home/jamejia/intranet/modules/rh/frontend/pages/RHDashboard.jsx` (línea 16)
+- `/home/jamejia/intranet/modules/rh/backend/routes/rh.dashboard.routes.js` (línea 8-13)
+- `/home/jamejia/intranet/modules/rh/backend/controllers/rh.dashboard.controller.js` (línea 4-74)
+- `/home/jamejia/intranet/modules/portal/backend/app.js` (línea 39)
+
+---
+
+### PREGUNTA 2: Página Permisos/Ausencias (RHAdminPage) — estado actual de estilo
+
+**Hallazgo: RHAdminPage usa CLASES CSS GLOBALES (className), NO estilos inline**
+
+**Estructura de página (RHAdminPage.jsx, línea 57-100):**
+```jsx
+<div className="rh-admin-page">           // línea 58
+  <h1>Panel de Administración RH</h1>
+  
+  <div className="admin-filtros">         // línea 61
+    <h2>Solicitudes de Permisos</h2>
+    <div className="filtros-grupo">       // línea 63 — botones de filtro
+      {["pendiente", "aprobado", "rechazado", ""].map(...)}
+    </div>
+  </div>
+  
+  <PermisosList permisos={permisos} ... /> // línea 79
+  
+  <div className="paginacion">             // línea 82 — controles pagination
+    ...
+  </div>
+</div>
+```
+
+**Clases CSS utilizadas:**
+- `.rh-admin-page` — contenedor principal
+- `.admin-filtros` — sección de filtros
+- `.filtros-grupo` — botones de filtro
+- `.paginacion` — controles de página
+- (Internamente en `<PermisosList>`): `.permisos-lista`, `.permisos-tabla`, `.badge`, `.boton-aprobar`, `.boton-rechazar`
+
+**Componente hijo: PermisosList.jsx (línea 23-109)**
+- **SIN estilos inline**
+- Usa clases CSS: `.permisos-lista`, `.lista-encabezado`, `.permisos-tabla`, `.badge`, `.badge-pendiente`, `.badge-aprobado`, `.badge-rechazado`, `.boton-aprobar`, `.boton-rechazar`
+- Componente `PermisosForm.jsx` tiene SOLO 2 estilos inline (línea 83, 99) para avisos y readonly
+
+**Conclusión:** RHAdminPage + PermisosList siguen patrón correcto (clases CSS). **NO necesita refactor de estilos.**
+
+**Archivos relevantes:**
+- `/home/jamejia/intranet/modules/rh/frontend/pages/RHAdminPage.jsx` (línea 57-100)
+- `/home/jamejia/intranet/modules/rh/frontend/components/PermisosList.jsx` (línea 23-109)
+- `/home/jamejia/intranet/modules/rh/frontend/components/PermisosForm.jsx` (línea 78-170)
+
+---
+
+### PREGUNTA 3: Constantes de estilo en EmpleadoPage — patrón de referencia para Permisos
+
+**Hallazgo: EmpleadoPage define 3 constantes de estilo reutilizables (línea 37-57)**
+
+**Constantes de estilo (línea 37-57 de EmpleadoPage.jsx):**
+
+```javascript
+const estiloSeccion = {
+  borderBottom: "1px solid var(--color-borde)",
+  paddingBottom: "0.75rem",
+  marginBottom: "0.75rem",
+  fontWeight: 700,
+  color: "var(--color-primario)",
+  fontSize: "0.88rem",
+  marginTop: "1rem",
+};
+
+const estiloGrid2 = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: "0.75rem",
+};
+
+const estiloGrid3 = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr 1fr",
+  gap: "0.75rem",
+};
+```
+
+**Cómo se usan en EmpleadoPage:**
+- `style={estiloSeccion}` — encabezados de secciones (línea 336, 398, 530, 641, 708, 769, 837)
+- `style={estiloGrid2}` — 2 campos lado a lado (línea 374, 439, 642, 813)
+- `style={estiloGrid3}` — 3 campos lado a lado (línea 337, 399, 459, 553, 598, 669, 730, 770)
+
+**Patrón: Constantes fuera del componente para evitar recreación en cada render.**
+
+**Comparativa con VacacionesPage (línea 10-62):**
+
+VacacionesPage SÍ sigue el patrón (define 5 constantes):
+```javascript
+const estiloSeccion = { background: "var(--color-superficie)", ... };
+const estiloTituloSeccion = { fontSize: "1.05rem", ... };
+const estiloInput = { width: "100%", ... };
+const estiloLabel = { display: "block", ... };
+const estiloBotonPrimario = { background: "var(--color-primario)", ... };
+```
+
+VacacionesListadoPage TAMBIÉN sigue el patrón (línea 11-49):
+```javascript
+const estiloInput = { ... };
+const estiloBtnPrimario = { ... };
+const estiloCard = { ... };
+const estiloFiltros = { display: "flex", ... };
+```
+
+**Conclusión:** VacacionesPage y VacacionesListadoPage YA siguen el patrón de EmpleadoPage. NO necesitan cambio en estructura de estilos.
+
+---
+
+### Implicación para el equipo
+
+1. **Dashboard:** Endpoint está correcto. Si hay error, es en permisos (rol_opcion_permisos) o BD (migración).
+2. **RHAdminPage + PermisosList:** Ya usan clases CSS globales (correcto). Sin refactor necesario.
+3. **VacacionesPage + VacacionesListadoPage:** Siguen patrón de constantes de estilo (correcto).
+4. **Página de Permisos/Ausencias (RHAdminPage):** Es la página correcta. Está en `modules/rh/frontend/pages/RHAdminPage.jsx`.
+
+**No hay hallazgos de bugs o inconsistencias en estilos.**
+
+**Archivos relevantes:**
+- `/home/jamejia/intranet/modules/rh/frontend/pages/EmpleadoPage.jsx` (línea 37-57)
+- `/home/jamejia/intranet/modules/rh/frontend/pages/VacacionesPage.jsx` (línea 10-62)
+- `/home/jamejia/intranet/modules/rh/frontend/pages/VacacionesListadoPage.jsx` (línea 5-49)
+- `/home/jamejia/intranet/modules/rh/frontend/pages/RHAdminPage.jsx` (línea 57-100)
+- `/home/jamejia/intranet/modules/rh/backend/controllers/rh.dashboard.controller.js` (línea 4-74)
+

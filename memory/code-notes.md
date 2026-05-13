@@ -1,5 +1,87 @@
 # code-notes — Memory Palace
 
+### [2026-05-13] coder — Fix dashboard RH (3 SQL bugs) + CSS permisos
+
+**Decisión de código:** Corrección de 3 bugs críticos en `rh.dashboard.controller.js` y creación del sistema CSS para la página de permisos/ausencias.
+
+Archivos modificados:
+- `modules/rh/backend/controllers/rh.dashboard.controller.js` — 3 bugs SQL corregidos:
+  - (Bug 1) `FROM permisos_ausencia` → `FROM permisos_ausencias` (2 ocurrencias: COUNT y JOIN). El nombre correcto de la tabla es en plural, consistente con el resto del modelo de datos.
+  - (Bug 2) `e.apellido` → `e.apellido_paterno` en la query de permisos pendientes. La tabla `empleados` no tiene columna `apellido` — la columna correcta es `apellido_paterno` (documentado en decisions.md "bug crítico corregido").
+  - (Bug 3) `SELECT COALESCE(departamento, ...) GROUP BY departamento` → query reescrita con `LEFT JOIN departamentos d ON d.id = e.departamento_id` y `COALESCE(d.nombre, 'Sin departamento') GROUP BY d.nombre`. La tabla `empleados` solo tiene `departamento_id` (FK), no una columna `departamento` desnormalizada.
+- `modules/rh/frontend/styles/permisos.css` — NUEVO. Archivo CSS con 17 bloques de estilos usando variables CSS del sistema (`var(--color-primario)`, `var(--color-fondo)`, `var(--color-borde)`, `var(--color-texto)`, `var(--color-texto-claro)`, `var(--sombra-tarjeta)`). Cubre: layout página, filtros, tabla, badges de estatus, botones aprobar/rechazar, paginación, estado vacío y estado cargando.
+- `modules/rh/frontend/pages/RHAdminPage.jsx` — Agregado `import "../styles/permisos.css"` como último import (línea 7), antes del primer `const` del componente.
+
+**Trampa evitada:** El nombre de la tabla en la BD es `permisos_ausencias` (plural), pero el controller la referenciaba como `permisos_ausencia` (singular). Este tipo de error no falla en tiempo de compilación — solo genera un error en runtime cuando se ejecuta el `Promise.all`. Verificar el nombre exacto de las tablas contra las migraciones SQL antes de escribir queries.
+
+**Trampa evitada:** `departamento` como columna directa en `empleados` no existe — es un diseño normalizado con FK `departamento_id`. La query original intentaba hacer `GROUP BY departamento` que PostgreSQL rechaza con "column does not exist". El JOIN con la tabla `departamentos` es el patrón correcto y también habilita el COALESCE del nombre legible.
+
+**Patrón reusable:** Archivos CSS de módulo van en `modules/<modulo>/frontend/styles/<nombre>.css` e importan con path relativo `"../styles/<nombre>.css"` desde las páginas. El directorio `styles/` se crea implícitamente al crear el primer archivo (no requiere `mkdir` explícito en Vite).
+
+### [2026-04-29] coder — Fix bugs admin/roles/sidebar + CSS vacaciones
+
+**Decisión de código:** Implementé 5 tareas de corrección de bugs y mejora de estilos.
+
+Archivos modificados:
+- `modules/portal/backend/routes/usuario.routes.js` — Agregada ruta `POST /:id/reset-password` ANTES de `/:id/rol`. El handler `resetearPassword` ya existía en el controller pero no estaba registrado como ruta — por eso daba 404. Middleware: `verificarPermiso('portal', 'Usuarios', 'edicion')` igual que las demás rutas de edición.
+- `modules/portal/backend/routes/rol.routes.js` — Agregada ruta `PUT /:id/permisos` ANTES de `PUT /:id` para que Express no lo capture como actualizarRol. Handler: `ControladorRol.asignarPermisos` (ya existía en el controller pero no estaba registrado).
+- `modules/portal/frontend/pages/PortalAdminRoles.jsx` — `solicitar('/permisos')` → `solicitar('/permisos/opciones')`. El endpoint `GET /api/permisos` no existe; el correcto es `GET /api/permisos/opciones` (registrado en permiso.routes.js línea 15).
+- `modules/portal/frontend/components/MenuDinamico.jsx` — Agregado filtrado de módulos completos antes del `.map()`: `modulosVisibles = modulosActivos.filter(m => subRutas.some(sr => tieneAcceso(...)))`. Módulos sin sub-rutas en `SUB_RUTAS` siempre se muestran. `ADMIN_ITEMS` intacto.
+- `modules/rh/frontend/pages/VacacionesPage.jsx` — Constantes de estilo (`estiloSeccion`, `estiloTituloSeccion`, `estiloInput`, `estiloLabel`, `estiloBotonPrimario`) movidas FUERA del componente (antes del `export default`), siguiendo el patrón de EmpleadoPage.jsx líneas 37-57. Botón submit refactorizado a usar `{ ...estiloBotonPrimario, cursor: ..., opacity: ... }`.
+- `modules/rh/frontend/pages/VacacionesListadoPage.jsx` — Ídem: constantes `estiloInput`, `estiloBtnPrimario`, `estiloCard`, `estiloFiltros` movidas fuera del componente. Secciones de filtros y tabla usan las constantes en lugar de estilos inline repetidos.
+
+**Trampa evitada:** En `rol.routes.js`, `PUT /:id/permisos` DEBE ir antes de `PUT /:id`. Si va después, Express captura la URL `/5/permisos` y la pasa al handler `actualizar` con `req.params.id = "5"` — el string "permisos" nunca llega al router porque Express ya capturó `:id`. Mismo patrón que el problema de `GET /mis-permisos` vs `GET /rol/:rol_id` documentado en la entrada anterior.
+
+**Trampa evitada:** `resetearPassword` en `usuario.controller.js` ya estaba implementado (líneas 143-182) con una contraseña aleatoria de 8 caracteres (`Math.random().toString(36).slice(-8)`) y `requiere_cambio_password: true`. NO reimplementé — solo registré la ruta. El frontend (`PortalAdminUsuarios.jsx`) ya tenía el modal completo para mostrar la contraseña temporal.
+
+**Trampa evitada:** En `MenuDinamico.jsx`, `tieneAcceso` es una declaración `function` (no expresión/arrow), por lo que es hoisted y está disponible cuando `modulosVisibles` se calcula, aunque aparezca después en el código fuente. Esto es correcto en JS pero puede confundir a quien lea el código linealmente.
+
+**Trampa evitada:** `solicitar('/permisos')` resulta en `GET /api/permisos` — ruta que no existe. La ruta correcta es `/api/permisos/opciones`. Este es el tipo de bug silencioso: el `Promise.all` en `cargarDatos()` falla y el `catch` solo hace `console.error`, así que la página muestra la tabla vacía sin mensaje de error al usuario.
+
+**Patrón reusable:** Constantes de estilo estáticas (sin lógica dinámica) van fuera del componente. Constantes con lógica dinámica (que dependen de estado/props) van dentro. Ejemplo: `estiloBotonPrimario` va fuera; `{ ...estiloBotonPrimario, opacity: enviando ? 0.7 : 1 }` se construye inline en el JSX. (VacacionesPage.jsx y VacacionesListadoPage.jsx)
+
+### [2026-04-29] coder — Logo sidebar, logo login, filtrado permisos menú
+
+**Decisión de código:** Implementé 3 mejoras en los componentes del portal.
+
+Archivos modificados:
+- `modules/portal/frontend/components/MenuDinamico.jsx` — (1) Logo: `height` 38px → 42px. (2) Contenedor `.sidebar-logo` con `display:flex,justifyContent:center,alignItems:center` inline para centrado explícito independiente de CSS global. (3) Prop `permisos=[]` añadida al componente. (4) Campo `opcion` añadido a cada entrada de `SUB_RUTAS` con el nombre exacto de `modulo_opciones` del seed. (5) Función `tieneAcceso(moduloNombre, opcion)` con fallback: si `permisos.length===0` retorna `true` (no rompe UX durante carga). (6) Filtro `.filter(sr => tieneAcceso(m.nombre, sr.opcion))` antes del `.map()` de sub-rutas. `ADMIN_ITEMS` intacto.
+- `modules/portal/frontend/pages/PortalLogin.jsx` — Bloque emoji 🏢 reemplazado por `<img src="/logo-rayhsa.png">` con `height:80px`, `objectFit:contain` y `onError` que oculta la imagen (no interrumpe el flujo si no carga).
+- `modules/portal/frontend/main.jsx` — Import de `solicitar` de `utils/api`. Estado `permisos` añadido. Llamada a `solicitar('/permisos/mis-permisos')` en el mismo `useEffect` que carga módulos. Prop `permisos={permisos}` pasada a `<MenuDinamico>`.
+- `modules/portal/backend/models/permiso.model.js` — Método estático `obtenerPorUsuarioId(usuarioId)` añadido al objeto `Permiso`. JOIN entre `usuario_rol`, `roles`, `rol_opcion_permisos`, `modulo_opciones`, `modulos`. Retorna `{modulo, opcion, tipo}` para cada permiso del usuario.
+- `modules/portal/backend/controllers/permiso.controller.js` — Handler `misPermisos(req, res)` añadido. Usa `Permiso.obtenerPorUsuarioId(req.user.usuario_id)`.
+- `modules/portal/backend/routes/permiso.routes.js` — Import de `ControladorPermiso`. Ruta `GET /mis-permisos` registrada ANTES de `GET /rol/:rol_id` para evitar que `:rol_id` atrape la cadena literal "mis-permisos". `router.use(authenticateJWT)` ya cubre toda la ruta — no se añade middleware duplicado.
+
+**Trampa evitada:** La ruta `GET /mis-permisos` DEBE estar antes de `GET /rol/:rol_id` en el router. Express evalúa rutas en orden de definición; si `:rol_id` va primero, "mis-permisos" se interpreta como un `rol_id` con valor "mis-permisos", causando un error de base de datos.
+
+**Trampa evitada:** El helper `solicitar` de `utils/api.js` lee el token de `localStorage.getItem("token")` internamente. No hay que extraer el token del contexto ni pasarlo manualmente. Este es el patrón del proyecto — usado también por `vacaciones.service.js` y otros servicios.
+
+**Trampa evitada:** El campo `opcion` en `SUB_RUTAS` usa los nombres EXACTOS de `modulo_opciones` (case-sensitive en la comparación): "Empleados", "Permisos", "Vacaciones", "Tickets", "Categorías" (con tilde), "Encuestas", "Logs", "Noticias". Cualquier diferencia de mayúsculas o tildes rompe el filtro silenciosamente.
+
+**Trampa evitada:** `Puestos`, `Departamentos` y `Ubicaciones` no tienen su propia `modulo_opcion` en el seed — se asignan a `opcion: 'Empleados'` porque son datos maestros de la gestión de empleados. Si en el futuro se crean opciones separadas, actualizar solo `SUB_RUTAS`.
+
+**Patrón reusable:** El fallback `if (permisos.length === 0) return true` en `tieneAcceso` garantiza que mientras los permisos cargan (fetch asíncrono), el usuario siempre ve el menú completo. Cuando el fetch completa y `permisos` se llena, React re-renderiza y aplica el filtro real. (MenuDinamico.jsx línea 135)
+
+### [2026-04-29] coder — Combos unificados, title case, nivel_salarial
+
+**Decisión de código:** Implementé centralización de catálogos, title case en nombres y eliminación de nivel_salarial de la capa de aplicación.
+
+Archivos modificados:
+- `modules/rh/frontend/constants/catalogos.js` — Añadidas 4 constantes nuevas al final: `GENEROS` (3 opciones), `ESTADOS_CIVILES` (6), `NIVELES_ESCOLARIDAD` (8), `TIPOS_CONTRATO` (6). Las opciones de TIPOS_CONTRATO son en Título Case (ej. "Prácticas") — esto unifica los valores que antes diferían entre los dos forms (EmpleadoPage tenía "Determinado/Indeterminado", ProfileCard tenía "indefinido/temporal/por_obra").
+- `modules/rh/frontend/pages/EmpleadoPage.jsx` — Import ampliado con 4 nuevas constantes. Los selects de `genero`, `estado_civil`, `escolaridad` y `tipo_contrato` migrados de opciones hardcodeadas a catálogos. Añadida función `manejarBlurNombre` (dentro del componente, para acceder a `setFormulario`) con `onBlur` en los 3 campos de nombre.
+- `modules/rh/frontend/components/EmpleadoProfileCard.jsx` — Import ampliado. Selects inline de `genero`, `estado_civil`, `escolaridad` y `tipo_contrato` reemplazados por `<CampoSelect>`. Función `manejarBlurNombre` añadida. Componente `Campo` extendido con prop `onBlur`. `onBlur={manejarBlurNombre}` añadido a los 3 campos de nombre.
+- `modules/rh/frontend/pages/PuestosPage.jsx` — Eliminado campo `nivel_salarial` del: estado inicial, reset en manejarEnvio, reset en botón "Nuevo Puesto", función `editar()`, JSX del formulario (label+input), `<th>` de la tabla y `<td>` de filas.
+- `modules/rh/backend/models/puesto.model.js` — `crear()`: quitado `nivel_salarial` del destructuring, del INSERT y del array de valores ($4 eliminado). `actualizar()`: quitado el bloque `if (datos.nivel_salarial !== undefined)`.
+
+**Trampa evitada:** `manejarBlurNombre` NO puede ser función de nivel de módulo (como `soloDigitos`) porque necesita acceder a `setFormulario` del estado React. Se define dentro del componente. `soloDigitos` sí puede ser de módulo porque solo muta `e.target.value` sin tocar el estado.
+
+**Trampa evitada:** Al unificar los valores de los selects, los empleados existentes en BD con valores del formato antiguo (ej. "indefinido", "soltero", "masculino" en minúsculas, o "Bachillerato" vs "Preparatoria / Bachillerato") verán el campo vacío en el select al editar (el valor no coincide con ninguna opción). Esto es una inconsistencia de datos preexistente documentada por el investigador, no un bug nuevo. El usuario deberá actualizar esos registros manualmente.
+
+**Trampa evitada:** El controller de puesto (`puesto.controller.js`) pasa `req.body` directamente al modelo sin desestructurar — no fue necesario modificarlo. El modelo ya no usa `nivel_salarial` aunque llegue en el body, por lo que el backend es tolerante hacia clientes que aún envíen el campo.
+
+**Patrón reusable:** `CampoSelect` acepta array de strings planos como `opciones`. El valor guardado en BD ES el string exacto de la opción. Para catálogos con FK (departamentos, puestos) se siguen usando selects inline con objetos `{id, nombre}`. (EmpleadoProfileCard.jsx — función `CampoSelect`)
+
+
 ### [2026-04-29] coder — Validaciones y combos formularios empleado
 
 **Decisión de código:** Implementé validaciones HTML5 nativas y selects con catálogos en los dos formularios de empleado del módulo RH. Archivos tocados:
