@@ -272,6 +272,68 @@ const Empleado = {
     const resultado = await grupo.query(consulta, [jefeId]);
     return resultado.rows;
   },
+
+  async importarLote(filas, mapaPuestos, mapaDepartamentos) {
+    // Clave duplicado: curp o numero_nomina (los que estén presentes)
+    const curpsExistentes = new Set(
+      (await grupo.query("SELECT LOWER(curp) AS curp FROM empleados WHERE curp IS NOT NULL AND curp != ''")).rows.map(r => r.curp)
+    );
+    const nominasExistentes = new Set(
+      (await grupo.query("SELECT LOWER(numero_nomina) AS n FROM empleados WHERE numero_nomina IS NOT NULL AND numero_nomina != ''")).rows.map(r => r.n)
+    );
+
+    let insertados = 0;
+    let duplicados = 0;
+    const errores = [];
+
+    for (const fila of filas) {
+      if (!fila.nombre || !fila.apellido_paterno) {
+        errores.push({ fila, error: 'Nombre y apellido paterno son requeridos' });
+        continue;
+      }
+
+      const curpLower = fila.curp ? fila.curp.toLowerCase() : null;
+      const nominaLower = fila.numero_nomina ? fila.numero_nomina.toLowerCase() : null;
+
+      if ((curpLower && curpsExistentes.has(curpLower)) || (nominaLower && nominasExistentes.has(nominaLower))) {
+        duplicados++;
+        continue;
+      }
+
+      const puestoId = fila.puesto ? (mapaPuestos[fila.puesto.toLowerCase()] || null) : null;
+      const deptId = fila.departamento ? (mapaDepartamentos[fila.departamento.toLowerCase()] || null) : null;
+
+      const fecha = (f) => (f && f.trim() !== '' ? f : null);
+
+      try {
+        await grupo.query(`
+          INSERT INTO empleados (
+            nombre, apellido_paterno, apellido_materno,
+            curp, rfc, nss, numero_nomina,
+            genero, estado_civil, escolaridad, tipo_contrato,
+            fecha_nacimiento, fecha_ingreso,
+            correo_personal, celular_personal,
+            puesto_id, departamento_id, estatus
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'activo')`,
+          [
+            fila.nombre, fila.apellido_paterno, fila.apellido_materno || null,
+            fila.curp || null, fila.rfc || null, fila.nss || null, fila.numero_nomina || null,
+            fila.genero || null, fila.estado_civil || null, fila.escolaridad || null, fila.tipo_contrato || null,
+            fecha(fila.fecha_nacimiento), fecha(fila.fecha_ingreso),
+            fila.correo_personal || null, fila.celular_personal || null,
+            puestoId, deptId,
+          ]
+        );
+        insertados++;
+        if (curpLower) curpsExistentes.add(curpLower);
+        if (nominaLower) nominasExistentes.add(nominaLower);
+      } catch (e) {
+        errores.push({ fila, error: e.message });
+      }
+    }
+
+    return { insertados, duplicados, errores };
+  },
 };
 
 module.exports = Empleado;

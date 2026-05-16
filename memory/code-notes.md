@@ -1,5 +1,84 @@
 # code-notes — Memory Palace
 
+### [2026-05-15] orquestador — Docker: volúmenes de frontend son explícitos por módulo
+
+**Trampa:** El backend monta `./modules` completo (`- ./modules:/app/modules`), por lo que cualquier módulo nuevo queda disponible automáticamente dentro del contenedor. El frontend NO — monta cada módulo por separado.
+
+**Síntoma:** Error Vite `Failed to resolve import "../../comercial/frontend/pages/..."` aunque el archivo sí existe en el host. El contenedor sencillamente no lo ve.
+
+**Causa:** `docker-compose.dev.yml` servicio `frontend`, sección `volumes`, lista explícita:
+```yaml
+volumes:
+  - ./modules/portal/frontend:/app/modules/portal/frontend
+  - ./modules/auditoria/frontend:/app/modules/auditoria/frontend
+  - ./modules/tickets/frontend:/app/modules/tickets/frontend
+  - ./modules/rh/frontend:/app/modules/rh/frontend
+  # ← módulos nuevos deben agregarse aquí
+```
+
+**Fix:** Agregar una línea por cada módulo frontend nuevo y recrear el contenedor:
+```bash
+docker compose -f docker-compose.dev.yml up -d --no-deps frontend
+```
+
+**Regla:** Cada vez que se cree un módulo nuevo con directorio `frontend/`, agregar su volumen en `docker-compose.dev.yml` ANTES de intentar levantar el frontend.
+
+---
+
+### [2026-05-15] orquestador — CSS: clase pagina-contenedor no existe en el proyecto
+
+**Trampa:** La clase `pagina-contenedor` se usa como wrapper externo en los tres pages del módulo comercial (`SolicitudCreditoForm.jsx`, `SolicitudesListado.jsx`, `ComercialDashboard.jsx`) pero NO estaba definida en ningún archivo CSS del proyecto — ni en `globales.css` ni en `comercial.css`.
+
+**Síntoma:** La página de registro de solicitud no tenía ningún contenedor aplicado: sin max-width, sin margen centrado, sin padding. El contenido se pegaba al borde izquierdo y se extendía hasta el 100% del ancho.
+
+**Causa:** El patrón de RH usa inline styles para el wrapper externo (`style={{ maxWidth: "900px", margin: "0 auto", padding: "1.5rem" }}`). Al crear el módulo comercial se usó una clase CSS en su lugar, pero la clase nunca se definió.
+
+**Fix:** Agregar al inicio de `comercial.css` (después del comentario de encabezado):
+```css
+.pagina-contenedor {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+```
+
+**Regla:** Si un módulo nuevo usa `className="pagina-contenedor"`, asegurarse de que esa clase esté definida en su CSS local. No existe una clase global con ese nombre — cada módulo que la use debe definirla en su propio CSS de módulo.
+
+---
+
+### [2026-05-15] coder — Módulo Comercial: Solicitudes de Crédito (Fase 1)
+
+**Decisión de código:** Implementación completa del módulo comercial con 13 archivos creados o modificados.
+
+Archivos creados:
+- `modules/comercial/backend/migrations/001-activar-modulo-solicitudes.sql` — activa módulo, crea tabla, trigger, opción y permisos
+- `modules/comercial/backend/models/solicitudCredito.model.js` — CRUD + estadísticas con filtros dinámicos y JSONB
+- `modules/comercial/backend/controllers/solicitudCredito.controller.js` — 7 handlers con auditoría en crear/actualizar/cambiarEstado
+- `modules/comercial/backend/routes/solicitudesCredito.routes.js` — 8 rutas; `GET /estadisticas` va ANTES de `GET /:id` para evitar que Express capture "estadisticas" como UUID
+- `modules/comercial/frontend/styles/comercial.css` — 20+ bloques de estilos con variables CSS + @media print para PDF
+- `modules/comercial/frontend/services/solicitudesCredito.service.js` — 6 funciones usando `solicitar()` de `../../../portal/frontend/utils/api`
+- `modules/comercial/frontend/pages/ComercialDashboard.jsx` — KPIs de estadísticas
+- `modules/comercial/frontend/pages/SolicitudesListado.jsx` — tabla filtrable con badges de estado
+- `modules/comercial/frontend/pages/SolicitudCreditoForm.jsx` — formulario 7 pestañas con autoguardado en localStorage
+
+Archivos modificados:
+- `modules/portal/backend/app.js` — `app.use('/api/comercial/solicitudes', ...)` después de auditoria
+- `modules/portal/frontend/components/MenuDinamico.jsx` — `SUB_RUTAS.comercial` con Dashboard y Solicitudes de Crédito
+- `modules/portal/frontend/main.jsx` — 3 imports + 4 rutas React bajo `/comercial/*`
+- `config/database/init.sql` — `comercial` activado (`true`), tabla + trigger + permisos al final
+
+**Trampa evitada:** En el router de solicitudes, `GET /estadisticas` DEBE ir antes de `GET /:id`. Si va después, Express intenta parsear "estadisticas" como UUID y la ruta falla silenciosamente devolviendo 404. Mismo patrón documentado para `/mis-permisos` vs `/:rol_id` en code-notes.md [2026-04-29].
+
+**Trampa evitada:** El trigger `CREATE TRIGGER trigger_numero_solicitud` usa `CREATE OR REPLACE TRIGGER` en init.sql (idempotente) pero `CREATE TRIGGER` en la migración (no idempotente — la migración se ejecuta una sola vez). En init.sql se usa `CREATE OR REPLACE` para que no falle en re-ejecuciones.
+
+**Trampa evitada:** `AuditoriaService` exporta un objeto, no funciones individuales. La destructuración `const { registrarAccion } = require(...)` funciona porque `registrarAccion` es una propiedad del objeto exportado como `module.exports = AuditoriaService`. Verificar contra otros controllers como `vacaciones.controller.js:4` que usan el mismo patrón.
+
+**Trampa evitada:** En `solicitudCredito.model.js → actualizar()`, `fecha_ultimo_cambio = NOW()` no consume un slot de `$N` en los params de PostgreSQL. El `params.push(id)` que viene inmediatamente después es el parámetro del `WHERE id = $${idx}`. El orden es: procesar campos → push usuario_id ($N) → push sin placeholder para NOW() → push id ($N+1). El WHERE usa `$${idx}` donde `idx = N+1` post-incremento. Es correcto pero antiintuitivo.
+
+**Patrón reusable:** Import de `solicitar()` desde el directorio `modules/comercial/frontend/` usa path `'../../../portal/frontend/utils/api'`. La profundidad es 3 niveles (pages/ o services/ → frontend/ → comercial/ → modules/) antes de llegar a portal. Confirmar contra otros módulos: `modules/rh/frontend/services/vacaciones.service.js` usa el mismo path de 3 niveles `'../../../portal/frontend/utils/api'`.
+
+**Patrón reusable:** El formulario multipestaña usa estado global `formulario` con un objeto plano. Los arrays dinámicos (bancarios, contactos, referencias) se actualizan con funciones `actualizar*` que hacen spread del array y reemplazan el elemento en el índice. Los campos JSONB anidados (domicilios, condiciones_comerciales) tienen su propia función `actualizarDomicilio` / `actualizarCondicion` que hace spread del objeto anidado. (SolicitudCreditoForm.jsx)
+
 ### [2026-05-13] coder — Fix dashboard RH (3 SQL bugs) + CSS permisos
 
 **Decisión de código:** Corrección de 3 bugs críticos en `rh.dashboard.controller.js` y creación del sistema CSS para la página de permisos/ausencias.

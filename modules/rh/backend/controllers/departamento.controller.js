@@ -1,4 +1,5 @@
 const Departamento = require("../models/departamento.model");
+const { grupo } = require("../config/database");
 
 const ControladorDepartamento = {
   async listar(req, res) {
@@ -76,6 +77,29 @@ const ControladorDepartamento = {
           mensaje: "Error al eliminar departamento",
           error: error.message,
         });
+    }
+  },
+
+  async importar(req, res) {
+    try {
+      const { filas } = req.body;
+      if (!Array.isArray(filas) || filas.length === 0)
+        return res.status(400).json({ exito: false, mensaje: "No se recibieron filas para importar" });
+
+      const nombresArea = [...new Set(filas.map(f => f.area).filter(Boolean))];
+      const mapaAreas = {};
+      if (nombresArea.length > 0) {
+        const res2 = await grupo.query(
+          "SELECT id, LOWER(nombre) AS nombre FROM areas WHERE LOWER(nombre) = ANY($1)",
+          [nombresArea.map(n => n.toLowerCase())]
+        );
+        res2.rows.forEach(r => { mapaAreas[r.nombre] = r.id; });
+      }
+
+      const resultado = await Departamento.importarLote(filas, mapaAreas);
+      res.json({ exito: true, datos: resultado });
+    } catch (error) {
+      res.status(500).json({ exito: false, mensaje: "Error al importar departamentos", error: error.message });
     }
   },
 };

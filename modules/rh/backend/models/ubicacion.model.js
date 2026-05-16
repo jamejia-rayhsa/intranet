@@ -3,8 +3,8 @@ const { grupo } = require("../config/database");
 const Ubicacion = {
   async crear(datos) {
     const consulta = `
-      INSERT INTO ubicaciones (nombre, direccion, ciudad, estado, codigo_postal, telefono)
-      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
+      INSERT INTO ubicaciones (nombre, direccion, ciudad, estado, codigo_postal, telefono, prefijo)
+      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *
     `;
     return (
       await grupo.query(consulta, [
@@ -14,6 +14,7 @@ const Ubicacion = {
         datos.estado || null,
         datos.codigo_postal || null,
         datos.telefono || null,
+        datos.prefijo || null,
       ])
     ).rows[0];
   },
@@ -57,6 +58,11 @@ const Ubicacion = {
       valores.push(datos.telefono);
       c++;
     }
+    if (datos.prefijo !== undefined) {
+      campos.push(`prefijo = $${c}`);
+      valores.push(datos.prefijo);
+      c++;
+    }
     if (datos.activo !== undefined) {
       campos.push(`activo = $${c}`);
       valores.push(datos.activo);
@@ -65,6 +71,26 @@ const Ubicacion = {
     valores.push(id);
     const consulta = `UPDATE ubicaciones SET ${campos.join(", ")} WHERE id = $${c} RETURNING *`;
     return (await grupo.query(consulta, valores)).rows[0];
+  },
+
+  async siguienteFolio(id) {
+    const fila = (await grupo.query(
+      "UPDATE ubicaciones SET ultimo_folio = ultimo_folio + 1 WHERE id = $1 RETURNING prefijo, ultimo_folio",
+      [id]
+    )).rows[0];
+    if (!fila) return null;
+    const num = String(fila.ultimo_folio).padStart(3, "0");
+    return `${fila.prefijo || id}-${num}`;
+  },
+
+  async previsualizarFolio(id) {
+    const fila = (await grupo.query(
+      "SELECT prefijo, ultimo_folio + 1 AS siguiente FROM ubicaciones WHERE id = $1",
+      [id]
+    )).rows[0];
+    if (!fila) return null;
+    const num = String(fila.siguiente).padStart(3, "0");
+    return `${fila.prefijo || id}-${num}`;
   },
 
   async eliminar(id) {

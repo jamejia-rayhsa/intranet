@@ -60,6 +60,42 @@ const Puesto = {
       await grupo.query("DELETE FROM puestos WHERE id = $1 RETURNING *", [id])
     ).rows[0];
   },
+
+  async importarLote(filas, mapaDepartamentos) {
+    const existentes = new Set(
+      (await grupo.query("SELECT LOWER(nombre) AS nombre FROM puestos")).rows.map(r => r.nombre)
+    );
+
+    let insertados = 0;
+    let duplicados = 0;
+    const errores = [];
+
+    for (const fila of filas) {
+      if (!fila.nombre) {
+        errores.push({ fila, error: 'El campo nombre es requerido' });
+        continue;
+      }
+      if (existentes.has(fila.nombre.toLowerCase())) {
+        duplicados++;
+        continue;
+      }
+      const deptId = fila.departamento
+        ? (mapaDepartamentos[fila.departamento.toLowerCase()] || null)
+        : null;
+      try {
+        await grupo.query(
+          "INSERT INTO puestos (nombre, descripcion, departamento_id) VALUES ($1, $2, $3)",
+          [fila.nombre, fila.descripcion || null, deptId]
+        );
+        insertados++;
+        existentes.add(fila.nombre.toLowerCase());
+      } catch (e) {
+        errores.push({ fila, error: e.message });
+      }
+    }
+
+    return { insertados, duplicados, errores };
+  },
 };
 
 module.exports = Puesto;

@@ -19,8 +19,9 @@ const SUB_RUTAS = {
     { path: '/rh/admin', label: 'Permisos y ausencias', opcion: 'Permisos' },
     { path: '/rh/vacaciones', label: 'Vacaciones', opcion: 'Vacaciones' },
     { path: '/rh/vacaciones/listado', label: 'Solicitudes', opcion: 'Vacaciones' },
-    { path: '/rh/puestos', label: 'Puestos', opcion: 'Empleados' },
+    { path: '/rh/areas', label: 'Áreas', opcion: 'Empleados' },
     { path: '/rh/departamentos', label: 'Departamentos', opcion: 'Empleados' },
+    { path: '/rh/puestos', label: 'Puestos', opcion: 'Empleados' },
     { path: '/rh/ubicaciones', label: 'Ubicaciones', opcion: 'Empleados' },
   ],
   tickets: [
@@ -28,6 +29,10 @@ const SUB_RUTAS = {
     { path: '/tickets/lista', label: 'Tickets', opcion: 'Tickets' },
     { path: '/tickets/categorias', label: 'Categorías', opcion: 'Categorías' },
     { path: '/tickets/encuestas', label: 'Encuestas', opcion: 'Encuestas' },
+  ],
+  comercial: [
+    { path: '/comercial', label: 'Dashboard', opcion: null },
+    { path: '/comercial/creditos', label: 'Solicitudes de Crédito', opcion: 'Solicitudes de Crédito' },
   ],
 };
 

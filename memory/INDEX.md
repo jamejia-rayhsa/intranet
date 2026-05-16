@@ -13,6 +13,13 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-05-15] orquestador → code-notes.md — CSS: pagina-contenedor no existe globalmente; cada módulo debe definirla en su propio CSS
+- [2026-05-15] orquestador → code-notes.md — Gotcha Docker: volúmenes frontend son explícitos por módulo (agregar línea en docker-compose.dev.yml)
+- [2026-05-15] orquestador → SolicitudesListado.jsx — Fix: ruta /imprimir → /editar (bug bloqueante corregido)
+- [2026-05-15] revisor → reviews.md — Módulo Comercial Fase 1: RECHAZADO → fix aplicado (1 ruta inexistente)
+- [2026-05-15] coder → code-notes.md — Módulo Comercial Fase 1: 9 archivos creados, 4 modificados, formulario 7 pestañas
+- [2026-05-15] orquestador → decisions.md — ADR: Módulo Comercial Fase 1 (solicitudes crédito, JSONB arrays, window.print PDF, MBA3 stub)
+- [2026-05-15] investigador → research.md — Módulo Comercial: MBA3 API (PDFs comprimidos), patrones RH, permisos granulares, SUB_RUTAS, PDF generación, auditoría
 - [2026-05-13] orquestador → decisions.md — ADR: Fix dashboard RH (3 SQL bugs) + CSS permisos (4 archivos)
 - [2026-05-13] orquestador → permisoAusencia.model.js — Fix directo: 6× tabla + 2× apellido_paterno
 - [2026-05-13] revisor → reviews.md — Fix dashboard RH + CSS permisos: RECHAZADO (bug modelo permisos detectado y corregido)

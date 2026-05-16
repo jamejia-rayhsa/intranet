@@ -45,11 +45,9 @@ app.use(
   "/api/expediente",
   require("../../rh/backend/routes/expediente.routes"),
 );
-app.use("/api/puestos", require("../../rh/backend/routes/puestos.routes"));
-app.use(
-  "/api/departamentos",
-  require("../../rh/backend/routes/departamentos.routes"),
-);
+app.use("/api/areas",        require("../../rh/backend/routes/areas.routes"));
+app.use("/api/puestos",      require("../../rh/backend/routes/puestos.routes"));
+app.use("/api/departamentos", require("../../rh/backend/routes/departamentos.routes"));
 app.use(
   "/api/ubicaciones",
   require("../../rh/backend/routes/ubicaciones.routes"),
@@ -76,6 +74,9 @@ app.use(
   "/api/auditoria",
   require("../../auditoria/backend/routes/auditoria.routes"),
 );
+
+// Rutas de Comercial
+app.use('/api/comercial/solicitudes', require('../../comercial/backend/routes/solicitudesCredito.routes'));
 
 // Ruta de salud
 app.get("/api/salud", (req, res) => {

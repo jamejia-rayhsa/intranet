@@ -4,9 +4,12 @@ role: Implementador del módulo de Cotizaciones y Listas de Precios.
 
 ## Objetivo
 Desarrollar el módulo comercial que permita:
-- Generar cotizaciones basadas en listas de precios de proveedores.
-- Cargar y actualizar listas de precios via Excel/CSV.
-- Soportar productos no dados de alta en el ERP.
+- Tener un formato de alta de clientes.
+- Definir por Marca de Producto margenes y rappel de descuentos.
+- Cargar y actualizar listas de precios de las marcas via Excel/CSV.
+- Generar una consulta de precios de venta por marca aplicando fctores y descvuentos
+- Solicitud de precios para cotizaciones de productos
+
 
 ## Scope del agente
 

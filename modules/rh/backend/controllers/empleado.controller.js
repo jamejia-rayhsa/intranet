@@ -1,5 +1,6 @@
 const bcrypt = require("bcrypt");
 const Empleado = require("../models/empleado.model");
+const Ubicacion = require("../models/ubicacion.model");
 const Usuario = require("../../../portal/backend/models/usuario.model");
 const { grupo } = require("../config/database");
 const {
@@ -118,6 +119,11 @@ const ControladorEmpleado = {
         }
       }
 
+      let folioAsignado = numero_nomina || null;
+      if (!folioAsignado && ubicacion_id) {
+        folioAsignado = await Ubicacion.siguienteFolio(ubicacion_id);
+      }
+
       const empleado = await Empleado.crear({
         usuario_id: usuarioId,
         nombre,
@@ -141,7 +147,7 @@ const ControladorEmpleado = {
         codigo_postal,
         municipio,
         estado_residencia,
-        numero_nomina,
+        numero_nomina: folioAsignado,
         fecha_imss,
         fecha_renovacion,
         tipo_contrato,
@@ -359,6 +365,36 @@ const ControladorEmpleado = {
         mensaje: "Error al listar subordinados",
         error: error.message,
       });
+    }
+  },
+
+  async importar(req, res) {
+    try {
+      const { filas } = req.body;
+      if (!Array.isArray(filas) || filas.length === 0)
+        return res.status(400).json({ exito: false, mensaje: 'No se recibieron filas para importar' });
+
+      const nombresPuesto = [...new Set(filas.map(f => f.puesto).filter(Boolean))];
+      const nombresDepto  = [...new Set(filas.map(f => f.departamento).filter(Boolean))];
+
+      const [resPuestos, resDeptos] = await Promise.all([
+        nombresPuesto.length
+          ? grupo.query("SELECT id, LOWER(nombre) AS nombre FROM puestos WHERE LOWER(nombre) = ANY($1)", [nombresPuesto.map(n => n.toLowerCase())])
+          : { rows: [] },
+        nombresDepto.length
+          ? grupo.query("SELECT id, LOWER(nombre) AS nombre FROM departamentos WHERE LOWER(nombre) = ANY($1)", [nombresDepto.map(n => n.toLowerCase())])
+          : { rows: [] },
+      ]);
+
+      const mapaPuestos = {};
+      resPuestos.rows.forEach(r => { mapaPuestos[r.nombre] = r.id; });
+      const mapaDepartamentos = {};
+      resDeptos.rows.forEach(r => { mapaDepartamentos[r.nombre] = r.id; });
+
+      const resultado = await Empleado.importarLote(filas, mapaPuestos, mapaDepartamentos);
+      res.json({ exito: true, datos: resultado });
+    } catch (error) {
+      res.status(500).json({ exito: false, mensaje: 'Error al importar empleados', error: error.message });
     }
   },
 };

@@ -1,15 +1,18 @@
 import { useState, useEffect } from "react";
 import { solicitar } from "../../../portal/frontend/utils/api";
+import ImportadorArchivo from "../../../portal/frontend/components/ImportadorArchivo";
 
 export default function CrudPage({
   titulo,
   apiRuta,
   columnas,
   camposFormulario,
+  importadorConfig,
 }) {
   const [items, setItems] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
+  const [mostrarImportador, setMostrarImportador] = useState(false);
   const [editando, setEditando] = useState(null);
   const [formulario, setFormulario] = useState({});
   const [error, setError] = useState("");
@@ -82,16 +85,35 @@ export default function CrudPage({
     <div className="crud-page">
       <div className="admin-encabezado">
         <h1>{titulo}</h1>
-        <button
-          onClick={() => {
-            setMostrarFormulario(true);
-            setEditando(null);
-            setFormulario({});
-          }}
-        >
-          Nuevo
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          {importadorConfig && (
+            <button
+              style={{ background: 'transparent', border: '1px solid var(--color-borde)', color: 'var(--color-texto)' }}
+              onClick={() => setMostrarImportador(true)}
+            >
+              ⬆ Importar
+            </button>
+          )}
+          <button onClick={() => { setMostrarFormulario(true); setEditando(null); setFormulario({}); }}>
+            Nuevo
+          </button>
+        </div>
       </div>
+
+      {importadorConfig && mostrarImportador && (
+        <ImportadorArchivo
+          titulo={importadorConfig.titulo || `Importar ${titulo}`}
+          columnas={importadorConfig.columnas}
+          filasEjemplo={importadorConfig.filasEjemplo}
+          nombreArchivo={importadorConfig.nombreArchivo}
+          onImportar={(filas) => solicitar(importadorConfig.rutaImportar, {
+            method: 'POST',
+            body: JSON.stringify({ filas }),
+          })}
+          onExito={() => { cargar(); setMostrarImportador(false); }}
+          onCancelar={() => setMostrarImportador(false)}
+        />
+      )}
 
       {mostrarFormulario && (
         <div className="formulario-modal">
@@ -101,7 +123,20 @@ export default function CrudPage({
             {camposFormulario.map((campo) => (
               <div className="campo" key={campo.name}>
                 <label htmlFor={`f-${campo.name}`}>{campo.label}</label>
-                {campo.tipo === "textarea" ? (
+                {campo.tipo === "select" ? (
+                  <select
+                    id={`f-${campo.name}`}
+                    name={campo.name}
+                    value={formulario[campo.name] || ""}
+                    onChange={manejarCambio}
+                    required={campo.required}
+                  >
+                    <option value="">— Seleccionar —</option>
+                    {(campo.opciones || []).map((op) => (
+                      <option key={op.value} value={op.value}>{op.label}</option>
+                    ))}
+                  </select>
+                ) : campo.tipo === "textarea" ? (
                   <textarea
                     id={`f-${campo.name}`}
                     name={campo.name}
@@ -117,6 +152,7 @@ export default function CrudPage({
                     value={formulario[campo.name] || ""}
                     onChange={manejarCambio}
                     required={campo.required}
+                    placeholder={campo.placeholder || ""}
                   />
                 )}
               </div>

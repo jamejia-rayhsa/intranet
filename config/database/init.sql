@@ -154,7 +154,7 @@ INSERT INTO modulos (nombre, path_reactivo, descripcion, activo) VALUES
   ('tickets',   '/tickets',   'Tickets de soporte TI',               true),
   ('rh',        '/rh',        'Recursos Humanos',                    true),
   ('bi',        '/bi',        'Business Intelligence',               false),
-  ('comercial', '/comercial', 'Cotizaciones y listas de precios',    false)
+  ('comercial', '/comercial', 'Cotizaciones y listas de precios',    true)
 ON CONFLICT (nombre) DO NOTHING;
 
 -- ============================================
@@ -194,13 +194,23 @@ ON CONFLICT DO NOTHING;
 -- ============================================
 
 -- Catálogos de RH
-CREATE TABLE IF NOT EXISTS departamentos (
+CREATE TABLE IF NOT EXISTS areas (
   id SERIAL PRIMARY KEY,
   nombre VARCHAR(100) NOT NULL UNIQUE,
   descripcion TEXT,
   activo BOOLEAN DEFAULT true,
   fecha_creacion TIMESTAMP DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS departamentos (
+  id SERIAL PRIMARY KEY,
+  nombre VARCHAR(100) NOT NULL UNIQUE,
+  descripcion TEXT,
+  area_id INT REFERENCES areas(id),
+  activo BOOLEAN DEFAULT true,
+  fecha_creacion TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_departamentos_area ON departamentos(area_id);
 
 CREATE TABLE IF NOT EXISTS ubicaciones (
   id SERIAL PRIMARY KEY,
@@ -210,6 +220,8 @@ CREATE TABLE IF NOT EXISTS ubicaciones (
   estado VARCHAR(100),
   codigo_postal VARCHAR(10),
   telefono VARCHAR(20),
+  prefijo VARCHAR(10),
+  ultimo_folio INT NOT NULL DEFAULT 0,
   activo BOOLEAN DEFAULT true,
   fecha_creacion TIMESTAMP DEFAULT NOW()
 );
@@ -373,6 +385,8 @@ JOIN (VALUES
   ('rh',        'Expedientes', 'Documentos de expediente laboral',       2),
   ('rh',        'Permisos',    'Solicitudes de permisos y ausencias',    3),
   ('rh',        'Recibos',     'Recibos de nómina',                      4),
+  ('rh',        'Vacaciones',  'Solicitudes y saldo de vacaciones',      5),
+  ('rh',        'Ubicaciones', 'Catálogo de ubicaciones y folios',       6),
   ('auditoria', 'Logs',        'Registros de auditoría del sistema',     1)
 ) AS opc(modulo_nombre, nombre, descripcion, orden)
 ON m.nombre = opc.modulo_nombre
@@ -503,3 +517,77 @@ CREATE TABLE IF NOT EXISTS empleado_hijos (
   orden INT DEFAULT 0,
   fecha_creacion TIMESTAMP DEFAULT NOW()
 );
+
+-- ============================================
+-- MÓDULO COMERCIAL: Solicitudes de Crédito
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS solicitudes_credito (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  numero_solicitud VARCHAR(20) UNIQUE,
+  razon_social VARCHAR(255) NOT NULL,
+  rfc VARCHAR(20) NOT NULL,
+  tipo_cliente VARCHAR(20) NOT NULL CHECK (tipo_cliente IN ('INDUSTRIA', 'DISTRIBUCION')),
+  sucursal VARCHAR(100),
+  regimen_fiscal VARCHAR(50),
+  moneda VARCHAR(5) DEFAULT 'MN',
+  giro_negocio VARCHAR(100),
+  metodo_pago VARCHAR(50),
+  uso_cfdi VARCHAR(20),
+  forma_pago JSONB DEFAULT '[]',
+  domicilio_fiscal JSONB DEFAULT '{}',
+  domicilio_entrega JSONB DEFAULT '{}',
+  datos_bancarios_nacionales JSONB DEFAULT '[]',
+  datos_bancarios_extranjeros JSONB DEFAULT '[]',
+  condiciones_comerciales JSONB DEFAULT '{}',
+  contactos JSONB DEFAULT '[]',
+  referencias_comerciales JSONB DEFAULT '[]',
+  datos_proporcionados_nombre VARCHAR(255),
+  datos_proporcionados_puesto VARCHAR(255),
+  estado VARCHAR(30) DEFAULT 'borrador' CHECK (estado IN ('borrador','guardada','enviada_mba3','aprobada','rechazada')),
+  sincronizado_mba3 BOOLEAN DEFAULT false,
+  referencia_mba3 VARCHAR(100),
+  usuario_creador_id INT REFERENCES usuarios(id) ON DELETE SET NULL,
+  usuario_ultimo_cambio_id INT REFERENCES usuarios(id) ON DELETE SET NULL,
+  fecha_creacion TIMESTAMP DEFAULT NOW(),
+  fecha_ultimo_cambio TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_solicitudes_credito_rfc ON solicitudes_credito(rfc);
+CREATE INDEX IF NOT EXISTS idx_solicitudes_credito_estado ON solicitudes_credito(estado);
+CREATE INDEX IF NOT EXISTS idx_solicitudes_credito_usuario ON solicitudes_credito(usuario_creador_id);
+
+CREATE OR REPLACE FUNCTION generar_numero_solicitud()
+RETURNS TRIGGER AS $$
+DECLARE
+  año INT := EXTRACT(YEAR FROM NOW());
+  secuencia INT;
+BEGIN
+  SELECT COUNT(*) + 1 INTO secuencia
+  FROM solicitudes_credito
+  WHERE EXTRACT(YEAR FROM fecha_creacion) = año;
+  NEW.numero_solicitud := 'SC-' || año || '-' || LPAD(secuencia::TEXT, 4, '0');
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER trigger_numero_solicitud
+BEFORE INSERT ON solicitudes_credito
+FOR EACH ROW
+WHEN (NEW.numero_solicitud IS NULL)
+EXECUTE FUNCTION generar_numero_solicitud();
+
+INSERT INTO modulo_opciones (modulo_id, nombre, descripcion, orden)
+SELECT m.id, 'Solicitudes de Crédito', 'Captura y gestión de solicitudes de crédito a clientes', 1
+FROM modulos m
+WHERE m.nombre = 'comercial'
+ON CONFLICT (modulo_id, nombre) DO NOTHING;
+
+INSERT INTO rol_opcion_permisos (rol_id, opcion_id, tipo)
+SELECT r.id, mo.id, t.tipo
+FROM roles r
+JOIN modulos m ON m.nombre = 'comercial'
+JOIN modulo_opciones mo ON mo.modulo_id = m.id AND mo.nombre = 'Solicitudes de Crédito'
+CROSS JOIN (VALUES ('consulta'), ('edicion')) AS t(tipo)
+WHERE r.nombre IN ('super_admin', 'portal_admin')
+ON CONFLICT DO NOTHING;

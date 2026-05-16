@@ -1,0 +1,294 @@
+/* ===== Módulo Comercial ===== */
+
+/* --- Contenedor de página --- */
+.pagina-contenedor {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+/* --- Layout de pestañas --- */
+.credito-tabs-nav {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 2px solid var(--color-borde);
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.credito-tab-btn {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--color-borde);
+  border-bottom: none;
+  background: var(--color-fondo);
+  color: var(--color-texto-claro);
+  cursor: pointer;
+  border-radius: 4px 4px 0 0;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+
+.credito-tab-btn:hover {
+  background: var(--color-superficie);
+}
+
+.credito-tab-btn.activo {
+  background: var(--color-primario);
+  color: #fff;
+  border-color: var(--color-primario);
+}
+
+.credito-tab-btn.completado::after {
+  content: ' ✓';
+  font-size: 0.75rem;
+}
+
+/* --- Contenido de pestaña --- */
+.credito-tab-content {
+  animation: fadeIn 0.15s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* --- Sección dentro de pestaña --- */
+.credito-seccion-titulo {
+  border-bottom: 1px solid var(--color-borde);
+  padding-bottom: 0.5rem;
+  margin-bottom: 1rem;
+  margin-top: 1.25rem;
+  font-weight: 700;
+  color: var(--color-primario);
+  font-size: 0.9rem;
+}
+
+/* --- Grids de campos --- */
+.credito-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.credito-grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.75rem;
+}
+
+/* --- Campos de formulario --- */
+.credito-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.credito-campo label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-texto-claro);
+}
+
+.credito-campo input,
+.credito-campo select,
+.credito-campo textarea {
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--color-borde);
+  border-radius: 4px;
+  font-size: 0.88rem;
+  background: var(--color-fondo);
+  color: var(--color-texto-claro);
+  box-sizing: border-box;
+}
+
+.credito-campo input:focus,
+.credito-campo select:focus,
+.credito-campo textarea:focus {
+  outline: none;
+  border-color: var(--color-primario);
+}
+
+/* --- Tabla de filas dinámicas (bancarios, referencias) --- */
+.credito-tabla-dinamica {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  margin-bottom: 0.5rem;
+}
+
+.credito-tabla-dinamica th {
+  background: var(--color-superficie);
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 1px solid var(--color-borde);
+}
+
+.credito-tabla-dinamica td {
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid var(--color-borde);
+}
+
+.credito-tabla-dinamica input,
+.credito-tabla-dinamica select {
+  width: 100%;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--color-borde);
+  border-radius: 3px;
+  font-size: 0.82rem;
+}
+
+/* --- Badges de estado --- */
+.credito-badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.credito-badge-borrador   { background: #f0f0f0; color: #555; }
+.credito-badge-guardada   { background: #dbeafe; color: #1d4ed8; }
+.credito-badge-enviada_mba3 { background: #fef3c7; color: #92400e; }
+.credito-badge-aprobada   { background: #d1fae5; color: #065f46; }
+.credito-badge-rechazada  { background: #fee2e2; color: #991b1b; }
+
+/* --- Navegación entre pestañas --- */
+.credito-nav-botones {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-borde);
+}
+
+/* --- Listado de solicitudes --- */
+.credito-listado-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.credito-filtros {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.credito-filtros input,
+.credito-filtros select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--color-borde);
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+/* --- Tabla de listado --- */
+.credito-tabla {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.credito-tabla th {
+  background: var(--color-superficie);
+  padding: 0.6rem 0.75rem;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid var(--color-borde);
+}
+
+.credito-tabla td {
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--color-borde);
+}
+
+.credito-tabla tr:hover td {
+  background: var(--color-fondo);
+}
+
+/* ===== IMPRESIÓN PDF ===== */
+@media print {
+  .credito-sin-impresion,
+  .sidebar,
+  .credito-tabs-nav,
+  .credito-nav-botones,
+  nav, header, .credito-listado-header {
+    display: none !important;
+  }
+
+  .credito-impresion-solo {
+    display: block !important;
+  }
+
+  .credito-tab-content-todos {
+    display: block !important;
+  }
+
+  body {
+    font-size: 11pt;
+    color: #000;
+  }
+
+  .credito-pdf-encabezado {
+    text-align: center;
+    margin-bottom: 1cm;
+    border-bottom: 2px solid #000;
+    padding-bottom: 0.5cm;
+  }
+
+  .credito-pdf-seccion {
+    margin-bottom: 0.8cm;
+    page-break-inside: avoid;
+  }
+
+  .credito-pdf-seccion h3 {
+    font-size: 10pt;
+    font-weight: bold;
+    border-bottom: 1px solid #000;
+    margin-bottom: 0.3cm;
+    text-transform: uppercase;
+  }
+
+  .credito-pdf-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.3cm;
+    font-size: 9pt;
+  }
+
+  .credito-pdf-campo label {
+    font-weight: bold;
+    display: block;
+    font-size: 8pt;
+  }
+
+  .credito-pdf-campo span {
+    border-bottom: 1px solid #ccc;
+    display: block;
+    min-height: 0.5cm;
+  }
+
+  .credito-pdf-firma-area {
+    margin-top: 1.5cm;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1cm;
+  }
+
+  .credito-pdf-firma-linea {
+    border-top: 1px solid #000;
+    padding-top: 0.2cm;
+    font-size: 8pt;
+    text-align: center;
+  }
+}

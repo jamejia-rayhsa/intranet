@@ -359,3 +359,112 @@ type: project
 - `modules/portal/frontend/components/MenuDinamico.jsx` — filtrado módulos completos
 - `modules/rh/frontend/pages/VacacionesPage.jsx` — variables CSS
 - `modules/rh/frontend/pages/VacacionesListadoPage.jsx` — variables CSS
+
+---
+
+### [2026-05-15] orquestador — Módulo Comercial: Solicitudes de Crédito (Fase 1)
+
+**Contexto:** El usuario pidió desarrollar un módulo comercial completo para captura de solicitudes de crédito con formulario dinámico (Industria/Distribución), edición post-captura, auditoría, impresión PDF e integración MBA3. El módulo comercial ya existía parcialmente en la BD (inactivo) y en MenuDinamico (iconos/rutas registradas pero sin SUB_RUTAS ni páginas).
+
+**Investigación previa:**
+- MBA3_API.pdf no pudo leerse (herramientas PDF ausentes), pero sí existe `MBA3_API.md` con spec completa — leído en sesión 2026-05-15
+- Módulo `comercial` ya existe en tabla `modulos` con `activo = false`
+- `ICONOS_MODULOS` y `RUTAS_MODULOS` en MenuDinamico.jsx ya tienen entradas para `comercial`
+- No existe directorio `modules/comercial/` — hay que crearlo desde cero
+- No hay librería PDF instalada — se usará `window.print()` (CSS @media print) como primera aproximación; puppeteer se agrega después cuando haya acceso al spec del PDF original
+
+**Decisiones tomadas:**
+
+1. **Estructura de directorios — espejo exacto de módulo RH**
+   ```
+   modules/comercial/
+   ├── backend/
+   │   ├── migrations/
+   │   ├── models/
+   │   ├── controllers/
+   │   └── routes/
+   └── frontend/
+       ├── pages/
+       ├── services/
+       └── styles/
+   ```
+
+2. **Tabla principal `solicitudes_credito` con columnas JSONB para arrays**
+   - Campos simples: `id` (UUID), `numero_solicitud` (VARCHAR generado SC-YYYY-NNNN), `razon_social`, `rfc`, `tipo_cliente` (INDUSTRIA/DISTRIBUCION), `sucursal`, `regimen_fiscal`, `moneda` (USD/MN), `giro_negocio`, `metodo_pago`, `uso_cfdi`, `forma_pago` (array vía JSONB), `estado` (borrador/guardada/enviada_mba3/aprobada/rechazada)
+   - Campos JSONB: `domicilio_fiscal`, `domicilio_entrega`, `datos_bancarios_nacionales`, `datos_bancarios_extranjeros`, `condiciones_comerciales`, `contactos`, `referencias_comerciales`
+   - Auditoría interna: `usuario_creador_id`, `usuario_ultimo_cambio_id`, `fecha_creacion`, `fecha_ultimo_cambio`
+   - MBA3: `sincronizado_mba3` BOOLEAN DEFAULT false, `referencia_mba3` VARCHAR nullable
+   - **Por qué JSONB para arrays:** Los datos bancarios, contactos y referencias no se consultan en JOIN ni necesitan normalización — son estructuras cerradas que se muestran en bloque en el PDF/formulario. Evita complejidad de 4 tablas adicionales con FKs.
+
+3. **Activación del módulo en BD — migración dedicada**
+   - `modules/comercial/backend/migrations/001-activar-modulo-solicitudes.sql`
+   - `UPDATE modulos SET activo = true WHERE nombre = 'comercial'`
+   - `INSERT INTO modulo_opciones`: 'Solicitudes de Crédito' (orden 1)
+   - `INSERT INTO rol_opcion_permisos`: super_admin y portal_admin → consulta + edicion
+   - Se agrega el mismo bloque al `config/database/init.sql` para instalaciones nuevas
+
+4. **Backend — rutas registradas en app.js**
+   - Prefijo: `/api/comercial`
+   - CRUD: `GET /solicitudes`, `POST /solicitudes`, `GET /solicitudes/:id`, `PUT /solicitudes/:id`
+   - Acciones: `PUT /solicitudes/:id/estado` (cambiar estado)
+   - PDF: `GET /solicitudes/:id/pdf-html` (retorna HTML para imprimir)
+   - MBA3: `POST /solicitudes/:id/sincronizar-mba3` (stub — retorna 501 con mensaje pendiente)
+   - `verificarPermiso('comercial', 'Solicitudes de Crédito', 'consulta/edicion')`
+
+5. **Frontend — 3 páginas + 1 CSS**
+   - `ComercialDashboard.jsx` → `/comercial` — KPIs simples (total, por estado, por tipo_cliente)
+   - `SolicitudCreditoForm.jsx` → `/comercial/creditos/nueva` y `/comercial/creditos/:id/editar` — formulario 7 pestañas
+   - `SolicitudesListado.jsx` → `/comercial/creditos` — tabla con búsqueda por RFC/razón social, acciones editar/PDF
+   - `comercial.css` — clases propias del módulo (`.credito-tabs`, `.credito-tab-content`, `.credito-badge`, etc.)
+
+6. **Formulario multipestaña — comportamiento dinámico**
+   - Estado global del form en un objeto con todos los campos
+   - Pestaña activa controlada por `useState`
+   - Tabs 4, 5 muestran campos distintos según `formulario.tipo_cliente`
+   - Arrays dinámicos (bancarios, contactos, referencias) con botones Agregar/Eliminar fila
+   - Validación por pestaña al intentar avanzar (`validarPestana(n)`)
+   - **NO se requiere guardar en BD al navegar entre pestañas** — solo al hacer submit final
+   - localStorage para autoguardado de borrador (clave: `credito_borrador`)
+
+7. **Impresión PDF — window.print() primera fase**
+   - Botón "Imprimir/PDF" en la pestaña 7 llama `window.print()`
+   - CSS `@media print` en `comercial.css` oculta tabs, sidebar, botones y muestra solo datos
+   - Layout de impresión: encabezado Rayhsa + secciones ordenadas + líneas de firma
+   - Segunda fase (cuando haya spec): backend con puppeteer genera PDF server-side
+
+8. **MBA3 — stub documentado**
+   - Endpoint `POST /solicitudes/:id/sincronizar-mba3` retorna `{ exito: false, mensaje: 'Integración MBA3 pendiente de especificación de API' }`
+   - Comentario en el código indica los campos que se mapearán cuando llegue la documentación
+   - Estado `enviada_mba3` no se activa en el stub
+
+9. **MenuDinamico.jsx — agregar SUB_RUTAS comercial**
+   ```js
+   comercial: [
+     { path: '/comercial', label: 'Dashboard', opcion: null },
+     { path: '/comercial/creditos', label: 'Solicitudes de Crédito', opcion: 'Solicitudes de Crédito' },
+   ]
+   ```
+
+10. **Auditoría** — `registrarAccion(req, 'comercial', 'solicitudes_credito', id, accion, previo, nuevo)` en crear, actualizar y cambiar estado
+
+**Restricciones aceptadas:**
+- MBA3 no implementado (spec en PDF no legible)
+- PDF server-side no implementado (puppeteer no instalado)
+- La validación RFC se hace solo por formato (13 chars) — sin consumo de API SAT en esta fase
+
+**Archivos a crear:**
+- `modules/comercial/backend/migrations/001-activar-modulo-solicitudes.sql`
+- `modules/comercial/backend/models/solicitudCredito.model.js`
+- `modules/comercial/backend/controllers/solicitudCredito.controller.js`
+- `modules/comercial/backend/routes/solicitudesCredito.routes.js`
+- `modules/comercial/frontend/pages/ComercialDashboard.jsx`
+- `modules/comercial/frontend/pages/SolicitudCreditoForm.jsx`
+- `modules/comercial/frontend/pages/SolicitudesListado.jsx`
+- `modules/comercial/frontend/services/solicitudesCredito.service.js`
+- `modules/comercial/frontend/styles/comercial.css`
+
+**Archivos a modificar:**
+- `config/database/init.sql` — agregar tabla solicitudes_credito + activar módulo + permisos
+- `modules/portal/backend/app.js` — registrar rutas `/api/comercial`
+- `modules/portal/frontend/main.jsx` — imports + rutas React para /comercial/*
+- `modules/portal/frontend/components/MenuDinamico.jsx` — agregar SUB_RUTAS.comercial

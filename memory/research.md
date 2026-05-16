@@ -747,3 +747,722 @@ const estiloFiltros = { display: "flex", ... };
 - `/home/jamejia/intranet/modules/rh/frontend/pages/RHAdminPage.jsx` (línea 57-100)
 - `/home/jamejia/intranet/modules/rh/backend/controllers/rh.dashboard.controller.js` (línea 4-74)
 
+
+---
+
+## [2026-05-15] investigador — Módulo Comercial: MBA3 API, patrones RH, permisos y generación PDF
+
+**Preguntas:** 6 investigaciones sobre estructura, patrones reutilizables y tecnologías para iniciar el módulo Comercial (cotizaciones, créditos, listas de precios).
+
+### 1. PREGUNTA: Contenido de PDFs — MBA3 API y Solicitud de Crédito
+
+**Hallazgo: Los PDFs están ENCRIPTADOS/COMPRIMIDOS — extracción de texto NO DISPONIBLE**
+
+**Intento 1: pdftotext**
+- ❌ No instalado en el sistema
+
+**Intento 2: PyPDF2**
+- ❌ No disponible en Python 3.12
+- Versión: Python 3.12.1
+
+**Intento 3: pdfplumber**
+- ❌ No disponible; sistema no permite pip install (restricted environment)
+
+**Intento 4: strings + regex**
+- ✅ Ejecutado, pero ambos PDFs solo retornan metadata XML y streams comprimidos
+- MBA3_API.pdf: 167 páginas, muy comprimido
+- Solicitud_De_Crédito.pdf: 3 páginas, también comprimido
+
+**Conclusión:** Para extraer contenido de estos PDFs, se requiere:
+- Instalar pdfplumber en virtual environment local, O
+- Convertir PDFs a imágenes + OCR, O
+- Requerir al stakeholder versión editable (DOCX/ODT) de los documentos
+
+**Acción necesaria:** Preguntar a usuario si puede proporcionar versión no-PDF o acceso a documentación en texto de los endpoints MBA3 y campos de Solicitud de Crédito.
+
+**Archivos relevantes:**
+- `/home/jamejia/intranet/docs/comercial/MBA3_API.pdf` (167 págs, comprimido)
+- `/home/jamejia/intranet/docs/comercial/Solicitud De Crédito.pdf` (3 págs, comprimido)
+
+---
+
+### 2. PREGUNTA: Patrones de modelo, controller y rutas — reutilizable de RH
+
+**Hallazgo: Arquitectura estándar PERN — Patrón Model/Controller/Routes claramente definido**
+
+#### Patrón 2a: Modelo (ejemplo: empleado.model.js)
+
+**Ubicación:** `modules/rh/backend/models/empleado.model.js`
+
+**Estructura:**
+```javascript
+const { grupo } = require("../config/database");
+
+const CAMPOS_PERMITIDOS = [
+  "nombre",
+  "apellido_paterno",
+  // ... 38 campos más
+];
+
+const SELECT_EMPLEADO = `
+  SELECT e.*,
+    u.correo as usuario_correo,
+    p.nombre as puesto,
+    d.nombre as departamento,
+    ub.nombre as ubicacion,
+    jefe.nombre as jefe_nombre, jefe.apellido_paterno as jefe_apellido
+  FROM empleados e
+  LEFT JOIN usuarios u ON e.usuario_id = u.id
+  LEFT JOIN puestos p ON e.puesto_id = p.id
+  -- ... más JOINs
+`;
+
+const Empleado = {
+  async crear(datos) { ... },
+  async actualizar(id, datos) { ... },
+  async obtener(id) { ... },
+  async listar(filtro, pagina, limite) { ... },
+  async eliminar(id) { ... },
+};
+
+module.exports = Empleado;
+```
+
+**Patrón:**
+1. Conexión a BD via `const { grupo } = require("../config/database")` — instancia de `pg.Pool`
+2. Array `CAMPOS_PERMITIDOS` — lista blanca de campos (seguridad)
+3. Query `SELECT_*` con JOINs predefinida (reutilizable)
+4. Objeto con métodos `async` que retornan resultados via `grupo.query()`
+5. Métodos siguen patrón: `crear()`, `actualizar()`, `obtener()`, `listar()`, `eliminar()`
+
+#### Patrón 2b: Controller (ejemplo: empleado.controller.js)
+
+**Ubicación:** `modules/rh/backend/controllers/empleado.controller.js` (primeras 60 líneas)
+
+**Estructura:**
+```javascript
+const bcrypt = require("bcrypt");
+const Empleado = require("../models/empleado.model");
+const Usuario = require("../../../portal/backend/models/usuario.model");
+const { grupo } = require("../config/database");
+const { registrarAccion } = require("../../../auditoria/backend/services/auditoria.service");
+
+const ControladorEmpleado = {
+  async crear(req, res) {
+    try {
+      const { nombre, apellido_paterno, ... } = req.body;
+      
+      // Validaciones
+      if (!nombre || !apellido_paterno) {
+        return res.status(400).json({
+          exito: false,
+          mensaje: '...'
+        });
+      }
+      
+      // Crear registro
+      const resultado = await Empleado.crear(datosLimpios);
+      
+      // Registrar en auditoría
+      await registrarAccion(req, 'rh', 'empleados', resultado.id, 'crear', null, resultado);
+      
+      // Responder
+      return res.status(201).json({
+        exito: true,
+        datos: resultado
+      });
+    } catch (error) {
+      return res.status(500).json({
+        exito: false,
+        mensaje: 'Error al crear empleado',
+        error: error.message
+      });
+    }
+  },
+  
+  async listar(req, res) { ... },
+  async obtener(req, res) { ... },
+  async actualizar(req, res) { ... },
+};
+
+module.exports = ControladorEmpleado;
+```
+
+**Patrón:**
+1. Destructuring de `req.body`
+2. Validaciones básicas (campos requeridos)
+3. Llamada al método del modelo
+4. Registro de auditoría via `registrarAccion(req, modulo, tabla, id, accion, antes, después)`
+5. Respuesta estandarizada: `{ exito: true/false, datos: ..., mensaje: ... }`
+6. Manejo de errores con try/catch → respuesta JSON con status HTTP
+
+#### Patrón 2c: Rutas (ejemplo: empleados.routes.js)
+
+**Ubicación:** `modules/rh/backend/routes/empleados.routes.js`
+
+**Estructura:**
+```javascript
+const { Router } = require("express");
+const ControladorEmpleado = require("../controllers/empleado.controller");
+const { authenticateJWT } = require("../../../portal/backend/middleware/auth.middleware");
+const { verificarPermiso } = require("../../../portal/backend/middleware/permisos.middleware");
+
+const router = Router();
+
+// Aplicar autenticación globalmente
+router.use(authenticateJWT);
+
+// Rutas con permisos granulares
+router.get("/", verificarPermiso("rh", "Empleados", "consulta"), ControladorEmpleado.listar);
+router.post("/", verificarPermiso("rh", "Empleados", "edicion"), ControladorEmpleado.crear);
+router.get("/:id", ControladorEmpleado.obtener);
+router.put("/:id", verificarPermiso("rh", "Empleados", "edicion"), ControladorEmpleado.actualizar);
+router.delete("/:id", verificarPermiso("rh", "Empleados", "edicion"), ControladorEmpleado.eliminar);
+
+// Rutas anidadas (ejemplo: hijos de empleados)
+router.get("/:empleadoId/hijos", ControladorHijo.listar);
+router.post("/:empleadoId/hijos", ControladorHijo.crear);
+
+module.exports = router;
+```
+
+**Patrón:**
+1. `Router()` de Express
+2. `router.use(authenticateJWT)` global (todas las rutas requieren JWT válido)
+3. `verificarPermiso(modulo, opcion, tipo)` middleware por ruta — permite granularidad (consulta vs edicion)
+4. Rutas anidadas soportadas: `/api/rh/empleados/:empleadoId/hijos`
+5. Manejo de IDs en params vs body
+
+#### Patrón 2d: Frontend (ejemplo: EmpleadoPage.jsx, primeras 80 líneas)
+
+**Ubicación:** `modules/rh/frontend/pages/EmpleadoPage.jsx`
+
+**Estructura:**
+```javascript
+import { useState, useEffect } from "react";
+import { obtenerEmpleados, crearEmpleado } from "../services/empleados.service";
+import { solicitar } from "../../../portal/frontend/utils/api";
+import {
+  ESTADOS_MEXICO,
+  BANCOS_MEXICO,
+  GENEROS,
+  ESTADOS_CIVILES,
+  NIVELES_ESCOLARIDAD,
+  TIPOS_CONTRATO,
+} from "../constants/catalogos";
+
+// Constantes de estilo reutilizables
+const estiloSeccion = {
+  borderBottom: "1px solid var(--color-borde)",
+  paddingBottom: "0.75rem",
+  marginBottom: "0.75rem",
+  fontWeight: 700,
+  color: "var(--color-primario)",
+  fontSize: "0.88rem",
+  marginTop: "1rem",
+};
+
+const estiloGrid2 = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: "0.75rem",
+};
+
+const estiloGrid3 = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr 1fr",
+  gap: "0.75rem",
+};
+
+const formularioInicial = {
+  nombre: "",
+  apellido_paterno: "",
+  apellido_materno: "",
+  // ... 35 campos más
+};
+
+export default function EmpleadoPage() {
+  const [formulario, setFormulario] = useState(formularioInicial);
+  const [empleados, setEmpleados] = useState([]);
+  const [cargando, setCargando] = useState(false);
+  // ... más estado
+
+  useEffect(() => {
+    cargarDatos();
+  }, []);
+
+  async function cargarDatos() {
+    setCargando(true);
+    const datos = await solicitar('/rh/empleados');
+    if (datos?.exito) {
+      setEmpleados(datos.datos);
+    }
+    setCargando(false);
+  }
+
+  async function manejarEnvio() {
+    // POST/PUT a backend via solicitar()
+    // Actualizar lista local
+  }
+
+  return (
+    <div className="pagina-contenedor">
+      {/* Modal de formulario */}
+      {/* Tabla de listado */}
+    </div>
+  );
+}
+```
+
+**Patrón:**
+1. Imports: servicios, hooks, contextos, constantes
+2. Constantes de estilo inline (evita recreación en cada render)
+3. Estado inicial vacío/default para formularios
+4. `useEffect` + `solicitar()` para obtener datos (util `solicitar()` añade `/api` automáticamente)
+5. Funciones async para CRUD
+6. Componentes Modales para formularios (create/edit)
+
+**Archivos relevantes:**
+- `/home/jamejia/intranet/modules/rh/backend/models/empleado.model.js` (línea 1-40)
+- `/home/jamejia/intranet/modules/rh/backend/controllers/empleado.controller.js` (línea 1-60)
+- `/home/jamejia/intranet/modules/rh/backend/routes/empleados.routes.js` (línea 1-51)
+- `/home/jamejia/intranet/modules/rh/frontend/pages/EmpleadoPage.jsx` (línea 1-80)
+
+---
+
+### 3. PREGUNTA: Sistema de permisos — cómo agregar módulo Comercial
+
+**Hallazgo: Sistema GRANULAR (Fase 2+) — modulo_opciones + rol_opcion_permisos**
+
+#### 3a: Estructura en BD — 3 tablas clave
+
+**Tabla 1: modulos**
+```sql
+CREATE TABLE modulos (
+  id SERIAL PRIMARY KEY,
+  nombre VARCHAR(100) NOT NULL UNIQUE,     -- 'comercial'
+  path_reactivo VARCHAR(150),               -- '/comercial'
+  descripcion TEXT,                        -- 'Cotizaciones y listas de precios'
+  activo BOOLEAN DEFAULT true              -- false = no aparece en menú
+);
+
+-- Estado actual:
+-- ('portal', '/', 'Portal central...', true),
+-- ('auditoria', '/auditoria', '...', true),
+-- ('tickets', '/tickets', '...', true),
+-- ('rh', '/rh', '...', true),
+-- ('bi', '/bi', '...', false),
+-- ('comercial', '/comercial', '...', false)  ← YA EXISTE, PERO INACTIVO
+```
+
+**Tabla 2: modulo_opciones**
+```sql
+CREATE TABLE modulo_opciones (
+  id SERIAL PRIMARY KEY,
+  modulo_id INT NOT NULL REFERENCES modulos(id),
+  nombre VARCHAR(100) NOT NULL,            -- 'Cotizaciones', 'Créditos', etc.
+  descripcion TEXT,
+  orden INT DEFAULT 0,
+  UNIQUE(modulo_id, nombre)
+);
+
+-- Ejemplo para comercial:
+-- modulo_id = (id de comercial), nombre = 'Cotizaciones', descripcion = 'Gestión de cotizaciones', orden = 1
+-- modulo_id = (id de comercial), nombre = 'Créditos', descripcion = 'Solicitudes de crédito', orden = 2
+-- modulo_id = (id de comercial), nombre = 'Precios', descripcion = 'Listas de precios', orden = 3
+```
+
+**Tabla 3: rol_opcion_permisos**
+```sql
+CREATE TABLE rol_opcion_permisos (
+  rol_id INT NOT NULL REFERENCES roles(id),
+  opcion_id INT NOT NULL REFERENCES modulo_opciones(id),
+  tipo VARCHAR(10) NOT NULL CHECK (tipo IN ('consulta', 'edicion')),
+  PRIMARY KEY (rol_id, opcion_id, tipo)
+);
+
+-- Ejemplo para un rol 'comercial_admin':
+-- (rol_id = comercial_admin, opcion_id = Cotizaciones, tipo = 'consulta'),
+-- (rol_id = comercial_admin, opcion_id = Cotizaciones, tipo = 'edicion'),
+-- (rol_id = comercial_admin, opcion_id = Créditos, tipo = 'consulta'),
+-- (rol_id = comercial_admin, opcion_id = Créditos, tipo = 'edicion'),
+```
+
+#### 3b: Cómo activar el módulo Comercial
+
+**Paso 1: Cambiar activo = true en BD**
+```sql
+UPDATE modulos SET activo = true WHERE nombre = 'comercial';
+```
+
+**Paso 2: Insertar opciones del módulo** (if not exists)
+```sql
+INSERT INTO modulo_opciones (modulo_id, nombre, descripcion, orden)
+SELECT m.id, opc.nombre, opc.descripcion, opc.orden
+FROM modulos m
+JOIN (VALUES
+  ('comercial', 'Cotizaciones', 'Gestión de cotizaciones de productos', 1),
+  ('comercial', 'Créditos', 'Solicitudes de crédito a clientes', 2),
+  ('comercial', 'Precios', 'Listas de precios y descuentos', 3)
+) AS opc(modulo_nombre, nombre, descripcion, orden)
+ON m.nombre = opc.modulo_nombre
+ON CONFLICT (modulo_id, nombre) DO NOTHING;
+```
+
+**Paso 3: Asignar permisos a roles** (ejemplo: comercial_admin rol)
+```sql
+-- comercial_admin: acceso total a todas las opciones
+INSERT INTO rol_opcion_permisos (rol_id, opcion_id, tipo)
+SELECT r.id, mo.id, t.tipo
+FROM roles r
+JOIN modulos m ON m.nombre = 'comercial'
+JOIN modulo_opciones mo ON mo.modulo_id = m.id
+CROSS JOIN (VALUES ('consulta'), ('edicion')) AS t(tipo)
+WHERE r.nombre = 'comercial_admin'
+ON CONFLICT DO NOTHING;
+```
+
+#### 3c: Middleware de verificación — cómo se valida en rutas
+
+**Backend (ejemplo: rutas de Comercial)**
+```javascript
+const router = Router();
+router.use(authenticateJWT);  // Todas las rutas requieren JWT
+
+// Ruta con permiso granular
+router.get("/", 
+  verificarPermiso("comercial", "Cotizaciones", "consulta"), 
+  ControladorCotizacion.listar
+);
+
+router.post("/", 
+  verificarPermiso("comercial", "Cotizaciones", "edicion"), 
+  ControladorCotizacion.crear
+);
+
+// verificarPermiso() middleware:
+// - Extrae rol del usuario via JWT
+// - Busca en rol_opcion_permisos (rol_id, opcion_id, tipo)
+// - Si NO tiene permiso → res.status(403).json({ exito: false, mensaje: 'Sin permisos' })
+// - Si SÍ tiene → next()
+```
+
+**Frontend (filtrado en menú)**
+- `MenuDinamico.jsx` ya soporta filtrado de sub-rutas por permiso
+- Si el módulo está activo en BD, aparece en el sidebar
+- Las sub-rutas se filtran via `tieneAcceso(moduloNombre, opcion)` (línea 140-149)
+- Permisos se obtienen del endpoint `GET /api/permisos/opciones` (cargado en main.jsx)
+
+#### Nota sobre rol_id (cambio de arquitectura)
+
+**Fase 1 (antiguo):** Multiple roles por usuario via tabla `usuario_rol`
+**Fase 2+ (actual):** Un rol por usuario via columna `usuarios.rol_id` (más simple)
+
+El proyecto ha migrado a Fase 2+. Ver `modules/portal/backend/models/usuario.model.js` para confirmar.
+
+**Archivos relevantes:**
+- `/home/jamejia/intranet/config/database/init.sql` (línea 352-470, sistema granular)
+- `/home/jamejia/intranet/modules/portal/backend/middleware/permisos.middleware.js` (middleware)
+- `/home/jamejia/intranet/modules/portal/frontend/components/MenuDinamico.jsx` (línea 140-149, filtrado)
+
+---
+
+### 4. PREGUNTA: Estructura exacta de SUB_RUTAS en MenuDinamico.jsx
+
+**Hallazgo: SUB_RUTAS es array hardcodeado — define navegación y validación de permisos**
+
+**Ubicación:** `modules/portal/frontend/components/MenuDinamico.jsx` línea 7-42
+
+**Estructura exacta:**
+```javascript
+const SUB_RUTAS = {
+  portal: [
+    { path: '/', label: 'Inicio', opcion: null },
+    { path: '/noticias', label: 'Noticias', opcion: 'Noticias' },
+  ],
+  rh: [
+    { path: '/rh', label: 'Dashboard', opcion: null },
+    { path: '/rh/empleados', label: 'Empleados', opcion: 'Empleados' },
+    { path: '/rh/admin', label: 'Permisos y ausencias', opcion: 'Permisos' },
+    { path: '/rh/vacaciones', label: 'Vacaciones', opcion: 'Vacaciones' },
+    { path: '/rh/vacaciones/listado', label: 'Solicitudes', opcion: 'Vacaciones' },
+    { path: '/rh/areas', label: 'Áreas', opcion: 'Empleados' },
+    { path: '/rh/departamentos', label: 'Departamentos', opcion: 'Empleados' },
+    { path: '/rh/puestos', label: 'Puestos', opcion: 'Empleados' },
+    { path: '/rh/ubicaciones', label: 'Ubicaciones', opcion: 'Empleados' },
+  ],
+  comercial: [
+    { path: '/comercial', label: 'Dashboard', opcion: null },
+    { path: '/comercial/cotizaciones', label: 'Cotizaciones', opcion: 'Cotizaciones' },
+    { path: '/comercial/creditos', label: 'Solicitudes de Crédito', opcion: 'Créditos' },
+    { path: '/comercial/precios', label: 'Listas de Precios', opcion: 'Precios' },
+  ],
+};
+```
+
+**Campos por elemento:**
+- `path: string` — ruta React (ej: `/rh/empleados`)
+- `label: string` — texto visible en sidebar (ej: "Empleados")
+- `opcion: string|null` — nombre de opción en `modulo_opciones` tabla (ej: "Empleados") → usado para validar permisos
+  - `null` = dashboard, siempre visible
+
+**Iconos por módulo:**
+```javascript
+const ICONOS_MODULOS = {
+  portal: '🏠',
+  rh: '👥',
+  tickets: '🎫',
+  auditoria: '📋',
+  bi: '📊',
+  comercial: '💼',  // ← Sugerencia: usar emoji comercial
+};
+```
+
+**Rutas de módulos (para módulos SIN sub-rutas):**
+```javascript
+const RUTAS_MODULOS = {
+  portal: '/',
+  tickets: '/tickets',
+  rh: '/rh',
+  auditoria: '/auditoria',
+  bi: '/bi',
+  comercial: '/comercial',  // ← entrada ya existe
+};
+```
+
+**Implicación:**
+- Para activar Comercial, SOLO se necesita:
+  1. Actualizar `modulos.activo = true` en BD
+  2. Agregar SUB_RUTAS['comercial'] (ya está en código)
+  3. Crear componentes React en `modules/portal/frontend/routes/` para cada ruta
+  4. El sidebar automáticamente filtrará por permisos via `tieneAcceso()`
+
+**Archivos relevantes:**
+- `/home/jamejia/intranet/modules/portal/frontend/components/MenuDinamico.jsx` (línea 7-61)
+
+---
+
+### 5. PREGUNTA: Generación de PDF — ¿qué librería usar?
+
+**Hallazgo: NO hay generación PDF instalada — Recomendación: Puppeteer + HTML→PDF**
+
+**Búsqueda realizada:**
+- Checklist: `puppeteer`, `pdf-lib`, `jspdf`, `pdfkit`, `html-pdf`
+- Ubicación: `/home/jamejia/intranet/modules/*/backend/package.json`
+- Resultado: NINGUNA librería PDF instalada
+
+**Análisis de opciones:**
+
+| Librería | Caso de uso | Pros | Contras |
+|----------|---|---|---|
+| **Puppeteer** (recomendado) | HTML → PDF servidor | Mantiene CSS, layout exacto, imágenes | Requiere Chrome/Chromium, ~100MB, más lento |
+| **pdf-lib** | Crear PDF desde scratch | Ligero, sin dependencias | API compleja, sin manejo CSS |
+| **jsPDF** | Generación simple | Ligero, usado en frontend | Sin CSS nativo, complicado para layouts complejos |
+| **pdfkit** | Node.js solo | Ligero, soporta imágenes | Sintaxis compleja, sin CSS |
+
+**Recomendación para Comercial:**
+- **Puppeteer** si necesitas generar PDF de cotizaciones/créditos con formato visual exacto (logos, tablas, estilos)
+- **pdfkit** si solo necesitas tablas y texto simple (más rápido, menor footprint)
+
+**Instalación recomendada (Puppeteer):**
+```bash
+npm install --save puppeteer
+# o
+npm install --save puppeteer-core  # si Chrome está disponible system-wide
+```
+
+**Patrón de uso (ejemplo controller comercial):**
+```javascript
+const puppeteer = require('puppeteer');
+
+async function generarPDFCotizacion(req, res) {
+  try {
+    const cotizacion = await Cotizacion.obtener(req.params.id);
+    
+    // Generar HTML (puede ser template file o string)
+    const html = `
+      <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; }
+            .logo { width: 100px; }
+          </style>
+        </head>
+        <body>
+          <img src="/logo-rayhsa.png" class="logo" />
+          <h1>Cotización ${cotizacion.numero}</h1>
+          <table>...</table>
+        </body>
+      </html>
+    `;
+    
+    // Convertir HTML a PDF
+    const browser = await puppeteer.launch({ headless: true });
+    const page = await browser.newPage();
+    await page.setContent(html);
+    const pdf = await page.pdf({ format: 'A4' });
+    await browser.close();
+    
+    // Enviar al cliente
+    res.contentType('application/pdf');
+    res.send(pdf);
+  } catch (error) {
+    return res.status(500).json({ exito: false, mensaje: error.message });
+  }
+}
+```
+
+**Implicación:**
+- Agregar `puppeteer` a `modules/portal/backend/package.json` (usado por todos los módulos)
+- Crear servicio `modules/comercial/backend/services/pdf.service.js`
+- Rutas con permisos: `GET /comercial/cotizaciones/:id/pdf`
+
+**Archivos relevantes:**
+- `/home/jamejia/intranet/modules/portal/backend/package.json` (dependencies, falta puppeteer)
+
+---
+
+### 6. PREGUNTA: Firma exacta de registrarAccion — uso en comercial
+
+**Hallazgo: Auditoría centralizada — `registrarAccion(req, modulo, tabla, registroId, accion, valoresPrevios, valoresNuevos)`**
+
+**Ubicación:** `modules/auditoria/backend/services/auditoria.service.js` línea 4
+
+**Firma exacta:**
+```javascript
+async registrarAccion(req, modulo, tabla, registroId, accion, valoresPrevios, valoresNuevos)
+```
+
+**Parámetros:**
+- `req` — request object (extrae usuario_id, IP, user-agent)
+- `modulo` — nombre módulo (string): "comercial", "rh", "tickets"
+- `tabla` — tabla BD (string): "cotizaciones", "solicitudes_credito", "precios"
+- `registroId` — ID del registro afectado (int|string, será convertido a string)
+- `accion` — tipo acción (string): "crear", "actualizar", "eliminar", "cambiar_estado"
+- `valoresPrevios` — JSONB (antes de cambio) — `null` para crear
+- `valoresNuevos` — JSONB (después de cambio) — `{ campo: valor, ... }`
+
+**Ejemplo de uso en controller comercial:**
+
+```javascript
+async crear(req, res) {
+  try {
+    const { numero, cliente_id, monto, detalles } = req.body;
+    
+    // Crear registro
+    const cotizacion = await Cotizacion.crear({
+      numero,
+      cliente_id,
+      monto,
+      detalles,
+      estatus: 'borrador'
+    });
+    
+    // Registrar en auditoría (valoresPrevios = null para crear)
+    await registrarAccion(
+      req,                                    // request
+      'comercial',                            // modulo
+      'cotizaciones',                         // tabla
+      cotizacion.id,                          // registroId
+      'crear',                                // accion
+      null,                                   // valoresPrevios (no hay previos en crear)
+      {
+        numero: cotizacion.numero,
+        cliente_id: cotizacion.cliente_id,
+        monto: cotizacion.monto,
+        detalles: cotizacion.detalles,
+        estatus: cotizacion.estatus
+      }                                       // valoresNuevos
+    );
+    
+    return res.status(201).json({
+      exito: true,
+      datos: cotizacion
+    });
+  } catch (error) {
+    // Auditoría nunca interrumpe flujo
+    return res.status(500).json({
+      exito: false,
+      mensaje: error.message
+    });
+  }
+}
+```
+
+**Ejemplo de actualización:**
+
+```javascript
+async actualizar(req, res) {
+  try {
+    const id = req.params.id;
+    const datosNuevos = req.body;
+    
+    // Obtener valores previos
+    const cotizacionAnterior = await Cotizacion.obtener(id);
+    
+    // Actualizar
+    const cotizacionActualizada = await Cotizacion.actualizar(id, datosNuevos);
+    
+    // Registrar cambios (solo campos modificados)
+    const cambios = {};
+    for (const [campo, valor] of Object.entries(datosNuevos)) {
+      if (cotizacionAnterior[campo] !== valor) {
+        cambios[campo] = valor;
+      }
+    }
+    
+    if (Object.keys(cambios).length > 0) {
+      await registrarAccion(
+        req,
+        'comercial',
+        'cotizaciones',
+        id,
+        'actualizar',
+        { /* solo campos modificados */ },
+        cambios
+      );
+    }
+    
+    return res.json({
+      exito: true,
+      datos: cotizacionActualizada
+    });
+  } catch (error) {
+    return res.status(500).json({
+      exito: false,
+      mensaje: error.message
+    });
+  }
+}
+```
+
+**Características de auditoría:**
+- **Nunca interrumpe el flujo:** Si falla auditoría, se registra en logs pero la operación continúa
+- **Almacena IP y user-agent:** Extrae de `req.headers['x-forwarded-for']` y `req.headers['user-agent']`
+- **Usuarios anónimos soportados:** Si no hay usuario, `usuario_id = null`
+- **JSONB completo:** Almacena cambios como JSON estructurado para búsqueda posterior
+
+**Archivos relevantes:**
+- `/home/jamejia/intranet/modules/auditoria/backend/services/auditoria.service.js` (línea 1-26)
+- `/home/jamejia/intranet/config/database/init.sql` (línea 6-18, tabla auditoria)
+
+---
+
+### Implicación para el equipo
+
+1. **PDFs:** Documentación MBA3 API y Solicitud Crédito necesitan ser extraídos manualmente o requerida como DOCX/TXT
+2. **Patrones:** Comercial seguirá arquitectura estándar Model→Controller→Routes de RH (PERN)
+3. **Permisos:** Módulo YA existe en BD (inactivo). Solo necesita:
+   - Activar con `UPDATE modulos SET activo = true WHERE nombre = 'comercial'`
+   - Agregar opciones a `modulo_opciones` (Cotizaciones, Créditos, Precios)
+   - Asignar permisos a roles via `rol_opcion_permisos`
+4. **Frontend:** SUB_RUTAS ya está hardcodeado para comercial. Solo necesita componentes React.
+5. **PDF:** Agregar `puppeteer` a `modules/portal/backend/package.json` para generar PDFs de cotizaciones/créditos
+6. **Auditoría:** Todos los CRUD automáticamente registrados via `registrarAccion(req, 'comercial', tabla, id, accion, antes, después)`
+
+**Archivos clave para siguiente fase:**
+- `/home/jamejia/intranet/modules/portal/frontend/components/MenuDinamico.jsx` (SUB_RUTAS ya listo)
+- `/home/jamejia/intranet/config/database/init.sql` (sistema permisos)
+- `/home/jamejia/intranet/modules/rh/backend/` (patrones a copiar: models, controllers, routes)
+- `/home/jamejia/intranet/modules/portal/backend/package.json` (agregar puppeteer)
+

@@ -6,6 +6,8 @@ import {
   eliminarPuesto,
 } from "../services/puestos.service";
 import { obtenerDepartamentos } from "../services/departamentos.service";
+import ImportadorArchivo from "../../../portal/frontend/components/ImportadorArchivo";
+import { solicitar } from "../../../portal/frontend/utils/api";
 
 export default function PuestosPage() {
   const [puestos, setPuestos] = useState([]);
@@ -19,6 +21,7 @@ export default function PuestosPage() {
     departamento_id: "",
   });
   const [error, setError] = useState("");
+  const [mostrarImportador, setMostrarImportador] = useState(false);
 
   useEffect(() => {
     cargar();
@@ -98,20 +101,49 @@ export default function PuestosPage() {
     <div className="puestos-page">
       <div className="admin-encabezado">
         <h1>Gestión de Puestos</h1>
-        <button
-          onClick={() => {
-            setMostrarFormulario(true);
-            setEditando(null);
-            setFormulario({
-              nombre: "",
-              descripcion: "",
-              departamento_id: "",
-            });
-          }}
-        >
-          Nuevo Puesto
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button
+            style={{ background: 'transparent', border: '1px solid var(--color-borde)', color: 'var(--color-texto)' }}
+            onClick={() => setMostrarImportador(true)}
+          >
+            ⬆ Importar
+          </button>
+          <button
+            onClick={() => {
+              setMostrarFormulario(true);
+              setEditando(null);
+              setFormulario({ nombre: "", descripcion: "", departamento_id: "" });
+            }}
+          >
+            Nuevo Puesto
+          </button>
+        </div>
       </div>
+
+      {mostrarImportador && (
+        <ImportadorArchivo
+          titulo="Importar catálogo de puestos"
+          columnas={[
+            { clave: 'nombre', etiqueta: 'Nombre', requerido: true },
+            { clave: 'descripcion', etiqueta: 'Descripción', requerido: false },
+            { clave: 'departamento', etiqueta: 'Departamento', requerido: false },
+          ]}
+          filasEjemplo={[
+            { nombre: 'Gerente General', descripcion: 'Dirección ejecutiva de la empresa', departamento: 'Administracion' },
+            { nombre: 'Analista de TI', descripcion: 'Soporte y desarrollo de sistemas', departamento: 'TI' },
+            { nombre: 'Contador', descripcion: 'Gestión contable y fiscal', departamento: 'Administracion' },
+            { nombre: 'Vendedor', descripcion: 'Atención y cierre de ventas', departamento: 'Comercial' },
+            { nombre: 'Especialista RH', descripcion: 'Reclutamiento y gestión de personal', departamento: 'Recursos Humanos' },
+          ]}
+          nombreArchivo="plantilla_puestos.csv"
+          onImportar={(filas) => solicitar('/puestos/importar', {
+            method: 'POST',
+            body: JSON.stringify({ filas }),
+          })}
+          onExito={() => { cargar(); setMostrarImportador(false); }}
+          onCancelar={() => setMostrarImportador(false)}
+        />
+      )}
 
       {mostrarFormulario && (
         <div className="formulario-modal">

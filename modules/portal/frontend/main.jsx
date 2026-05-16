@@ -31,11 +31,15 @@ import VacacionesPage from "../../rh/frontend/pages/VacacionesPage";
 import VacacionesListadoPage from "../../rh/frontend/pages/VacacionesListadoPage";
 import PuestosPage from "../../rh/frontend/pages/PuestosPage";
 import DepartamentosPage from "../../rh/frontend/pages/DepartamentosPage";
+import AreasPage from "../../rh/frontend/pages/AreasPage";
 import UbicacionesPage from "../../rh/frontend/pages/UbicacionesPage";
 import TicketsDashboard from "../../tickets/frontend/pages/TicketsDashboard";
 import TicketPage from "../../tickets/frontend/pages/TicketPage";
 import CategoriasPage from "../../tickets/frontend/pages/CategoriasPage";
 import EncuestasPage from "../../tickets/frontend/pages/EncuestasPage";
+import ComercialDashboard from "../../comercial/frontend/pages/ComercialDashboard";
+import SolicitudesListado from "../../comercial/frontend/pages/SolicitudesListado";
+import SolicitudCreditoForm from "../../comercial/frontend/pages/SolicitudCreditoForm";
 import MenuDinamico from "./components/MenuDinamico";
 
 function RutaProtegida({ children, permisosRequeridos = [] }) {
@@ -252,6 +256,14 @@ function AppRutas() {
           }
         />
         <Route
+          path="/rh/areas"
+          element={
+            <RutaProtegida>
+              <AreasPage />
+            </RutaProtegida>
+          }
+        />
+        <Route
           path="/rh/ubicaciones"
           element={
             <RutaProtegida>
@@ -296,6 +308,38 @@ function AppRutas() {
           element={
             <RutaProtegida>
               <PermisosAdminPage />
+            </RutaProtegida>
+          }
+        />
+        <Route
+          path="/comercial"
+          element={
+            <RutaProtegida>
+              <ComercialDashboard />
+            </RutaProtegida>
+          }
+        />
+        <Route
+          path="/comercial/creditos"
+          element={
+            <RutaProtegida>
+              <SolicitudesListado />
+            </RutaProtegida>
+          }
+        />
+        <Route
+          path="/comercial/creditos/nueva"
+          element={
+            <RutaProtegida>
+              <SolicitudCreditoForm />
+            </RutaProtegida>
+          }
+        />
+        <Route
+          path="/comercial/creditos/:id/editar"
+          element={
+            <RutaProtegida>
+              <SolicitudCreditoForm />
             </RutaProtegida>
           }
         />

@@ -1,4 +1,5 @@
 const Ubicacion = require("../models/ubicacion.model");
+const { grupo } = require("../config/database");
 
 const ControladorUbicacion = {
   async listar(req, res) {
@@ -57,6 +58,16 @@ const ControladorUbicacion = {
           mensaje: "Error al actualizar ubicación",
           error: error.message,
         });
+    }
+  },
+
+  async previsualizarFolio(req, res) {
+    try {
+      const folio = await Ubicacion.previsualizarFolio(req.params.id);
+      if (!folio) return res.status(404).json({ exito: false, mensaje: "Ubicación no encontrada" });
+      res.json({ exito: true, datos: { folio } });
+    } catch (error) {
+      res.status(500).json({ exito: false, mensaje: "Error al obtener folio", error: error.message });
     }
   },
 

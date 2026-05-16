@@ -5,6 +5,8 @@ import {
   marcarBaja,
   obtenerRoles,
 } from "../services/empleados.service";
+import ImportadorArchivo from "../../../portal/frontend/components/ImportadorArchivo";
+import { solicitar } from "../../../portal/frontend/utils/api";
 import { obtenerDepartamentos } from "../services/departamentos.service";
 import { obtenerPuestos } from "../services/puestos.service";
 import { obtenerUbicaciones } from "../services/ubicaciones.service";
@@ -113,6 +115,8 @@ export default function EmpleadoPage() {
   const [filtroEstatus, setFiltroEstatus] = useState("");
   const [empleadoSeleccionado, setEmpleadoSeleccionado] = useState(null);
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
+  const [mostrarImportador, setMostrarImportador] = useState(false);
+  const [folioPreview, setFolioPreview] = useState("");
   const [error, setError] = useState("");
   const [crearUsuario, setCrearUsuario] = useState(false);
   const [formulario, setFormulario] = useState(formularioInicial);
@@ -172,7 +176,15 @@ export default function EmpleadoPage() {
 
   function manejarCambio(evento) {
     const { name, value } = evento.target;
-    setFormulario({ ...formulario, [name]: value });
+    setFormulario((prev) => ({ ...prev, [name]: value }));
+    if (name === "ubicacion_id") {
+      setFolioPreview("");
+      if (value) {
+        solicitar(`/ubicaciones/${value}/siguiente-folio`)
+          .then((r) => { if (r.exito) setFolioPreview(r.datos.folio); })
+          .catch(() => {});
+      }
+    }
   }
 
   function manejarBlurNombre(e) {
@@ -274,10 +286,52 @@ export default function EmpleadoPage() {
     <div className="empleados-page">
       <div className="admin-encabezado">
         <h1>Gestión de Empleados</h1>
-        <button onClick={() => setMostrarFormulario(true)}>
-          Nuevo Empleado
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button
+            style={{ background: 'transparent', border: '1px solid var(--color-borde)', color: 'var(--color-texto)' }}
+            onClick={() => setMostrarImportador(true)}
+          >
+            ⬆ Importar
+          </button>
+          <button onClick={() => { setMostrarFormulario(true); setFolioPreview(""); }}>Nuevo Empleado</button>
+        </div>
       </div>
+
+      {mostrarImportador && (
+        <ImportadorArchivo
+          titulo="Importar catálogo de empleados"
+          columnas={[
+            { clave: 'nombre',          etiqueta: 'Nombre',          requerido: true  },
+            { clave: 'apellido_paterno', etiqueta: 'Apellido Paterno', requerido: true  },
+            { clave: 'apellido_materno', etiqueta: 'Apellido Materno', requerido: false },
+            { clave: 'curp',            etiqueta: 'CURP',            requerido: false },
+            { clave: 'rfc',             etiqueta: 'RFC',             requerido: false },
+            { clave: 'nss',             etiqueta: 'NSS',             requerido: false },
+            { clave: 'numero_nomina',   etiqueta: 'Número de Nómina', requerido: false },
+            { clave: 'genero',          etiqueta: 'Género',          requerido: false },
+            { clave: 'estado_civil',    etiqueta: 'Estado Civil',    requerido: false },
+            { clave: 'escolaridad',     etiqueta: 'Escolaridad',     requerido: false },
+            { clave: 'tipo_contrato',   etiqueta: 'Tipo Contrato',   requerido: false },
+            { clave: 'fecha_nacimiento', etiqueta: 'Fecha Nacimiento', requerido: false },
+            { clave: 'fecha_ingreso',   etiqueta: 'Fecha Ingreso',   requerido: false },
+            { clave: 'puesto',          etiqueta: 'Puesto',          requerido: false },
+            { clave: 'departamento',    etiqueta: 'Departamento',    requerido: false },
+            { clave: 'correo_personal', etiqueta: 'Correo Personal', requerido: false },
+            { clave: 'celular_personal', etiqueta: 'Celular Personal', requerido: false },
+          ]}
+          filasEjemplo={[
+            { nombre: 'Juan', apellido_paterno: 'García', apellido_materno: 'López', curp: 'GALJ900101HDFXXX01', rfc: 'GALJ900101ABC', nss: '12345678901', numero_nomina: 'NOM-001', genero: 'Masculino', estado_civil: 'Soltero', escolaridad: 'Licenciatura', tipo_contrato: 'Indeterminado', fecha_nacimiento: '1990-01-01', fecha_ingreso: '2024-01-15', puesto: 'Analista de TI', departamento: 'TI', correo_personal: 'juan@email.com', celular_personal: '5551234567' },
+            { nombre: 'María', apellido_paterno: 'Hernández', apellido_materno: 'Ruiz', curp: 'HERM850215MDFXXX02', rfc: 'HERM850215XYZ', nss: '98765432109', numero_nomina: 'NOM-002', genero: 'Femenino', estado_civil: 'Casado', escolaridad: 'Maestría', tipo_contrato: 'Indeterminado', fecha_nacimiento: '1985-02-15', fecha_ingreso: '2024-02-01', puesto: 'Gerente Comercial', departamento: 'Comercial', correo_personal: 'maria@email.com', celular_personal: '5559876543' },
+          ]}
+          nombreArchivo="plantilla_empleados.csv"
+          onImportar={(filas) => solicitar('/empleados/importar', {
+            method: 'POST',
+            body: JSON.stringify({ filas }),
+          })}
+          onExito={() => { cargarEmpleados(); setMostrarImportador(false); }}
+          onCancelar={() => setMostrarImportador(false)}
+        />
+      )}
 
       {mostrarFormulario && (
         <div
@@ -296,6 +350,7 @@ export default function EmpleadoPage() {
             if (e.target === e.currentTarget) {
               setMostrarFormulario(false);
               setCrearUsuario(false);
+              setFolioPreview("");
               setError("");
             }
           }}
@@ -404,8 +459,13 @@ export default function EmpleadoPage() {
                     name="numero_nomina"
                     value={formulario.numero_nomina}
                     onChange={manejarCambio}
-                    placeholder="Ej. 00123"
+                    placeholder={folioPreview ? `Se asignará: ${folioPreview}` : "Auto-asignado por ubicación"}
                   />
+                  {folioPreview && !formulario.numero_nomina && (
+                    <small style={{ color: "var(--color-primario)", fontSize: "0.78rem" }}>
+                      Se asignará automáticamente: <strong>{folioPreview}</strong>
+                    </small>
+                  )}
                 </div>
                 <div className="campo">
                   <label>Tipo de contrato</label>
@@ -902,6 +962,7 @@ export default function EmpleadoPage() {
                   onClick={() => {
                     setMostrarFormulario(false);
                     setCrearUsuario(false);
+                    setFolioPreview("");
                     setError("");
                   }}
                 >

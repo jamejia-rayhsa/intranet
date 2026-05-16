@@ -1,0 +1,20 @@
+Nombre,Descripción,Departamento
+Gerente General,Responsable de la dirección y estrategia general de la empresa,Administracion
+Director de Operaciones,Supervisión de procesos operativos y logística,Administracion
+Coordinador Administrativo,Gestión de trámites y actividades administrativas,Administracion
+Contador General,Registro contable y presentación de estados financieros,Administracion
+Auxiliar Contable,Apoyo en captura y conciliación de cuentas,Administracion
+Gerente Comercial,Dirección de estrategia de ventas y cartera de clientes,Comercial
+Ejecutivo de Ventas,Prospección y cierre de ventas con clientes nuevos y existentes,Comercial
+Representante de Ventas,Atención y seguimiento de clientes en campo,Comercial
+Coordinador de Ventas,Seguimiento de metas y soporte al equipo comercial,Comercial
+Analista de Mercadotecnia,Desarrollo de campañas y análisis de mercado,Comercial
+Gerente de Recursos Humanos,Dirección del área de talento y cultura organizacional,Recursos Humanos
+Especialista en Reclutamiento,Selección y contratación de personal,Recursos Humanos
+Coordinador de Nómina,Procesamiento y validación de nómina quincenal,Recursos Humanos
+Analista de Capacitación,Diseño e impartición de programas de formación,Recursos Humanos
+Gerente de TI,Dirección de infraestructura tecnológica y desarrollo,TI
+Desarrollador de Software,Diseño y desarrollo de aplicaciones internas,TI
+Analista de Sistemas,Análisis y documentación de requerimientos de sistemas,TI
+Administrador de Redes,Configuración y mantenimiento de infraestructura de red,TI
+Soporte Técnico,Atención a incidencias y soporte a usuarios finales,TI

@@ -9,6 +9,7 @@ const router = Router();
 router.use(authenticateJWT);
 
 router.get("/", verificarPermiso("rh", "Empleados", "consulta"), ControladorEmpleado.listar);
+router.post("/importar", verificarPermiso("rh", "Empleados", "edicion"), ControladorEmpleado.importar);
 router.get("/mi-perfil", ControladorEmpleado.obtenerPorUsuario);
 router.get(
   "/jefe/:jefeId/subordinados",

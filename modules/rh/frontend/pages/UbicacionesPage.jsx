@@ -7,12 +7,14 @@ export default function UbicacionesPage() {
       apiRuta="/ubicaciones"
       entidad="ubicacion"
       columnas={[
+        { key: "prefijo", label: "Prefijo" },
         { key: "nombre", label: "Nombre" },
         { key: "ciudad", label: "Ciudad" },
         { key: "estado", label: "Estado" },
         { key: "codigo_postal", label: "C.P." },
       ]}
       camposFormulario={[
+        { name: "prefijo", label: "Prefijo de nómina", required: true, placeholder: "Ej. 1, 2, GDL" },
         { name: "nombre", label: "Nombre", required: true },
         { name: "direccion", label: "Dirección" },
         { name: "ciudad", label: "Ciudad" },

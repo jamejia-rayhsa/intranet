@@ -7,6 +7,7 @@ const router = Router();
 router.use(authenticateJWT);
 
 router.get("/", verificarPermiso("rh", "Departamentos", "consulta"), ControladorDepartamento.listar);
+router.post("/importar", verificarPermiso("rh", "Departamentos", "edicion"), ControladorDepartamento.importar);
 router.post("/", verificarPermiso("rh", "Departamentos", "edicion"), ControladorDepartamento.crear);
 router.put("/:id", verificarPermiso("rh", "Departamentos", "edicion"), ControladorDepartamento.actualizar);
 router.delete("/:id", verificarPermiso("rh", "Departamentos", "edicion"), ControladorDepartamento.eliminar);

@@ -1,0 +1,6 @@
+Nombre,Apellido Paterno,Apellido Materno,CURP,RFC,NSS,Número de Nómina,Género,Estado Civil,Escolaridad,Tipo Contrato,Fecha Nacimiento,Fecha Ingreso,Puesto,Departamento,Correo Personal,Celular Personal
+Juan,García,López,GALJ900101HDFXXX01,GALJ900101ABC,12345678901,NOM-001,Masculino,Soltero,Licenciatura,Indeterminado,1990-01-01,2024-01-15,Analista de TI,TI,juan.garcia@email.com,5551234567
+María,Hernández,Ruiz,HERM850215MDFXXX02,HERM850215XYZ,98765432109,NOM-002,Femenino,Casado,Maestría,Indeterminado,1985-02-15,2024-02-01,Gerente Comercial,Comercial,maria.hernandez@email.com,5559876543
+Carlos,Martínez,Pérez,MAPC920830HDFXXX03,MAPC920830DEF,11223344556,NOM-003,Masculino,Soltero,Preparatoria / Bachillerato,Determinado,1992-08-30,2024-03-10,Ejecutivo de Ventas,Comercial,carlos.martinez@email.com,5554567890
+Laura,González,Torres,GOTL880712MDFXXX04,GOTL880712GHI,66778899001,NOM-004,Femenino,Divorciado,Licenciatura,Indeterminado,1988-07-12,2024-04-05,Coordinador Administrativo,Administracion,laura.gonzalez@email.com,5557890123
+Roberto,Sánchez,Morales,SAMR951020HDFXXX05,SAMR951020JKL,22334455667,NOM-005,Masculino,Soltero,Licenciatura,Indeterminado,1995-10-20,2024-05-20,Especialista RH,Recursos Humanos,roberto.sanchez@email.com,5553456789

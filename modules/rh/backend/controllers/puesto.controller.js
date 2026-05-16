@@ -1,4 +1,5 @@
 const Puesto = require("../models/puesto.model");
+const { grupo } = require("../config/database");
 
 const ControladorPuesto = {
   async listar(req, res) {
@@ -76,6 +77,30 @@ const ControladorPuesto = {
           mensaje: "Error al eliminar puesto",
           error: error.message,
         });
+    }
+  },
+
+  async importar(req, res) {
+    try {
+      const { filas } = req.body;
+      if (!Array.isArray(filas) || filas.length === 0) {
+        return res.status(400).json({ exito: false, mensaje: 'No se recibieron filas para importar' });
+      }
+
+      const nombresDepto = [...new Set(filas.map(f => f.departamento).filter(Boolean))];
+      const mapaDepartamentos = {};
+      if (nombresDepto.length > 0) {
+        const result = await grupo.query(
+          "SELECT id, LOWER(nombre) AS nombre FROM departamentos WHERE LOWER(nombre) = ANY($1)",
+          [nombresDepto.map(n => n.toLowerCase())]
+        );
+        result.rows.forEach(r => { mapaDepartamentos[r.nombre] = r.id; });
+      }
+
+      const resultado = await Puesto.importarLote(filas, mapaDepartamentos);
+      res.json({ exito: true, datos: resultado });
+    } catch (error) {
+      res.status(500).json({ exito: false, mensaje: 'Error al importar puestos', error: error.message });
     }
   },
 };

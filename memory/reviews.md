@@ -838,3 +838,148 @@ El coder debe:
 
 El código del dashboard y CSS están listos, pero este modelo es crítico y debe ser corregido antes de merge.
 
+
+### [2026-05-15] revisor — Módulo Comercial Fase 1: Solicitudes de Crédito
+
+**Checklist de revisión:**
+
+#### SQL — Migración + init.sql (`001-activar-modulo-solicitudes.sql` + `config/database/init.sql`)
+✅ Tabla `solicitudes_credito` con UUID PK: `gen_random_uuid()`
+✅ Campos JSONB con `DEFAULT '[]'` (arrays) y `DEFAULT '{}'` (objetos)
+✅ Trigger `generar_numero_solicitud()` usa `LANGUAGE plpgsql` y retorna `TRIGGER`
+✅ Trigger activa `BEFORE INSERT WHEN (NEW.numero_solicitud IS NULL)` — idempotente
+✅ `CREATE OR REPLACE FUNCTION` en init.sql (línea 560)
+✅ `INSERT INTO modulo_opciones` con `ON CONFLICT (modulo_id, nombre) DO NOTHING` (línea 580)
+✅ Permisos asignados a `super_admin` y `portal_admin` con tipos `consulta` y `edicion` (línea 586)
+✅ Módulo comercial activado en init.sql línea 157: `('comercial', '/comercial', ..., true)`
+
+#### Backend — Modelo (`solicitudCredito.model.js`)
+✅ Campos JSONB se serializan con `JSON.stringify()` en `crear()` (líneas 92–98)
+✅ `listar()` soporta filtros: estado, tipo_cliente, buscar (ILIKE), usuario_creador_id, pagina, limite
+✅ `actualizar()` construye dinámicamente los SET evitando sobrescribir campos no enviados (líneas 122–133)
+✅ `obtener()` hace JOINs con usuarios para traer nombres del creador y editor (líneas 54–58)
+✅ Parámetros en `actualizar()` construidos correctamente: idx se incrementa en loop (línea 124 + 130)
+✅ Import correcto: `const { grupo } = require('../../../portal/backend/config/database')` (línea 1)
+
+#### Backend — Controller (`solicitudCredito.controller.js`)
+✅ Valida `razon_social`, `rfc`, `tipo_cliente` presentes (línea 34)
+✅ Valida RFC formato: 12 (moral) o 13 (física) caracteres (línea 40)
+✅ Llamadas a `registrarAccion()` en crear (línea 49), actualizar (línea 71), cambiarEstado (línea 98)
+✅ Import de `registrarAccion` es correcto: destructurado del export de auditoria.service (línea 2)
+✅ Endpoint `sincronizarMba3()` retorna 501 con mensaje claro (línea 128)
+✅ Usa `req.user?.usuario_id || req.user?.id` para obtener ID (líneas 46, 68, 95)
+
+#### Backend — Rutas (`solicitudesCredito.routes.js`)
+✅ `GET /estadisticas` registrado ANTES de `GET /:id` (línea 12 antes de línea 15) — evita que Express interprete "estadisticas" como UUID
+✅ Todas las rutas tienen `verificarPermiso('comercial', 'Solicitudes de Crédito', ...)` (líneas 12–19)
+✅ `router.use(authenticateJWT)` aplicado globalmente al inicio (línea 7)
+✅ `PATCH /:id/estado` existe para cambiar estado (línea 17)
+
+#### Backend — app.js
+✅ Prefijo es `/api/comercial/solicitudes` (línea 79)
+✅ Ruta del require: `'../../comercial/backend/routes/solicitudesCredito.routes'` — correcta
+
+#### Frontend — Service (`solicitudesCredito.service.js`)
+✅ Usa `solicitar()` no fetch manual (línea 1)
+✅ Import: `import { solicitar } from '../../../portal/frontend/utils/api'` — correcto (3 niveles)
+✅ 6 funciones: `listarSolicitudes`, `obtenerSolicitud`, `crearSolicitud`, `actualizarSolicitud`, `cambiarEstado`, `obtenerEstadisticas`
+✅ `obtenerEstadisticas()` llama `/comercial/solicitudes/estadisticas` (línea 30)
+
+#### Frontend — Formulario (`SolicitudCreditoForm.jsx`)
+✅ Tiene 7 pestañas: Datos Generales, Domicilios, Datos Bancarios, Condiciones, Contactos, Referencias, Revisión y PDF
+✅ Detecta modo edición con `useParams()` → variable `id` (línea 65)
+✅ Arrays dinámicos (bancarios, contactos, referencias) con botones Agregar/Eliminar
+✅ Condiciones Comerciales dinámicas según `tipo_cliente` (línea 280: `const cc = ...`)
+✅ Botón "Imprimir / Descargar PDF" llama `window.print()` (línea 748)
+✅ Vista de impresión envuelta en clase `credito-impresion-solo` con `@media print` (línea 772)
+✅ Autoguardado en localStorage: clave `credito_borrador_${id || 'nueva'}` (línea 73, 88)
+✅ Import de CSS: `import '../styles/comercial.css'` (línea 4)
+
+#### Frontend — CSS (`comercial.css`)
+✅ `@media print` oculta `.credito-sin-impresion` y muestra `.credito-impresion-solo` (línea 213–224)
+✅ Usa variables CSS: `var(--color-primario)`, `var(--color-fondo)`, `var(--color-borde)`, `var(--color-texto-claro)` — NO hexadecimales hardcoded (excepto en @media print: #fff, #000)
+✅ Clases para tabs: `.credito-tab-btn`, `.credito-tab-btn.activo`, `.credito-tabs-nav`
+✅ Clases para tabla dinámica: `.credito-tabla-dinamica`
+✅ Clases para badges: `.credito-badge-borrador`, `.credito-badge-guardada`, `.credito-badge-aprobada`, `.credito-badge-rechazada`
+
+#### Frontend — MenuDinamico.jsx
+✅ `SUB_RUTAS.comercial` existe (hallado con grep)
+✅ Entrada Dashboard: `{ path: '/comercial', label: 'Dashboard', opcion: null }`
+✅ Entrada Solicitudes: `{ path: '/comercial/creditos', label: 'Solicitudes de Crédito', opcion: 'Solicitudes de Crédito' }`
+✅ `opcion` coincide exactamente con `modulo_opciones.nombre` registrado en SQL (case-sensitive)
+
+#### Frontend — main.jsx
+✅ Imports: `ComercialDashboard`, `SolicitudesListado`, `SolicitudCreditoForm` (líneas 40–42)
+✅ 4 rutas React:
+   - `/comercial` → `ComercialDashboard`
+   - `/comercial/creditos` → `SolicitudesListado`
+   - `/comercial/creditos/nueva` → `SolicitudCreditoForm`
+   - `/comercial/creditos/:id/editar` → `SolicitudCreditoForm`
+✅ Orden correcto: `/nueva` va ANTES de `/:id/editar` (línea 331 antes de línea 339)
+
+#### Frontend — Listado (`SolicitudesListado.jsx`)
+⚠️ **CRÍTICO:** Línea 101 navega a ruta inexistente
+   ```javascript
+   onClick={() => navigate(`/comercial/creditos/${s.id}/imprimir`)}
+   ```
+   Ruta `/comercial/creditos/:id/imprimir` NO existe en main.jsx
+
+#### Frontend — Dashboard (`ComercialDashboard.jsx`)
+✅ Carga estadísticas con `obtenerEstadisticas()` (línea 17)
+✅ Muestra KPIs: total, borradores, guardadas, aprobadas, industria, distribución (línea 40–46)
+
+---
+
+## Veredicto
+
+**RECHAZADO** — Hay 1 defecto crítico bloqueante que impide usar la funcionalidad de "Descargar PDF" en el listado.
+
+### Crítico (Bloqueante)
+
+**Archivo:** `modules/comercial/frontend/pages/SolicitudesListado.jsx`  
+**Línea:** 101  
+**Problema:** El botón "PDF" intenta navegar a `/comercial/creditos/${s.id}/imprimir`, pero esta ruta **no existe** en `main.jsx`. Las rutas válidas son:
+- `/comercial` (Dashboard)
+- `/comercial/creditos` (Listado)
+- `/comercial/creditos/nueva` (Crear)
+- `/comercial/creditos/:id/editar` (Editar)
+
+**Severidad:** CRÍTICO — El usuario hace clic en "PDF" y la app falla silenciosamente sin ir a ningún lado.
+
+**Fix sugerido:** Cambiar línea 101 de:
+```javascript
+onClick={() => navigate(`/comercial/creditos/${s.id}/imprimir`)}
+```
+A:
+```javascript
+onClick={() => navigate(`/comercial/creditos/${s.id}/editar`)}
+```
+
+El usuario entra en modo edición y puede hacer clic en "Imprimir / Descargar PDF" en la pestaña 7 del formulario, que llama `window.print()` correctamente.
+
+---
+
+## Notas de Aceptación (Sin Bloqueantes)
+
+### Nota 1: Lógica de parámetros en `actualizar()`
+- Archivo: `solicitudCredito.model.js`, líneas 135–142
+- La construcción de parámetros es correcta pero antiintuitiva: `NOW()` no consume placeholder, mientras que `usuario_id` e `id` sí
+- **Estado:** Aceptado, está documentado en `code-notes.md` como "Trampa evitada"
+
+### Nota 2: Orden de rutas en router
+- Archivo: `solicitudesCredito.routes.js`, línea 12 vs línea 15
+- `GET /estadisticas` va ANTES de `GET /:id` para evitar que Express interprete "estadisticas" como UUID
+- **Estado:** Aceptado, está documentado en `code-notes.md` como "Trampa evitada"
+
+### Nota 3: Todos los archivos de backend y CSS están correctamente implementados
+- Migración SQL ✅
+- Modelo con JSONB ✅
+- Controller con auditoría ✅
+- Rutas con permisos ✅
+- Service frontend con `solicitar()` ✅
+- Formulario 7 pestañas con autoguardado ✅
+- CSS con @media print ✅
+- MenuDinamico y main.jsx configuradas ✅
+
+Solo la línea 101 de SolicitudesListado necesita corrección.
+

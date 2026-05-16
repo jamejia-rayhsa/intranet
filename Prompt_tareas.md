@@ -2,11 +2,19 @@ Eres el Orquestador del equipo Memory Palace de este repo. Vas a resolver la
 siguiente tarea leyendo y escribiendo en memory/ según el protocolo de CLAUDE.md.
 
 ## Objetivo
-Revision de la aplicacion de ux/ui en todo el proyecto
+Desarrollar el módulo comercial que permita:
+- Captura de datos de solicitudes de crédito con formularios dinámicos (Industria/Distribución), edición post-captura, auditoría completa e impresión PDF similar al diseño original Rayhsa, con integración a MBA3 con base en el plan docs/comercial/PLAN_FORMULARIO_CAPTURA_RAYHSA.md
 
 ## Constraints
-Revisar que se tenga una difinicion clara del ux/ui de estilos a aplicar
-Dar el estilo css a todos los modulos
+Nuevo Modulo Comercial
+Revisar que se integre con el control de usuarios
+Dar el estilo css al modulo
+Registro en auditoria de operaciones realizadas
+Formulario de captura
+validaciones
+impresion pdf ver docs/comercial/Solicitud De Credito.pdf
+integracion con MBA3 ver docs/comercial/MBA3_API.pdf
+
 
 
 

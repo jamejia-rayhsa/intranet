@@ -70,6 +70,7 @@ services:
       - ./modules/auditoria/frontend:/app/modules/auditoria/frontend
       - ./modules/tickets/frontend:/app/modules/tickets/frontend
       - ./modules/rh/frontend:/app/modules/rh/frontend
+      - ./modules/comercial/frontend:/app/modules/comercial/frontend
       - /app/node_modules
     depends_on:
       - backend
