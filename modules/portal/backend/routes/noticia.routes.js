@@ -10,6 +10,7 @@ const router = Router();
 
 // Rutas públicas: noticias publicadas (sin auth — usadas en login y home)
 router.get("/publicas", ControladorNoticia.listarPublicadas);
+router.get("/publicadas", ControladorNoticia.listarPublicadas); // alias para PortalHome
 router.get("/:id", ControladorNoticia.obtener);
 
 router.use(authenticateJWT);

@@ -41,7 +41,18 @@
       "Bash(PGPASSWORD=dev_password_123 psql -h localhost -U postgres -d intranet_dev -f modules/comercial/backend/migrations/001-activar-modulo-solicitudes.sql)",
       "Bash(curl -s http://localhost:4000/api/salud)",
       "Bash(curl -s http://localhost:4000/api/comercial/solicitudes)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/)",
+      "Bash(npx playwright *)",
+      "Bash(find /root /home -name \"chrome\" -path \"*/ms-playwright/*\" 2>/dev/null | head -3; find /tmp -name \"chrome\" 2>/dev/null | head -3)",
+      "Read(//root/**)",
+      "Bash(mkdir -p smoke-test)",
+      "Bash(npm init *)",
+      "Bash(PLAYWRIGHT_BROWSERS_PATH=/tmp/pw-browsers node -e \"const { chromium } = require\\('playwright'\\); chromium.launch\\(\\).then\\(b => { console.log\\('browser ok'\\); b.close\\(\\); }\\).catch\\(e => console.error\\('err:', e.message\\)\\);\")",
+      "Bash(docker run *)",
+      "Bash(curl -s http://localhost:3000/)",
+      "Bash(curl -s \"http://localhost:4000/api/noticias/publicadas?pagina=1&limite=3\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('exito:', d.get\\('exito'\\), '| total:', d.get\\('datos',{}\\).get\\('total', d.get\\('datos'\\)\\)\\)\")",
+      "Bash(docker cp *)"
     ],
     "additionalDirectories": [
       "/home/jamejia/.claude/projects/-home-jamejia-intranet",
