@@ -6,6 +6,8 @@ const {
   registrarAccion,
 } = require("../../../auditoria/backend/services/auditoria.service");
 
+const { esAdminTickets, puedeAccederTicket } = require("../utils/acceso-ticket");
+
 const nivelesValidos = ["bajo", "medio", "alto", "critico"];
 const estadosValidos = [
   "abierto",
@@ -99,13 +101,7 @@ const ControladorTicket = {
         categoria,
       };
 
-      const tienePermisoAdmin =
-        req.user.roles?.includes("super_admin") ||
-        req.user.roles?.includes("tickets_admin") ||
-        req.user.permisos?.includes("tickets.admin") ||
-        req.user.permisos?.includes("tickets.technician");
-
-      if (!tienePermisoAdmin) {
+      if (!esAdminTickets(req.user)) {
         filtros.usuario_id = req.user.usuario_id;
       }
 
@@ -134,6 +130,16 @@ const ControladorTicket = {
   async obtener(req, res) {
     try {
       const ticket = await Ticket.obtenerPorId(req.params.id);
+
+      // Solicitante, tecnico asignado o admin; inexistente para no-admin: 403 uniforme
+      if (!esAdminTickets(req.user) && !puedeAccederTicket(req.user, ticket)) {
+        console.warn(
+          `[Acceso] denegado usuario_id=${req.user.usuario_id} recurso=tickets:${req.params.id}`,
+        );
+        return res
+          .status(403)
+          .json({ exito: false, mensaje: "No tienes acceso a este recurso" });
+      }
 
       if (!ticket) {
         return res
@@ -170,10 +176,11 @@ const ControladorTicket = {
           .json({ exito: false, mensaje: "Ticket no encontrado" });
       }
 
+      // Solo el admin puede reasignar tecnico via este endpoint
       const ticket = await Ticket.actualizarEstado(
         req.params.id,
         estado,
-        tecnico_id || null,
+        esAdminTickets(req.user) ? tecnico_id || null : null,
       );
 
       const usuario = await Usuario.buscarPorId(ticketAnterior.usuario_id);

@@ -1,14 +1,38 @@
-const bcrypt = require("bcrypt");
 const Empleado = require("../models/empleado.model");
 const Ubicacion = require("../models/ubicacion.model");
 const Usuario = require("../../../portal/backend/models/usuario.model");
+const SupabaseAdmin = require("../../../portal/backend/services/supabaseAdmin.service");
+const {
+  generarContraseñaTemporal,
+} = require("../../../portal/backend/utils/contrasenaTemporal");
 const { grupo } = require("../config/database");
 const {
   registrarAccion,
 } = require("../../../auditoria/backend/services/auditoria.service");
 
+// Deshace el alta de usuario si el alta del empleado no se completó.
+async function compensarUsuario(authUid, usuarioId) {
+  if (usuarioId) {
+    try {
+      await Usuario.eliminar(usuarioId);
+    } catch (e) {
+      console.error("No se pudo revertir el usuario local:", e.message);
+    }
+  }
+  if (authUid) {
+    try {
+      await SupabaseAdmin.eliminarUsuario(authUid);
+    } catch (e) {
+      console.error("No se pudo revertir el usuario en Supabase Auth:", e.message);
+    }
+  }
+}
+
 const ControladorEmpleado = {
   async crear(req, res) {
+    // Para compensar si falla algo después de crear el usuario
+    let authUidCreado = null;
+    let usuarioIdCreado = null;
     try {
       const {
         nombre,
@@ -63,6 +87,7 @@ const ControladorEmpleado = {
       }
 
       let usuarioId = null;
+      let contraseñaTemporalGenerada = null;
 
       if (crear_usuario) {
         if (!correo) {
@@ -80,19 +105,29 @@ const ControladorEmpleado = {
           });
         }
 
-        const sal = await bcrypt.genSalt(10);
-        const hashContraseña = await bcrypt.hash(
-          contraseña || "cambiar123",
-          sal,
-        );
+        // Contraseña: la del admin o una temporal aleatoria (se devuelve una sola vez)
+        const contraseñaInicial = contraseña || generarContraseñaTemporal();
+        if (!contraseña) contraseñaTemporalGenerada = contraseñaInicial;
+
+        // GoTrue primero (única fuente de la contraseña); luego el INSERT local
+        const nuevoAuth = await SupabaseAdmin.crearUsuario({
+          correo: correo.trim().toLowerCase(),
+          password: contraseñaInicial,
+          metadata: { nombre, apellido: apellido_paterno },
+        });
+        authUidCreado = nuevoAuth.id;
 
         const usuario = await Usuario.crear({
           correo,
           nombre,
           apellido: apellido_paterno,
           auth_tipo: "local",
-          hash_password: hashContraseña,
+          auth_uid: authUidCreado,
           activo: true,
+        });
+        usuarioIdCreado = usuario.id;
+        await Usuario.actualizar(usuario.id, {
+          requiere_cambio_password: true,
         });
 
         usuarioId = usuario.id;
@@ -182,9 +217,13 @@ const ControladorEmpleado = {
       res.status(201).json({
         exito: true,
         datos: empleado,
+        ...(contraseñaTemporalGenerada && {
+          contraseña_temporal: contraseñaTemporalGenerada,
+        }),
         mensaje: "Empleado creado exitosamente",
       });
     } catch (error) {
+      await compensarUsuario(authUidCreado, usuarioIdCreado);
       res.status(400).json({
         exito: false,
         mensaje: "Error al crear empleado",

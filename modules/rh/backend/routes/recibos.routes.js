@@ -8,22 +8,47 @@ const router = Router();
 
 router.use(authenticateJWT);
 
+const ReciboNomina = require("../models/reciboNomina.model");
+const {
+  accesoEmpleado,
+  validarId,
+  validarPeriodo,
+} = require("../middleware/acceso-empleado.middleware");
+
+const empleadoDelRecibo = async (req) => {
+  const recibo = await ReciboNomina.obtenerPorId(req.params.id);
+  return recibo && recibo.empleado_id;
+};
+const consulta = verificarPermiso("rh", "Recibos", "consulta");
+
 router.get(
   "/empleado/:empleadoId",
-  verificarPermiso("rh", "Recibos", "consulta"),
+  consulta,
+  validarId("empleadoId"),
+  accesoEmpleado({ opcion: "Recibos", obtenerEmpleadoId: (req) => req.params.empleadoId }),
   ControladorReciboNomina.listar,
 );
 router.get(
   "/periodo/:periodo",
-  verificarPermiso("rh", "Recibos", "consulta"),
+  consulta,
+  validarPeriodo("periodo"),
+  accesoEmpleado({ opcion: "Recibos", soloRH: true }),
   ControladorReciboNomina.listarPorPeriodo,
 );
 router.get(
   "/:id/url",
-  verificarPermiso("rh", "Recibos", "consulta"),
+  consulta,
+  validarId("id"),
+  accesoEmpleado({ opcion: "Recibos", obtenerEmpleadoId: empleadoDelRecibo }),
   ControladorReciboNomina.obtenerUrl,
 );
-router.get("/:id", verificarPermiso("rh", "Recibos", "consulta"), ControladorReciboNomina.obtener);
+router.get(
+  "/:id",
+  consulta,
+  validarId("id"),
+  accesoEmpleado({ opcion: "Recibos", obtenerEmpleadoId: empleadoDelRecibo }),
+  ControladorReciboNomina.obtener,
+);
 router.post(
   "/",
   verificarPermiso("rh", "Recibos", "edicion"),

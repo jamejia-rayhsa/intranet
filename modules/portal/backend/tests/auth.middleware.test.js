@@ -4,10 +4,10 @@ jest.mock('../config/database', () => ({
   grupo: { query: jest.fn() },
 }));
 const { grupo } = require('../config/database');
-const { authenticateJWT, soloLegacy } = require('../middleware/auth.middleware');
+const { authenticateJWT } = require('../middleware/auth.middleware');
 
 const SECRETO_SB = 'secreto-supabase-de-prueba-0123456789';
-const SECRETO_LEGADO = 'secreto-legado-de-prueba';
+const SECRETO_AJENO = 'secreto-ajeno-de-prueba';
 const UID = '11111111-1111-1111-1111-111111111111';
 
 function tokenSupabase(extra = {}, opciones = {}) {
@@ -30,8 +30,8 @@ const usuarioFila = { id: 7, correo: 'ana@rayhsa.com', nombre: 'Ana', apellido: 
 describe('authenticateJWT', () => {
   beforeEach(() => {
     process.env.SUPABASE_JWT_SECRET = SECRETO_SB;
-    process.env.JWT_SECRET = SECRETO_LEGADO;
-    delete process.env.AUTH_LEGACY_ENABLED;
+    // Aunque existiera un JWT_SECRET legado en el entorno, no debe aceptarse.
+    process.env.JWT_SECRET = SECRETO_AJENO;
     jest.spyOn(console, 'error').mockImplementation(() => {});
   });
   afterEach(() => {
@@ -104,23 +104,27 @@ describe('authenticateJWT', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('acepta un token legado con la flag activa', async () => {
-    grupo.query.mockResolvedValueOnce({ rows: [{ rol_id: 1, rol_nombre: 'super_admin' }] });
-    const legado = jwt.sign({ usuario_id: 3, correo: 'a@b.c', nombre: 'A' }, SECRETO_LEGADO);
-    const { req, res, next } = crearMocks(legado);
-    await authenticateJWT(req, res, next);
-    expect(next).toHaveBeenCalled();
-    expect(req.user).toMatchObject({ usuario_id: 3, rol_nombre: 'super_admin', roles: ['super_admin'] });
-  });
-
-  it('rechaza un token legado con AUTH_LEGACY_ENABLED=false', async () => {
-    process.env.AUTH_LEGACY_ENABLED = 'false';
-    const legado = jwt.sign({ usuario_id: 3 }, SECRETO_LEGADO);
+  it('rechaza un token firmado con JWT_SECRET (legado) sin consultar la BD', async () => {
+    const legado = jwt.sign({ usuario_id: 3, correo: 'a@b.c' }, SECRETO_AJENO);
     const { req, res, next } = crearMocks(legado);
     await authenticateJWT(req, res, next);
     expect(res.status).toHaveBeenCalledWith(401);
     expect(grupo.query).not.toHaveBeenCalled();
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rechaza un token con el secreto correcto pero audiencia distinta', async () => {
+    const { req, res, next } = crearMocks(tokenSupabase({ aud: 'otra' }));
+    await authenticateJWT(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rechaza un token con algoritmo none', async () => {
+    const sinFirma = jwt.sign({ sub: UID, aud: 'authenticated' }, '', { algorithm: 'none' });
+    const { req, res, next } = crearMocks(sinFirma);
+    await authenticateJWT(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(401);
   });
 
   it('responde 401 con token de Supabase expirado', async () => {
@@ -131,28 +135,8 @@ describe('authenticateJWT', () => {
   });
 
   it('responde 401 con token firmado con otro secreto', async () => {
-    const { req, res, next } = crearMocks(jwt.sign({ sub: UID, aud: 'authenticated' }, 'otro'));
+    const { req, res, next } = crearMocks(jwt.sign({ sub: UID, aud: 'authenticated' }, SECRETO_AJENO));
     await authenticateJWT(req, res, next);
     expect(res.status).toHaveBeenCalledWith(401);
-  });
-});
-
-describe('soloLegacy', () => {
-  afterEach(() => delete process.env.AUTH_LEGACY_ENABLED);
-
-  it('deja pasar con la flag por defecto', () => {
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
-    const next = jest.fn();
-    soloLegacy({}, res, next);
-    expect(next).toHaveBeenCalled();
-  });
-
-  it('responde 404 con la flag en false', () => {
-    process.env.AUTH_LEGACY_ENABLED = 'false';
-    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
-    const next = jest.fn();
-    soloLegacy({}, res, next);
-    expect(res.status).toHaveBeenCalledWith(404);
-    expect(next).not.toHaveBeenCalled();
   });
 });

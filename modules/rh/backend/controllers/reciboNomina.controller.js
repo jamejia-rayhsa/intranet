@@ -58,7 +58,7 @@ const ControladorReciboNomina = {
   },
 
   // Misma autorización que obtener/listar: verificarPermiso("rh","Recibos","consulta")
-  // en la ruta; esas rutas no filtran por empleado propietario.
+  // Autorización por propietario en routes/recibos.routes.js (acceso-empleado.middleware).
   async obtenerUrl(req, res) {
     try {
       const recibo = await ReciboNomina.obtenerPorId(req.params.id);

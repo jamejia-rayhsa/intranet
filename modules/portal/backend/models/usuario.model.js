@@ -11,12 +11,11 @@ const Usuario = {
       apellido,
       auth_tipo = "local",
       external_id,
-      hash_password,
       auth_uid,
     } = datos;
     const consulta = `
-      INSERT INTO usuarios (correo, nombre, apellido, auth_tipo, external_id, hash_password, auth_uid)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      INSERT INTO usuarios (correo, nombre, apellido, auth_tipo, external_id, auth_uid)
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING id, correo, nombre, apellido, auth_tipo, activo, auth_uid, fecha_creacion
     `;
     const valores = [
@@ -25,7 +24,6 @@ const Usuario = {
       apellido,
       auth_tipo,
       external_id || null,
-      hash_password || null,
       auth_uid || null,
     ];
     const resultado = await grupo.query(consulta, valores);
@@ -35,22 +33,6 @@ const Usuario = {
   async buscarPorCorreo(correo) {
     const consulta = `SELECT ${COLUMNAS_PUBLICAS} FROM usuarios WHERE correo = $1`;
     const resultado = await grupo.query(consulta, [correo]);
-    return resultado.rows[0];
-  },
-
-  async buscarPorCorreoConHash(correo) {
-    const resultado = await grupo.query(
-      `SELECT ${COLUMNAS_PUBLICAS}, hash_password FROM usuarios WHERE correo = $1`,
-      [correo],
-    );
-    return resultado.rows[0];
-  },
-
-  async buscarPorIdConHash(id) {
-    const resultado = await grupo.query(
-      `SELECT ${COLUMNAS_PUBLICAS}, hash_password FROM usuarios WHERE id = $1`,
-      [id],
-    );
     return resultado.rows[0];
   },
 
@@ -85,11 +67,6 @@ const Usuario = {
     if (datos.activo !== undefined) {
       campos.push(`activo = $${contador}`);
       valores.push(datos.activo);
-      contador++;
-    }
-    if (datos.hash_password) {
-      campos.push(`hash_password = $${contador}`);
-      valores.push(datos.hash_password);
       contador++;
     }
     if (datos.requiere_cambio_password !== undefined) {

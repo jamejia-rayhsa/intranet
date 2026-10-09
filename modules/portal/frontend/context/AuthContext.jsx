@@ -36,6 +36,8 @@ export function ProveedorAuth({ children }) {
   }, []);
 
   useEffect(() => {
+    // Limpieza de legado: el login casero guardaba un JWT propio en localStorage["token"].
+    // Ya no se usa (la sesión vive en supabase-js); se borra por si un dispositivo aún lo conserva.
     localStorage.removeItem("token");
     let activo = true;
 

@@ -16,13 +16,9 @@ const PERMISOS_PORTAL = {
  * Permisos requeridos por cada ruta del portal
  */
 const PERMISOS_POR_RUTA = {
-  // Autenticación (públicas)
-  'POST /api/auth/registro': [],
-  'POST /api/auth/inicio-sesion': [],
-  'GET /api/auth/ms365': [],
-  'GET /api/auth/ms365/callback': [],
-  'POST /api/auth/renovar': [],
-  'POST /api/auth/recuperar-password': [],
+  // Autenticación (el login/registro lo gestiona Supabase Auth)
+  'GET /api/auth/perfil': [],
+  'POST /api/auth/cambiar-password': [],
 
   // Módulos
   'GET /api/modulos/activos': [PERMISOS_PORTAL.VER_PORTAL],

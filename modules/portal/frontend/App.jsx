@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { obtenerModulosActivos } from "./services/modulos.service";
 
 import PortalLogin from "./pages/PortalLogin";
-import PortalRegistro from "./pages/PortalRegistro";
 import PortalHome from "./pages/PortalHome";
 import PortalNoticias from "./pages/PortalNoticias";
 import PortalAdminModulos from "./pages/PortalAdminModulos";
@@ -52,7 +51,6 @@ function App() {
     return (
       <Routes>
         <Route path="/inicio-sesion" element={<PortalLogin />} />
-        <Route path="/registro" element={<PortalRegistro />} />
         <Route path="*" element={<Navigate to="/inicio-sesion" />} />
       </Routes>
     );

@@ -7,6 +7,7 @@ jest.mock("../../../portal/backend/middleware/auth.middleware", () => ({
 }));
 jest.mock("../../../portal/backend/middleware/permisos.middleware", () => ({
   verificarPermiso: () => (req, res, next) => next(),
+  tienePermiso: jest.fn().mockResolvedValue(true), // usuario RH: el acceso por propietario se prueba en acceso-empleado.test.js
 }));
 jest.mock("../../../auditoria/backend/services/auditoria.service", () => ({
   registrarAccion: jest.fn().mockResolvedValue(undefined),

@@ -1,20 +1,10 @@
-const bcrypt = require("bcrypt");
-const crypto = require("crypto");
 const Usuario = require("../models/usuario.model");
 const { grupo } = require("../config/database");
 const supabaseAdmin = require("../services/supabaseAdmin.service");
 const sinSecretos = require("../utils/sinSecretos");
-
-const ALFABETO_TEMPORAL =
-  "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-
-function generarContraseñaTemporal(longitud = 12) {
-  let resultado = "";
-  for (let i = 0; i < longitud; i++) {
-    resultado += ALFABETO_TEMPORAL[crypto.randomInt(ALFABETO_TEMPORAL.length)];
-  }
-  return resultado;
-}
+const {
+  generarContraseñaTemporal,
+} = require("../utils/contrasenaTemporal");
 
 const ControladorUsuario = {
   async listar(req, res) {
@@ -67,13 +57,11 @@ const ControladorUsuario = {
         });
       }
 
-      const sal = await bcrypt.genSalt(10);
-      const hashContraseña = await bcrypt.hash(contraseña, sal);
-
-      // 1) Crear primero en GoTrue; 2) guardar auth_uid en el INSERT local
+      // 1) Crear primero en GoTrue (única fuente de la contraseña);
+      // 2) guardar auth_uid en el INSERT local (sin hash_password).
       const nuevoAuth = await supabaseAdmin.crearUsuario({
         correo: correo.trim().toLowerCase(),
-        passwordHash: hashContraseña,
+        password: contraseña,
         metadata: { nombre, apellido },
       });
 
@@ -84,7 +72,6 @@ const ControladorUsuario = {
           nombre,
           apellido,
           auth_tipo: "local",
-          hash_password: hashContraseña,
           auth_uid: nuevoAuth.id,
           activo: activo !== undefined ? activo : true,
         });
@@ -140,22 +127,25 @@ const ControladorUsuario = {
       if (requiere_cambio_password !== undefined)
         datos.requiere_cambio_password = requiere_cambio_password;
       if (contraseña) {
-        const sal = await bcrypt.genSalt(10);
-        datos.hash_password = await bcrypt.hash(contraseña, sal);
         datos.requiere_cambio_password = true;
       }
 
       // TODO(supabase): este endpoint no permite cambiar correo; si se agrega,
       // sincronizarlo en GoTrue (el contrato de supabaseAdmin aun no lo ofrece).
-      let authUid = null;
       if (contraseña) {
         const actual = await Usuario.buscarPorId(req.params.id);
-        authUid = actual ? actual.auth_uid : null;
-        if (authUid) await supabaseAdmin.actualizarPassword(authUid, contraseña);
-        else if (actual)
-          console.warn(
-            `Usuario ${req.params.id} sin auth_uid: contraseña actualizada solo localmente`,
-          );
+        if (!actual) {
+          return res
+            .status(404)
+            .json({ exito: false, mensaje: "Usuario no encontrado" });
+        }
+        if (!actual.auth_uid) {
+          return res.status(409).json({
+            exito: false,
+            mensaje: "El usuario no tiene cuenta en Supabase Auth",
+          });
+        }
+        await supabaseAdmin.actualizarPassword(actual.auth_uid, contraseña);
       }
 
       const usuario = await Usuario.actualizar(req.params.id, datos);
@@ -208,22 +198,16 @@ const ControladorUsuario = {
       }
 
       const contraseñaTemporal = generarContraseñaTemporal();
-      const sal = await bcrypt.genSalt(10);
-      const hashContraseña = await bcrypt.hash(contraseñaTemporal, sal);
-
-      // Escritura doble: GoTrue (si ya migrado) + hash local (login legado)
-      if (usuario.auth_uid) {
-        await supabaseAdmin.actualizarPassword(usuario.auth_uid, contraseñaTemporal);
-      } else {
-        console.warn(
-          `Usuario ${id} sin auth_uid: contraseña reseteada solo localmente`,
-        );
+      if (!usuario.auth_uid) {
+        return res.status(409).json({
+          exito: false,
+          mensaje: "El usuario no tiene cuenta en Supabase Auth",
+        });
       }
 
-      await Usuario.actualizar(id, {
-        hash_password: hashContraseña,
-        requiere_cambio_password: true,
-      });
+      // La contraseña vive solo en GoTrue
+      await supabaseAdmin.actualizarPassword(usuario.auth_uid, contraseñaTemporal);
+      await Usuario.actualizar(id, { requiere_cambio_password: true });
 
       res.json({
         exito: true,

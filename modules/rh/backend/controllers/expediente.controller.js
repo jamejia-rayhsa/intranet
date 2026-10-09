@@ -23,8 +23,7 @@ const ControladorExpediente = {
     }
   },
 
-  // Misma autorización que el listado: verificarPermiso("rh","Expedientes","consulta")
-  // en la ruta; el listado no aplica pertenencia por empleado.
+  // Autorización por propietario en routes/expediente.routes.js (acceso-empleado.middleware).
   async obtenerUrl(req, res) {
     try {
       const documento = await ExpedienteDocumento.obtenerPorId(req.params.id);

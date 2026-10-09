@@ -13,6 +13,8 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-08] orquestador → decisions.md — Fase 6 completa: acceso por propietario, auth legado eliminado, respaldos probados, datos de dev migrados; Azure sin probar
+- [2026-10-08] revisor → reviews.md — Fase 6A+6B: Autorización por propietario + eliminación auth legado (APROBADO, 2 observaciones menores)
 - [2026-10-08] orquestador → decisions.md — Fase 5 completa: archivos en Supabase Storage; deriva de recibos_nomina corregida; autorización por propietario pendiente
 - [2026-10-08] orquestador → decisions.md — Fase 4 completa: frontend sobre Supabase Auth; Playwright 16/16; Microsoft sin probar
 - [2026-10-08] orquestador → decisions.md — Fase 3 completa: Supabase Auth conviviendo con login legado; hash fuera de la API; eliminar usuario local-primero

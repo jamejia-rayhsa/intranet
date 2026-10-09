@@ -1,5 +1,9 @@
 version: "3.8"
 
+# Proyecto propio: sin esto comparte nombre ("intranet") y servicio ("postgres") con el compose de
+# desarrollo, y `npm test` recrea el contenedor de dev heredando su volumen de datos.
+name: intranet-test
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -31,11 +35,6 @@ services:
       POSTGRES_DB: intranet_test
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: test_password_123
-      JWT_SECRET: test_secret_for_ci
-      JWT_EXPIRES_IN: 1h
-      AZURE_AD_CLIENT_ID: test_client_id
-      AZURE_AD_TENANT_ID: test_tenant_id
-      AZURE_AD_REDIRECT_URI: http://localhost:3000/auth/ms365/callback
     ports:
       - "4001:4000"
     depends_on:

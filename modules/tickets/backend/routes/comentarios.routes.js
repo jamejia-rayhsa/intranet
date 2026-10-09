@@ -4,11 +4,19 @@ const {
   authenticateJWT,
 } = require("../../../portal/backend/middleware/auth.middleware");
 
+const {
+  accesoTicket,
+  validarNumerico,
+  ticketDeParametro,
+} = require("../middleware/acceso-ticket.middleware");
+
 const router = Router();
 
 router.use(authenticateJWT);
 
-router.get("/:ticketId", ControladorComentario.listar);
-router.post("/:ticketId", ControladorComentario.crear);
+const acceso = [validarNumerico("ticketId"), accesoTicket(ticketDeParametro("ticketId"))];
+
+router.get("/:ticketId", ...acceso, ControladorComentario.listar);
+router.post("/:ticketId", ...acceso, ControladorComentario.crear);
 
 module.exports = router;

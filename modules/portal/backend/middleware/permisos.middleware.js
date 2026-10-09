@@ -2,6 +2,32 @@
 const { grupo } = require('../config/database');
 
 /**
+ * Evalua (sin responder HTTP) si el usuario tiene el permiso. Misma semantica que
+ * verificarPermiso: super_admin siempre, 'consulta' acepta tambien 'edicion'.
+ * @returns {Promise<boolean>} Lanza si falla la BD.
+ */
+async function tienePermiso(user, modulo, opcion, tipo) {
+  if (!user) return false;
+  if (user.rol_nombre === 'super_admin') return true;
+  if (!user.rol_id) return false;
+
+  const tiposAceptados = tipo === 'consulta' ? ['consulta', 'edicion'] : ['edicion'];
+  const resultado = await grupo.query(
+    `SELECT 1 AS existe
+     FROM rol_opcion_permisos rop
+     JOIN modulo_opciones mo ON mo.id = rop.opcion_id
+     JOIN modulos m ON m.id = mo.modulo_id
+     WHERE rop.rol_id = $1
+       AND m.nombre = $2
+       AND mo.nombre = $3
+       AND rop.tipo = ANY($4::text[])
+     LIMIT 1`,
+    [user.rol_id, modulo, opcion, tiposAceptados]
+  );
+  return resultado.rows.length > 0;
+}
+
+/**
  * Verifica que el usuario tenga permiso para una opción específica de un módulo.
  * @param {string} modulo - nombre del módulo (ej: 'tickets')
  * @param {string} opcion - nombre de la opción (ej: 'Tickets')
@@ -55,4 +81,4 @@ function verificarPermiso(modulo, opcion, tipo) {
   };
 }
 
-module.exports = { verificarPermiso };
+module.exports = { verificarPermiso, tienePermiso };

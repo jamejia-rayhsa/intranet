@@ -60,7 +60,6 @@ jobs:
           POSTGRES_DB: intranet_test
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: test_password_123
-          JWT_SECRET: test_secret_ci
           NODE_ENV: test
 
   build:

@@ -31,12 +31,13 @@ Intranet corporativa modular construida con el stack **PERN** (PostgreSQL, Expre
 │                    Backend (Express)                  │
 │  Portal:4000  │  Tickets:4001  │  RH:4002           │
 │  ┌──────────────────────────────────────────────┐   │
-│  │  Middleware: Auth JWT + Permisos + Auditoria │   │
+│  │  Middleware: Token GoTrue + Permisos + Audit.│   │
 │  └──────────────────────────────────────────────┘   │
 └────────────────────────┬────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────┐
-│              PostgreSQL (puerto 5432)                │
+│  Supabase self-hosted: Postgres + Auth + Storage     │
+│  (ver docs/supabase.md)  base `postgres`, puerto 5432│
 │  usuarios │ roles │ permisos │ modulos │ noticias    │
 │  tickets  │ adjuntos │ encuestas                     │
 │  empleados│ expediente │ permisos_ausencias │ recibos │
@@ -66,11 +67,11 @@ Intranet corporativa modular construida con el stack **PERN** (PostgreSQL, Expre
 git clone <url-del-repo>
 cd uliweb
 
-# 2. Copiar variables de entorno
-cp .env.dev .env
+# 2. Levantar todo el stack (incluye Postgres, Auth y Storage de Supabase self-hosted)
+docker compose -f docker-compose.dev.yml --env-file .env.dev up -d
 
-# 3. Levantar todo el stack
-docker compose -f docker-compose.dev.yml up -d
+# 3. Las cuentas las crea un administrador (no hay registro público);
+#    más detalles de arranque, secretos y respaldos en docs/supabase.md
 
 # 4. Verificar que todo funciona
 curl http://localhost:4000/api/salud
@@ -84,25 +85,18 @@ curl http://localhost:4000/api/salud
 | Backend Portal  | http://localhost:4000 | API principal           |
 | Backend Tickets | http://localhost:4001 | API de tickets          |
 | Backend RH      | http://localhost:4002 | API de recursos humanos |
-| PostgreSQL      | localhost:5432        | Base de datos           |
-| pgAdmin         | http://localhost:5050 | Administración de BD    |
+| Postgres (Supabase) | 127.0.0.1:5432    | Base de datos `postgres` (solo loopback) |
+| Supabase Studio | http://127.0.0.1:54323 | Opcional: añadir `--profile admin` |
 
-### Opción B: Desarrollo local (sin Docker)
+Auth (`/auth/v1`) y Storage (`/storage/v1`) se acceden por el mismo origen del frontend.
+
+### Opción B: Backend/frontend fuera de Docker
+
+El stack Supabase (Postgres, Auth, Storage) siempre corre en Docker. Solo se pueden ejecutar los módulos con Node localmente apuntando a él:
 
 ```bash
-# 1. Asegurarse de tener PostgreSQL corriendo localmente
-# 2. Crear la base de datos
-createdb intranet_dev
-
-# 3. Ejecutar migraciones
-psql -d intranet_dev -f config/database/init.sql
-
-# 4. Instalar y levantar cada módulo
-cd modules/portal/backend && npm install && npm run dev
-cd modules/tickets/backend && npm install && npm run dev
-cd modules/rh/backend && npm install && npm run dev
-
-# 5. En otra terminal, levantar el frontend
+docker compose -f docker-compose.dev.yml --env-file .env.dev up -d supabase-db supabase-db-init supabase-auth supabase-storage
+# Exponer Auth/Storage al host o usar los proxies de Vite del frontend (ver docs/supabase.md)
 cd modules/portal/frontend && npm install && npm run dev
 ```
 
@@ -120,6 +114,7 @@ uliweb/
 │   └── SKILL.*.md
 │
 ├── docker-compose.dev.yml              # Entorno de desarrollo
+├── docker-compose.supabase.yml         # Stack Supabase self-hosted (lo incluyen dev/staging/prod)
 ├── docker-compose.test.yml             # Entorno de pruebas
 ├── docker-compose.prod.yml             # Entorno de producción
 ├── .env.dev                            # Variables de desarrollo
@@ -135,7 +130,10 @@ uliweb/
 ├── .github/workflows/
 │   └── docker-build-deploy.yml         # CI/CD con GitHub Actions
 │
+├── docs/supabase.md                    # Runbook: arranque, migración, respaldos, troubleshooting
+│
 ├── scripts/
+│   ├── supabase/                       # generar-secretos.sh, backup.sh, restore.sh
 │   ├── dev/
 │   │   ├── iniciar.sh                  # Script de inicio
 │   │   └── detener.sh                  # Script de paro
@@ -158,14 +156,14 @@ uliweb/
     │   ├── backend/
     │   │   ├── models/                 # usuario, rol, permiso, modulo, noticia, usuarioRol, rolPermiso
     │   │   ├── controllers/            # auth, modulo, noticia, permiso, rol
-    │   │   ├── services/               # auth, ms365, jwt, correo
+    │   │   ├── services/               # supabaseAdmin, storage, correo
     │   │   ├── middleware/             # auth, permisos
     │   │   ├── routes/
     │   │   ├── config/
     │   │   ├── migrations/
     │   │   └── seeds/
     │   ├── frontend/
-    │   │   ├── pages/                  # Login, Registro, Home, Noticias, Admin
+    │   │   ├── pages/                  # Login, Home, Noticias, Admin
     │   │   ├── components/             # MenuDinamico, NoticiaCard, etc.
     │   │   ├── services/
     │   │   ├── context/
@@ -214,21 +212,23 @@ uliweb/
 
 ### Desarrollo (`.env.dev`)
 
-| Variable                | Valor por defecto                           | Descripción                |
-| ----------------------- | ------------------------------------------- | -------------------------- |
-| `POSTGRES_HOST`         | `postgres`                                  | Host de PostgreSQL         |
-| `POSTGRES_PORT`         | `5432`                                      | Puerto de PostgreSQL       |
-| `POSTGRES_DB`           | `intranet_dev`                              | Nombre de la base de datos |
-| `POSTGRES_USER`         | `postgres`                                  | Usuario de BD              |
-| `POSTGRES_PASSWORD`     | `dev_password_123`                          | Contraseña de BD           |
-| `JWT_SECRET`            | `dev_secret_change_me`                      | Secreto para firmar JWT    |
-| `JWT_EXPIRES_IN`        | `8h`                                        | Expiración del token       |
-| `AZURE_AD_CLIENT_ID`    | —                                           | Client ID de Azure AD      |
-| `AZURE_AD_TENANT_ID`    | —                                           | Tenant ID de Azure AD      |
-| `AZURE_AD_REDIRECT_URI` | `http://localhost:3000/auth/ms365/callback` | Redirect URI               |
-| `BACKEND_PORT`          | `4000`                                      | Puerto del backend portal  |
-| `FRONTEND_PORT`         | `3000`                                      | Puerto del frontend        |
-| `PGADMIN_PORT`          | `5050`                                      | Puerto de pgAdmin          |
+| Variable                    | Valor por defecto      | Descripción                                   |
+| --------------------------- | ---------------------- | --------------------------------------------- |
+| `POSTGRES_HOST`             | `supabase-db`          | Host de Postgres (Supabase)                   |
+| `POSTGRES_PORT`            | `5432`                 | Puerto de Postgres                            |
+| `POSTGRES_DB`               | `postgres`             | Base (la imagen de Supabase la exige)         |
+| `POSTGRES_USER`             | `postgres`             | Usuario de BD                                 |
+| `POSTGRES_PASSWORD`         | `dev_password_123`     | Contraseña de BD (URL-safe)                   |
+| `SUPABASE_JWT_SECRET`       | generado               | Secreto con que GoTrue firma los tokens       |
+| `SUPABASE_ANON_KEY`         | generado               | Clave pública (se hornea en el frontend)      |
+| `SUPABASE_SERVICE_ROLE_KEY` | generado               | Clave privada del backend (Admin API/Storage) |
+| `SUPABASE_PUBLIC_URL`       | `http://localhost:3000`| Origen público de `/auth/v1` y `/storage/v1`  |
+| `AZURE_AD_ENABLED`          | `false`                | Login con Microsoft (proveedor de GoTrue)     |
+| `AZURE_AD_TENANT_ID/CLIENT_ID/CLIENT_SECRET` | —     | Credenciales de Entra ID                      |
+| `BACKEND_PORT`              | `4000`                 | Puerto del backend portal                     |
+| `FRONTEND_PORT`             | `3000`                 | Puerto del frontend                           |
+
+Secretos nuevos: `bash scripts/supabase/generar-secretos.sh`. Lista completa: `.env.supabase.example` y `docs/supabase.md`.
 
 ### Producción (`.env.prod`)
 
@@ -249,13 +249,7 @@ uliweb/
 
 ### Migraciones
 
-Las migraciones se ejecutan automáticamente al levantar PostgreSQL con Docker gracias al archivo `config/database/init.sql`.
-
-Para ejecutar manualmente:
-
-```bash
-psql -h localhost -U postgres -d intranet_dev -f config/database/init.sql
-```
+El servicio one-shot `supabase-db-init` carga `config/database/init.sql` (solo si no existe `public.usuarios`) y aplica siempre las migraciones idempotentes `004` (RLS), `005` y `007` al levantar el stack. Para migrar datos desde el Postgres anterior, ver `docs/supabase.md` (sección 4).
 
 ### Seeds iniciales
 
@@ -270,31 +264,21 @@ El archivo `init.sql` incluye datos semilla:
 
 ## Autenticación
 
-### Registro e inicio de sesión local
+La autenticación la hace **Supabase Auth (GoTrue)**, con Microsoft/Azure como proveedor opcional. El backend solo acepta tokens de GoTrue; las contraseñas viven solo en GoTrue y las cuentas las crea un administrador (no hay registro público).
 
 ```bash
-# Registrar un nuevo usuario
-curl -X POST http://localhost:4000/api/auth/registro \
-  -H "Content-Type: application/json" \
-  -d '{"correo":"usuario@empresa.com","nombre":"Juan","apellido":"Pérez","contraseña":"mi_contraseña_123"}'
+# Iniciar sesión (GoTrue, por el origen del frontend)
+curl -X POST "http://localhost:3000/auth/v1/token?grant_type=password" \
+  -H "apikey: $SUPABASE_ANON_KEY" -H "Content-Type: application/json" \
+  -d '{"email":"usuario@empresa.com","password":"..."}'
 
-# Iniciar sesión
-curl -X POST http://localhost:4000/api/auth/inicio-sesion \
-  -H "Content-Type: application/json" \
-  -d '{"correo":"usuario@empresa.com","contraseña":"mi_contraseña_123"}'
+# Usar el access_token en la API
+curl http://localhost:4000/api/empleados -H "Authorization: Bearer <access_token>"
 ```
 
-### Autenticación MS365 (Azure AD)
+Configuración de Microsoft (redirect `https://<host>/auth/v1/callback`, `AZURE_AD_*`): ver `docs/supabase.md`, sección 5. Aún no se ha probado con credenciales reales.
 
-1. Configurar las variables `AZURE_AD_CLIENT_ID`, `AZURE_AD_TENANT_ID` y `AZURE_AD_CLIENT_SECRET`
-2. El flujo OAuth2 redirige a Microsoft y devuelve un JWT al frontend
-
-### Uso del token
-
-```bash
-curl http://localhost:4000/api/empleados \
-  -H "Authorization: Bearer <tu_token_jwt>"
-```
+Archivos: Supabase Storage (buckets privados con URL firmada de 300 s; `noticias` público). Respaldos y restauración: `scripts/supabase/backup.sh` y `restore.sh` (docs/supabase.md, sección 6).
 
 ---
 
@@ -422,7 +406,7 @@ docker compose -f docker-compose.dev.yml logs -f backend
 docker compose -f docker-compose.dev.yml restart backend
 
 # Acceder a la base de datos
-docker exec -it intranet_postgres_dev psql -U postgres -d intranet_dev
+docker exec -it intranet_supabase_db psql -U supabase_admin -h /var/run/postgresql -d postgres
 ```
 
 ---
@@ -432,10 +416,10 @@ docker exec -it intranet_postgres_dev psql -U postgres -d intranet_dev
 | Problema               | Solución                                                                |
 | ---------------------- | ----------------------------------------------------------------------- |
 | Puerto ya en uso       | Cambiar el puerto en `.env.dev` o matar el proceso con `lsof -i :4000`  |
-| Error de conexión a BD | Verificar que PostgreSQL esté corriendo: `docker ps \| grep postgres`   |
-| Token inválido         | Regenerar el token haciendo login nuevamente                            |
+| Error de conexión a BD | Verificar que PostgreSQL esté corriendo: `docker ps \| grep supabase_db`   |
+| Token inválido         | Iniciar sesión de nuevo (tokens de Supabase Auth, 1 h)                  |
 | Frontend no carga      | Verificar que `npm install` se ejecutó en `modules/portal/frontend`     |
-| Migraciones fallan     | Ejecutar `psql -d intranet_dev -f config/database/init.sql` manualmente |
+| Migraciones fallan     | Ver `docker logs intranet_supabase_db_init` y docs/supabase.md (Troubleshooting) |
 
 ---
 

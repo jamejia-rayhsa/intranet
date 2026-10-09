@@ -1,6 +1,6 @@
 # Módulo Portal
 
-Portal central de la intranet corporativa. Gestiona autenticación híbrida (MS365 + local), roles, permisos, módulos dinámicos y portal de noticias/comunicados.
+Portal central de la intranet corporativa. Gestiona la identidad con Supabase Auth (GoTrue; Microsoft como proveedor opcional), roles, permisos, módulos dinámicos y portal de noticias/comunicados.
 
 ---
 
@@ -26,18 +26,17 @@ modules/portal/
 │   │   ├── modulo.model.js                 # CRUD módulos
 │   │   └── noticia.model.js                # CRUD noticias con paginación
 │   ├── controllers/
-│   │   ├── auth.controller.js              # Registro, login local, MS365, perfil
+│   │   ├── auth.controller.js              # Perfil y cambio de contraseña (login lo hace GoTrue)
 │   │   ├── modulo.controller.js            # Gestión de módulos
 │   │   ├── noticia.controller.js           # Gestión de noticias
 │   │   ├── permiso.controller.js           # Gestión de permisos
 │   │   └── rol.controller.js               # Gestión de roles
 │   ├── services/
-│   │   ├── auth.service.js                 # Lógica de autenticación local
-│   │   ├── ms365.service.js                # OAuth2 con Azure AD
-│   │   ├── jwt.service.js                  # Generación y verificación JWT
+│   │   ├── supabaseAdmin.service.js        # Admin API de GoTrue (alta, contraseña, baja de cuentas)
+│   │   ├── storage.service.js              # Supabase Storage (subir, URL firmada, eliminar)
 │   │   └── correo.service.js               # Envío de correos (simulado en dev)
 │   ├── middleware/
-│   │   ├── auth.middleware.js              # authenticateJWT + autorizar(permisos)
+│   │   ├── auth.middleware.js              # authenticateJWT (token de GoTrue) + autorizar(permisos)
 │   ├── routes/
 │   │   ├── auth.routes.js                  # /api/auth/*
 │   │   ├── modulos.routes.js               # /api/modulos/*
@@ -52,8 +51,7 @@ modules/portal/
 │   └── package.json
 ├── frontend/
 │   ├── pages/
-│   │   ├── PortalLogin.jsx                 # Login local + botón MS365
-│   │   ├── PortalRegistro.jsx              # Registro de usuario local
+│   │   ├── PortalLogin.jsx                 # Login con Supabase Auth (+ botón Microsoft si VITE_MS365_LOGIN)
 │   │   ├── PortalHome.jsx                  # Home con noticias, comunicados, ofertas
 │   │   ├── PortalNoticias.jsx              # Listado con filtros y paginación
 │   │   ├── PortalAdminModulos.jsx          # CRUD de módulos
@@ -71,7 +69,7 @@ modules/portal/
 │   ├── routes/
 │   │   └── portal.routes.js                # Rutas React
 │   ├── utils/
-│   │   └── api.js                          # Función solicitar() con token JWT
+│   │   └── api.js                          # Función solicitar() con el token de Supabase
 │   ├── App.jsx                             # Componente raíz con rutas
 │   ├── main.jsx                            # Punto de entrada
 │   ├── index.html
@@ -94,15 +92,12 @@ modules/portal/
 
 ### Autenticación
 
-| Método | Ruta                           | Descripción                | Autenticación |
-| ------ | ------------------------------ | -------------------------- | ------------- |
-| POST   | `/api/auth/registro`           | Registrar usuario local    | Pública       |
-| POST   | `/api/auth/inicio-sesion`      | Login local                | Pública       |
-| GET    | `/api/auth/ms365`              | Redirigir a Azure AD       | Pública       |
-| GET    | `/api/auth/ms365/callback`     | Callback de Azure AD       | Pública       |
-| POST   | `/api/auth/renovar`            | Renovar token              | Pública       |
-| POST   | `/api/auth/recuperar-password` | Solicitar recuperación     | Pública       |
-| GET    | `/api/auth/perfil`             | Obtener perfil del usuario | JWT           |
+El login, el cierre de sesión y el refresco de token los resuelve el frontend directamente contra GoTrue (`/auth/v1`, mismo origen). **No hay registro público**: las cuentas las crea un administrador desde el portal (`/admin/usuarios`).
+
+| Método | Ruta                        | Descripción                          | Autenticación |
+| ------ | --------------------------- | ------------------------------------ | ------------- |
+| GET    | `/api/auth/perfil`          | Perfil del usuario (sin hash)        | Token GoTrue  |
+| POST   | `/api/auth/cambiar-password`| Cambiar contraseña (actualiza GoTrue)| Token GoTrue  |
 
 ### Módulos
 
@@ -159,8 +154,9 @@ usuarios
 ├── nombre (VARCHAR)
 ├── apellido (VARCHAR)
 ├── auth_tipo (local|ms365)
+├── auth_uid (UUID de auth.users en GoTrue)
 ├── external_id (Azure AD ID)
-├── hash_password (TEXT)
+├── hash_password (TEXT, en desuso: las contraseñas viven en GoTrue)
 ├── activo (BOOLEAN)
 └── fecha_creacion (TIMESTAMP)
 
@@ -246,61 +242,21 @@ noticias
 
 ## Guía de Autenticación
 
-### 1. Registro de usuario local
+Resumen (detalle de arquitectura, Azure y troubleshooting en `docs/supabase.md`):
 
-```bash
-curl -X POST http://localhost:4000/api/auth/registro \
-  -H "Content-Type: application/json" \
-  -d '{
-    "correo": "juan@empresa.com",
-    "nombre": "Juan",
-    "apellido": "Pérez",
-    "contraseña": "mi_contraseña_segura_123"
-  }'
-```
-
-**Respuesta exitosa:**
-
-```json
-{
-  "exito": true,
-  "datos": {
-    "usuario": { "id": 1, "correo": "juan@empresa.com", "nombre": "Juan", ... },
-    "token": "eyJhbGciOiJIUzI1NiIs..."
-  },
-  "mensaje": "Usuario registrado exitosamente"
-}
-```
-
-### 2. Inicio de sesión
-
-```bash
-curl -X POST http://localhost:4000/api/auth/inicio-sesion \
-  -H "Content-Type: application/json" \
-  -d '{
-    "correo": "juan@empresa.com",
-    "contraseña": "mi_contraseña_segura_123"
-  }'
-```
-
-### 3. Usar el token en peticiones
-
-```bash
-curl http://localhost:4000/api/noticias/publicadas \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
-```
-
-### 4. Autenticación MS365
-
-1. Configurar en `.env.dev`:
+1. **Alta de cuentas:** un administrador crea el usuario desde el portal (`/admin/usuarios`); se crea en GoTrue y en la tabla `usuarios` enlazado por `auth_uid`.
+2. **Inicio de sesión:** el frontend usa `supabase-js` (PKCE) contra `/auth/v1`; obtiene un `access_token` (1 h).
+   ```bash
+   curl -X POST "http://localhost:3000/auth/v1/token?grant_type=password" \
+     -H "apikey: $SUPABASE_ANON_KEY" -H "Content-Type: application/json" \
+     -d '{"email":"juan@empresa.com","password":"..."}'
    ```
-   AZURE_AD_CLIENT_ID=tu_client_id
-   AZURE_AD_TENANT_ID=tu_tenant_id
-   AZURE_AD_CLIENT_SECRET=tu_client_secret
-   AZURE_AD_REDIRECT_URI=http://localhost:3000/auth/ms365/callback
+3. **Usar el token en la API:**
+   ```bash
+   curl http://localhost:4000/api/noticias/publicadas -H "Authorization: Bearer <access_token>"
    ```
-2. Visitar `http://localhost:4000/api/auth/ms365`
-3. Azure AD redirige al callback con el token
+   El backend verifica la firma (`SUPABASE_JWT_SECRET`) y busca al usuario por `auth_uid` (o por correo la primera vez). Un token válido de alguien sin fila activa en `usuarios` recibe 403.
+4. **Microsoft:** proveedor de GoTrue (`AZURE_AD_*`, `AZURE_AD_ENABLED`, redirect `https://<host>/auth/v1/callback`); el usuario debe existir antes en la intranet. Pendiente de probar con credenciales reales.
 
 ---
 
@@ -311,30 +267,18 @@ curl http://localhost:4000/api/noticias/publicadas \
 1. **Levantar el stack:**
 
    ```bash
-   docker compose -f docker-compose.dev.yml up -d
+   docker compose -f docker-compose.dev.yml --env-file .env.dev up -d
    ```
 
 2. **Verificar la base de datos:**
 
    ```bash
-   docker exec -it intranet_postgres_dev psql -U postgres -d intranet_dev -c "SELECT count(*) FROM usuarios;"
+   docker exec -it intranet_supabase_db psql -U supabase_admin -h /var/run/postgresql -d postgres -c "SELECT count(*) FROM usuarios;"
    ```
 
-3. **Registrar un usuario:**
+3. **Crear una cuenta:** con un super_admin, en `/admin/usuarios` (no hay registro público). Los usuarios semilla de `init.sql` se crean en GoTrue con `scripts/migrar-usuarios-supabase.js` (ver `docs/supabase.md`).
 
-   ```bash
-   curl -X POST http://localhost:4000/api/auth/registro \
-     -H "Content-Type: application/json" \
-     -d '{"correo":"prueba@empresa.com","nombre":"Prueba","apellido":"Usuario","contraseña":"test123"}'
-   ```
-
-4. **Iniciar sesión y obtener token:**
-
-   ```bash
-   curl -X POST http://localhost:4000/api/auth/inicio-sesion \
-     -H "Content-Type: application/json" \
-     -d '{"correo":"prueba@empresa.com","contraseña":"test123"}'
-   ```
+4. **Obtener un token:** iniciar sesión en el frontend o con el `curl` de la sección anterior.
 
 5. **Acceder al frontend:**
    - Abrir http://localhost:3000
@@ -369,9 +313,9 @@ El portal registra en auditoría las siguientes acciones:
 
 | Problema                                         | Causa probable               | Solución                                                               |
 | ------------------------------------------------ | ---------------------------- | ---------------------------------------------------------------------- |
-| `Token inválido o expirado`                      | Token expirado o mal formado | Hacer login nuevamente para obtener un token fresco                    |
+| `Token inválido o expirado`                      | Token expirado o mal formado | Iniciar sesión de nuevo (el token de GoTrue dura 1 h)                    |
 | `No tienes permisos suficientes`                 | Usuario sin rol asignado     | Asignar rol desde `/admin/roles` o directamente en BD                  |
-| `Error al conectar con PostgreSQL`               | Base de datos no corriendo   | `docker compose -f docker-compose.dev.yml up -d postgres`              |
+| `Error al conectar con Postgres (supabase-db)`               | Base de datos no corriendo   | `docker compose -f docker-compose.dev.yml --env-file .env.dev up -d supabase-db supabase-db-init`              |
 | `Ya existe un usuario con ese correo`            | Correo duplicado             | Usar un correo diferente o eliminar el usuario existente               |
 | `Ruta no encontrada`                             | Endpoint incorrecto          | Verificar la ruta en la tabla de endpoints arriba                      |
 | `Frontend muestra "Cargando..." indefinidamente` | Backend no accesible         | Verificar que el backend responda en `http://localhost:4000/api/salud` |

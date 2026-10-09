@@ -8,14 +8,29 @@ const router = Router();
 
 router.use(authenticateJWT);
 
+const ExpedienteDocumento = require("../models/expedienteDocumento.model");
+const { accesoEmpleado, validarId } = require("../middleware/acceso-empleado.middleware");
+
+const consulta = verificarPermiso("rh", "Expedientes", "consulta");
+
 router.get(
   "/:empleadoId",
-  verificarPermiso("rh", "Expedientes", "consulta"),
+  consulta,
+  validarId("empleadoId"),
+  accesoEmpleado({ opcion: "Expedientes", obtenerEmpleadoId: (req) => req.params.empleadoId }),
   ControladorExpediente.listar,
 );
 router.get(
   "/:id/url",
-  verificarPermiso("rh", "Expedientes", "consulta"),
+  consulta,
+  validarId("id"),
+  accesoEmpleado({
+    opcion: "Expedientes",
+    obtenerEmpleadoId: async (req) => {
+      const doc = await ExpedienteDocumento.obtenerPorId(req.params.id);
+      return doc && doc.empleado_id;
+    },
+  }),
   ControladorExpediente.obtenerUrl,
 );
 router.post(

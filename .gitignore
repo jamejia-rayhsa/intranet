@@ -38,3 +38,6 @@ coverage/
 
 # Archivos subidos (legado: ahora viven en Supabase Storage)
 /uploads/
+
+# Respaldos de Supabase (contienen hashes y datos de RH)
+backups/

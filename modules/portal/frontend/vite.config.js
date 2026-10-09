@@ -15,10 +15,6 @@ export default defineConfig({
         target: 'http://backend:4000',
         changeOrigin: true,
       },
-      '/uploads': {
-        target: 'http://backend:4000',
-        changeOrigin: true,
-      },
       // Supabase (mismo origen). Prefijo exacto '/auth/v1/' para no capturar la ruta SPA '/auth/callback'.
       // changeOrigin:false preserva Host (GoTrue arma redirects con API_EXTERNAL_URL).
       '^/auth/v1(/|$)': {
