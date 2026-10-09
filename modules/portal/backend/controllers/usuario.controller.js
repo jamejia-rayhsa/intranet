@@ -1,6 +1,20 @@
 const bcrypt = require("bcrypt");
+const crypto = require("crypto");
 const Usuario = require("../models/usuario.model");
 const { grupo } = require("../config/database");
+const supabaseAdmin = require("../services/supabaseAdmin.service");
+const sinSecretos = require("../utils/sinSecretos");
+
+const ALFABETO_TEMPORAL =
+  "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+
+function generarContraseñaTemporal(longitud = 12) {
+  let resultado = "";
+  for (let i = 0; i < longitud; i++) {
+    resultado += ALFABETO_TEMPORAL[crypto.randomInt(ALFABETO_TEMPORAL.length)];
+  }
+  return resultado;
+}
 
 const ControladorUsuario = {
   async listar(req, res) {
@@ -24,7 +38,7 @@ const ControladorUsuario = {
           .status(404)
           .json({ exito: false, mensaje: "Usuario no encontrado" });
       }
-      res.json({ exito: true, datos: usuario });
+      res.json({ exito: true, datos: sinSecretos(usuario) });
     } catch (error) {
       res.status(500).json({
         exito: false,
@@ -56,14 +70,36 @@ const ControladorUsuario = {
       const sal = await bcrypt.genSalt(10);
       const hashContraseña = await bcrypt.hash(contraseña, sal);
 
-      const usuario = await Usuario.crear({
-        correo,
-        nombre,
-        apellido,
-        auth_tipo: "local",
-        hash_password: hashContraseña,
-        activo: activo !== undefined ? activo : true,
+      // 1) Crear primero en GoTrue; 2) guardar auth_uid en el INSERT local
+      const nuevoAuth = await supabaseAdmin.crearUsuario({
+        correo: correo.trim().toLowerCase(),
+        passwordHash: hashContraseña,
+        metadata: { nombre, apellido },
       });
+
+      let usuario;
+      try {
+        usuario = await Usuario.crear({
+          correo,
+          nombre,
+          apellido,
+          auth_tipo: "local",
+          hash_password: hashContraseña,
+          auth_uid: nuevoAuth.id,
+          activo: activo !== undefined ? activo : true,
+        });
+      } catch (errorInsert) {
+        // Compensacion: no dejar huerfano en GoTrue
+        try {
+          await supabaseAdmin.eliminarUsuario(nuevoAuth.id);
+        } catch (errorComp) {
+          console.error(
+            "No se pudo compensar el alta en Supabase Auth:",
+            errorComp.message,
+          );
+        }
+        throw errorInsert;
+      }
 
       if (rol_id) {
         await grupo.query(
@@ -74,7 +110,7 @@ const ControladorUsuario = {
 
       res.status(201).json({
         exito: true,
-        datos: usuario,
+        datos: sinSecretos(usuario),
         mensaje: "Usuario creado exitosamente",
       });
     } catch (error) {
@@ -109,6 +145,19 @@ const ControladorUsuario = {
         datos.requiere_cambio_password = true;
       }
 
+      // TODO(supabase): este endpoint no permite cambiar correo; si se agrega,
+      // sincronizarlo en GoTrue (el contrato de supabaseAdmin aun no lo ofrece).
+      let authUid = null;
+      if (contraseña) {
+        const actual = await Usuario.buscarPorId(req.params.id);
+        authUid = actual ? actual.auth_uid : null;
+        if (authUid) await supabaseAdmin.actualizarPassword(authUid, contraseña);
+        else if (actual)
+          console.warn(
+            `Usuario ${req.params.id} sin auth_uid: contraseña actualizada solo localmente`,
+          );
+      }
+
       const usuario = await Usuario.actualizar(req.params.id, datos);
       if (!usuario) {
         return res
@@ -128,7 +177,7 @@ const ControladorUsuario = {
 
       res.json({
         exito: true,
-        datos: usuario,
+        datos: sinSecretos(usuario),
         mensaje: "Usuario actualizado exitosamente",
       });
     } catch (error) {
@@ -158,9 +207,18 @@ const ControladorUsuario = {
         });
       }
 
-      const contraseñaTemporal = Math.random().toString(36).slice(-8);
+      const contraseñaTemporal = generarContraseñaTemporal();
       const sal = await bcrypt.genSalt(10);
       const hashContraseña = await bcrypt.hash(contraseñaTemporal, sal);
+
+      // Escritura doble: GoTrue (si ya migrado) + hash local (login legado)
+      if (usuario.auth_uid) {
+        await supabaseAdmin.actualizarPassword(usuario.auth_uid, contraseñaTemporal);
+      } else {
+        console.warn(
+          `Usuario ${id} sin auth_uid: contraseña reseteada solo localmente`,
+        );
+      }
 
       await Usuario.actualizar(id, {
         hash_password: hashContraseña,
@@ -183,11 +241,25 @@ const ControladorUsuario = {
 
   async eliminar(req, res) {
     try {
+      // Orden deliberado: primero la fila local, despues GoTrue. El middleware
+      // autoriza por la fila local, asi que una identidad huerfana en GoTrue
+      // recibe 403; invertirlo seria irrecuperable si fallara el borrado local.
+      // Un fallo de limpieza en GoTrue se registra y no bloquea la respuesta.
+      const previo = await Usuario.buscarPorId(req.params.id);
       const usuario = await Usuario.eliminar(req.params.id);
       if (!usuario) {
         return res
           .status(404)
           .json({ exito: false, mensaje: "Usuario no encontrado" });
+      }
+      if (previo && previo.auth_uid) {
+        try {
+          await supabaseAdmin.eliminarUsuario(previo.auth_uid);
+        } catch (e) {
+          console.warn(
+            `Usuario ${req.params.id} eliminado local; fallo limpieza en Supabase Auth: ${e.message}`,
+          );
+        }
       }
       res.json({ exito: true, mensaje: "Usuario eliminado exitosamente" });
     } catch (error) {
@@ -239,3 +311,4 @@ const ControladorUsuario = {
 };
 
 module.exports = ControladorUsuario;
+module.exports.generarContraseñaTemporal = generarContraseñaTemporal;

@@ -75,6 +75,7 @@ services:
     volumes:
       - ./config/database/init.sql:/sql/init.sql:ro
       - ./modules/portal/backend/migrations/004-rls-deny-all.sql:/sql/004-rls-deny-all.sql:ro
+      - ./modules/portal/backend/migrations/005-auth-uid.sql:/sql/005-auth-uid.sql:ro
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
@@ -87,6 +88,8 @@ services:
         fi
         echo "[db-init] aplicando 004-rls-deny-all.sql"
         psql -v ON_ERROR_STOP=1 -f /sql/004-rls-deny-all.sql
+        echo "[db-init] aplicando 005-auth-uid.sql"
+        psql -v ON_ERROR_STOP=1 -f /sql/005-auth-uid.sql
         echo "[db-init] listo"
     networks:
       - internal

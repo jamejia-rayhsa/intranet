@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   hash_password TEXT,
   activo BOOLEAN DEFAULT true,
   requiere_cambio_password BOOLEAN DEFAULT false,
+  auth_uid UUID UNIQUE,
   fecha_creacion TIMESTAMP DEFAULT NOW()
 );
 

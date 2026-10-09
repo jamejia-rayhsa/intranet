@@ -2,6 +2,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const Usuario = require("../models/usuario.model");
 const Rol = require("../models/rol.model");
+const SupabaseAdmin = require("./supabaseAdmin.service");
 const { grupo } = require("../config/database");
 
 const ServicioAuth = {
@@ -18,14 +19,35 @@ const ServicioAuth = {
     const sal = await bcrypt.genSalt(10);
     const hashContraseña = await bcrypt.hash(contraseña, sal);
 
-    // Crear usuario
-    const usuario = await Usuario.crear({
+    // Crear primero en Supabase Auth (con el mismo hash bcrypt)
+    const { id: authUid } = await SupabaseAdmin.crearUsuario({
       correo,
-      nombre,
-      apellido,
-      auth_tipo: "local",
-      hash_password: hashContraseña,
+      passwordHash: hashContraseña,
+      metadata: { nombre, apellido },
     });
+
+    // Crear usuario local; si falla, compensar eliminando el de Supabase
+    let usuario;
+    try {
+      usuario = await Usuario.crear({
+        correo,
+        nombre,
+        apellido,
+        auth_tipo: "local",
+        hash_password: hashContraseña,
+        auth_uid: authUid,
+      });
+    } catch (error) {
+      try {
+        await SupabaseAdmin.eliminarUsuario(authUid);
+      } catch (errorComp) {
+        console.error(
+          "No se pudo revertir el usuario en Supabase Auth:",
+          errorComp.message,
+        );
+      }
+      throw error;
+    }
 
     // Generar token JWT
     const token = this.generarToken(usuario);
@@ -34,7 +56,7 @@ const ServicioAuth = {
   },
 
   async inicioSesionLocal(correo, contraseña) {
-    const usuario = await Usuario.buscarPorCorreo(correo);
+    const usuario = await Usuario.buscarPorCorreoConHash(correo);
 
     if (!usuario) {
       throw new Error("Correo o contraseña incorrectos");

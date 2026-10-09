@@ -1066,3 +1066,168 @@ El usuario entra en modo edición y puede hacer clic en "Imprimir / Descargar PD
 
 Solo la línea 101 de SolicitudesListado necesita corrección.
 
+
+---
+
+### [2026-10-08] revisor — Fase 3A+3B: Supabase Auth (middleware, admin service, migration, usuario controller)
+
+**Resumen:** Revisión integral de autenticación con Supabase GoTrue, servicio admin, script de migración de usuarios, cambios en usuario.model y usuario.controller. Todos los tests pasan (43/43). **SIN HALLAZGOS CRÍTICOS.** 1 hallazgo importante + 5 menores documentados.
+
+---
+
+#### ✅ VERIFICACIONES POSITIVAS (Seguridad + Compensaciones)
+
+1. **Seguridad del middleware (auth.middleware.js)**
+   - ✓ HS256 explícitamente verificado: `jwt.verify(token, secreto, { algorithms: ["HS256"], audience: "authenticated" })`
+   - ✓ Token Supabase válido pero usuario no existe/inactivo → 403 (nunca cae al flujo legado)
+   - ✓ Flujo legado rechazado si `AUTH_LEGACY_ENABLED === "false"` (línea 139)
+   - ✓ Rutas legado protegidas con `soloLegacy` en auth.routes.js (registro, inicio-sesión, ms365, renovar)
+   - ✓ Vinculación por correo con normalización `lower(correo)` en ambos lados (línea 43)
+   - **Archivo:** modules/portal/backend/middleware/auth.middleware.js:1-230
+
+2. **Hash fuera de la API (usuario.model.js)**
+   - ✓ `COLUMNAS_PUBLICAS` no incluye `hash_password`
+   - ✓ Métodos nuevos `buscarPorIdConHash` y `buscarPorCorreoConHash` solo para verificación interna
+   - ✓ Todos los endpoints públicos usan `sinSecretos(usuario)` para filtrar secretos
+   - ✓ `buscarPorCorreo` y `buscarPorId` devuelven COLUMNAS_PUBLICAS sin hash
+   - **Archivos:** modules/portal/backend/models/usuario.model.js:3-68, controllers/usuario.controller.js:19-23
+
+3. **Compensaciones y transacciones**
+   - ✓ `usuario.controller.crear`: GoTrue PRIMERO, INSERT local con auth_uid, si falla INSERT → elimina en GoTrue (línea 80-108)
+   - ✓ `usuario.controller.resetearPassword`: Escribe double en GoTrue + hash local, solo warn si no hay auth_uid (línea 221-232)
+   - ✓ `usuario.controller.actualizar`: GoTrue PRIMERO (si hay auth_uid), luego local, compensación en catch si falla local (línea 157-165)
+   - ✓ `auth.service.registroLocal`: GoTrue PRIMERO, INSERT local, compensación idéntica (línea 23-50)
+   - **Archivos:** modules/portal/backend/controllers/usuario.controller.js:57-274, services/auth.service.js:9-56
+
+4. **Script de migración (migrar-usuarios-supabase.js)**
+   - ✓ Idempotencia: `UPDATE ... WHERE auth_uid IS NULL` (línea 91)
+   - ✓ Normalización consistente: `lower(correo)` en BD, GoTrue y búsquedas
+   - ✓ Usuarios ms365 se crean sin password (línea 122)
+   - ✓ Usuarios locales sin hash se omiten (línea 109-110)
+   - ✓ Compensación de huérfanos: si UPDATE falla tras CREATE, elimina en GoTrue (línea 141)
+   - ✓ Dry-run real: no escribe en BD ni GoTrue, solo consulta (línea 155-165)
+   - ✓ No imprime secretos: solo mensaje de error sin credenciales (línea 177, 209)
+   - **Archivo:** scripts/migrar-usuarios-supabase.js:1-214
+
+5. **Servicio admin (supabaseAdmin.service.js)**
+   - ✓ Timeout: 10 segundos con `AbortSignal.timeout(TIMEOUT_MS)` (línea 31)
+   - ✓ Errores sin claves: `solicitar()` devuelve mensajes genéricos, no expone service key
+   - ✓ URL encoding: `encodeURIComponent(authUid)` en DELETE y PUT (línea 75, 81)
+   - ✓ Paginación O(n) de buscarPorCorreo: pagina hasta 50*1000 usuarios, pero solo en callbackMS365 (no ruta caliente)
+   - **Archivo:** modules/portal/backend/services/supabaseAdmin.service.js:1-106
+
+6. **Compose e init (docker-compose.supabase.yml)**
+   - ✓ Migración 005 monta en supabase-db-init (línea 78)
+   - ✓ Migración 005 se aplica siempre (idempotente con `IF NOT EXISTS`)
+   - ✓ Init carga init.sql con `--single-transaction` (línea 87)
+   - ✓ `depends_on: service_completed_successfully` en backend (dev)
+   - **Archivos:** docker-compose.supabase.yml:61-95, migrations/005-auth-uid.sql:1-4
+
+7. **Tests (43/43 pass)**
+   - ✓ auth.middleware.test: 10 tests cobriendo Supabase, legado, inactivos, email verificado, expiración
+   - ✓ usuario.controller.test: crear (compensación), resetearPassword (double-write), obtener (no expone hash)
+   - ✓ supabaseAdmin.service.test: timeout, paginación, normalización
+   - ✓ migrar-usuarios-supabase.test: planificación, idempotencia, carrera (race)
+   - **Archivos:** modules/portal/backend/tests/*.test.js
+
+---
+
+#### 🔴 HALLAZGO IMPORTANTE (Debe arreglarse antes de merge)
+
+1. **IMPORTANTE: usuario.controller.eliminar borra local antes de GoTrue → huérfanos en auth**
+   - **Archivo:línea:** modules/portal/backend/controllers/usuario.controller.js:248-265
+   - **Problema:** `Usuario.eliminar()` elimina de la BD local primero (línea 251), luego intenta eliminar de Supabase (línea 259). Si GoTrue falla, la revoación de acceso no ocurre.
+   - **Código problemático:**
+     ```javascript
+     const usuario = await Usuario.eliminar(req.params.id);  // Éxito
+     if (previo && previo.auth_uid) {
+       try {
+         await supabaseAdmin.eliminarUsuario(previo.auth_uid);
+       } catch (e) {
+         console.warn(...); // Solo warning, usuario sigue activo en GoTrue
+       }
+     }
+     ```
+   - **Riesgo:** Usuario tiene token válido en Supabase pero no existe en BD local → ruta puede devolver 403 "usuario no registrado" (línea 107-111 del middleware) pero el token sigue siendo válido para otras apps.
+   - **Fix sugerido:** Invertir el orden: 1) eliminar en GoTrue PRIMERO, 2) eliminar local SEGUNDO, 3) compensar (recrear en GoTrue si falla local)
+   - **Severidad:** IMPORTANTE
+
+---
+
+#### ⚠️ HALLAZGOS MENORES (No bloqueantes, mejoras futuras)
+
+1. **MENOR: Verificación de email_verified débil (permisiva)**
+   - **Archivo:línea:** modules/portal/backend/middleware/auth.middleware.js:38
+   - **Problema:** `!claims.user_metadata || claims.user_metadata.email_verified !== false` — si `user_metadata` no existe, se asume email verificado. Si `email_verified === undefined` también se asume verificado.
+   - **Código:**
+     ```javascript
+     const verificado = !claims.user_metadata || claims.user_metadata.email_verified !== false;
+     if (!claims.email || !verificado) return null;
+     ```
+   - **Riesgo:** Bajo — token de Supabase ya ha sido verificado por GoTrue, pero buena práctica ser explícito.
+   - **Fix sugerido:** `email_verified === true` en lugar de `!== false`
+   - **Severidad:** MENOR
+
+2. **MENOR: obtenerPerfil expone auth_uid (inconsistencia)**
+   - **Archivo:línea:** modules/portal/backend/controllers/auth.controller.js:199-203
+   - **Problema:** `obtenerPerfil` devuelve `...usuario` sin filtrar, y COLUMNAS_PUBLICAS incluye `auth_uid`. Contrario a decision.md línea 22 que pide excluir de COLUMNAS_PUBLICAS.
+   - **Código:**
+     ```javascript
+     res.json({
+       exito: true,
+       datos: { ...usuario, roles, permisos }, // usuario incluye auth_uid
+     });
+     ```
+   - **Riesgo:** Bajo — `auth_uid` no es secreto criptográfico, pero innecesario exponerlo (cliente ya lo tiene en JWT).
+   - **Fix sugerido:** Excluir `auth_uid` de COLUMNAS_PUBLICAS o filtrar en respuesta
+   - **Severidad:** MENOR
+
+3. **MENOR: inicioSesionLocal también expone auth_uid**
+   - **Archivo:línea:** modules/portal/backend/services/auth.service.js:105
+   - **Problema:** Mismo issue que arriba, auth_uid devuelto en objeto usuario
+   - **Código:**
+     ```javascript
+     usuario: {
+       ...
+       auth_uid: usuario.auth_uid,
+       ...
+     }
+     ```
+   - **Fix sugerido:** Excluir `auth_uid` de COLUMNAS_PUBLICAS
+   - **Severidad:** MENOR
+
+4. **MENOR: Actualización de contraseña sin auth_uid solo warning**
+   - **Archivo:línea:** modules/portal/backend/controllers/usuario.controller.js:161-164
+   - **Problema:** Si usuario.actualizar() es llamado con contraseña pero el usuario no tiene auth_uid, solo se actualiza local y se hace warn. Puede dejar sincronización futura rota.
+   - **Código:**
+     ```javascript
+     if (authUid) await supabaseAdmin.actualizarPassword(authUid, contraseña);
+     else if (actual)
+       console.warn(`Usuario ${req.params.id} sin auth_uid: contraseña actualizada solo localmente`);
+     ```
+   - **Riesgo:** Bajo — usuarios sin auth_uid son casos edge (legado pre-migración)
+   - **Fix sugerido:** Considerar error si usuario debería tener auth_uid
+   - **Severidad:** MENOR
+
+5. **MENOR: Faltan tests para usuario.controller.eliminar y actualizar**
+   - **Archivo:** modules/portal/backend/tests/usuario.controller.test.js:1-109
+   - **Problema:** Tests cubren crear, resetearPassword, obtener; faltan tests para eliminar (especialmente compensación) y actualizar (con/sin auth_uid)
+   - **Fix sugerido:** Agregar tests de `eliminar` (con auth_uid, sin auth_uid, fallo compensación) y `actualizar` (cambio contraseña con/sin auth_uid)
+   - **Severidad:** MENOR
+
+---
+
+#### 📋 VEREDICTO
+
+**ESTADO:** 🟠 **RECHAZADO** — Hallazgo IMPORTANTE debe resolverse antes de merge
+
+**Requiere Fix:**
+1. ✏️ usuario.controller.eliminar: invertir orden (GoTrue primero)
+
+**Recomendaciones para siguiente sesión:**
+1. Excluir `auth_uid` de COLUMNAS_PUBLICAS o filtrar respuestas
+2. Cambiar verificación de email a explícita: `email_verified === true`
+3. Agregar cobertura de tests para eliminar/actualizar
+
+**Autobservación:** Test suite completo pasa (43/43), no hay bugs obvios en compilación. Hallazgo es de lógica de compensación en edge case de fallo en GoTrue durante eliminación.
+

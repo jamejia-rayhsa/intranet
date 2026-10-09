@@ -6,6 +6,28 @@ type: project
 
 # Decisiones de Arquitectura
 
+### [2026-10-08] orquestador — Fase 3 completa: Supabase Auth (GoTrue) conviviendo con el login legado
+
+**Delegación:** coder A (middleware, servicio admin, auth, compose), coder B (script de migración de usuarios, alta/reset), revisor (RECHAZADO por 1 hallazgo, rechazado a su vez por el orquestador; ver abajo), coder B de nuevo (ajustes). Verificación propia contra GoTrue real.
+
+**Decisiones:**
+1. **Coexistencia con bandera `AUTH_LEGACY_ENABLED` (default `true`).** El frontend sigue en login legado hasta la Fase 4. Con la bandera en `false`, `/auth/inicio-sesion`, `/registro`, `/ms365*` y `/renovar` dan 404 y el middleware rechaza tokens legados. El código legado se borra en Fase 6.
+2. **Middleware** (`auth.middleware.js`): verifica HS256 con `SUPABASE_JWT_SECRET` y `aud=authenticated`; busca por `auth_uid`, y si no hay vínculo, por `lower(correo)` (solo `UPDATE ... WHERE auth_uid IS NULL`). Token Supabase válido pero usuario inexistente o inactivo = 403 y nunca cae al flujo legado. `req.user` conserva su forma (los 10 archivos que usan `usuario_id` no cambian).
+3. **Cliente GoTrue sin dependencia nueva:** `supabaseAdmin.service.js` con `fetch` nativo contra `SUPABASE_AUTH_URL` (red interna; sin gateway no existe `/auth/v1` interno). `buscarPorCorreo` pagina `/admin/users` (O(n)): solo para scripts y el callback legado de MS365, no para rutas calientes.
+4. **Escritura doble de contraseñas** (GoTrue + `hash_password`) mientras convivan ambos sistemas; con compensación si falla el segundo paso. Alta/registro: GoTrue primero, `auth_uid` en el INSERT, y si el INSERT falla se elimina el usuario de GoTrue.
+5. **El hash y `auth_uid` no salen por la API** (corrige la fuga preexistente de `hash_password` en `/auth/perfil`): `buscarPorId/buscarPorCorreo` sin hash, variantes `*ConHash` solo internas, y `utils/sinSecretos.js` en las respuestas.
+6. **`eliminar` usuario: orden local primero, GoTrue después** (el revisor pidió invertirlo; se rechazó). El middleware autoriza por la fila local, así que una identidad huérfana en GoTrue recibe 403 (verificado); invertirlo sería irrecuperable si el borrado local falla, porque no se puede recrear la identidad con su contraseña. Un fallo de limpieza en GoTrue se registra y no bloquea.
+7. **GoTrue con `DISABLE_SIGNUP=true`:** el script `scripts/migrar-usuarios-supabase.js` debe precrear a TODOS los usuarios activos (incluidos `ms365`, sin contraseña); el primer login con Microsoft se vincula por correo. Un usuario nuevo de Microsoft que no esté en GoTrue ni en la intranet NO puede entrar.
+
+**Verificado contra GoTrue real:** GoTrue acepta los hashes bcrypt `$2b$` tal cual (no hizo falta normalizar a `$2a$`); script en dry-run no escribe, en real crea 7/7 y es idempotente; token de GoTrue accede a `/usuarios`, `/empleados` y `/auditoria` como super_admin; usuario inactivo = 403; usuario en GoTrue sin fila local = 403; vinculación por correo con mayúsculas distintas OK; token legado OK con bandera activa y 401 con bandera apagada (rutas legadas 404, Supabase sigue 200); cambio de contraseña actualiza GoTrue y la BD local (la vieja deja de funcionar, el login legado acepta la nueva); 54 tests jest verdes.
+
+**Pendientes / riesgos conocidos:**
+- `email_verified !== false` en el middleware se mantiene permisivo a propósito: con el auto-registro apagado solo un admin puede crear identidades, y exigir `=== true` podría dejar fuera a usuarios de Azure si GoTrue no emite el claim. **Revalidar al probar Azure en la Fase 4.**
+- Cambio de correo de un usuario no se sincroniza con GoTrue (hoy `actualizar` no lo acepta; hay un TODO en el código).
+- Un usuario eliminado cuya limpieza en GoTrue falló deja una identidad huérfana; recrear ese correo chocaría (422). Limpieza manual con el servicio admin.
+- Usuarios locales sin `hash_password` se omiten en la migración (quedan sin acceso hasta que un admin les resetee la contraseña).
+- Acción externa: registrar en Azure Portal el redirect URI `https://<host>/auth/v1/callback` y configurar `AZURE_AD_*` en el `.env` (la Fase 4 lo necesita).
+
 ### [2026-10-08] orquestador — Fase 2 completa: la app corre sobre el Postgres de Supabase
 
 **Delegación:** coder A (compose/env), coder B (pools), revisor (APROBADO sin bloqueantes, ver reviews.md). Verificación propia del orquestador con el flujo real de dev.

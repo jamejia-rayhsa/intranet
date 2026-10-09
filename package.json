@@ -24,7 +24,8 @@
     "start:frontend": "npm run preview --workspace=modules/portal/frontend",
     "lint": "eslint modules/",
     "db:migrate": "npm run migrate --workspace=modules/portal/backend",
-    "db:seed": "npm run seed --workspace=modules/portal/backend"
+    "db:seed": "npm run seed --workspace=modules/portal/backend",
+    "db:migrar-usuarios-supabase": "node scripts/migrar-usuarios-supabase.js"
   },
   "devDependencies": {
     "eslint": "^8.56.0",

@@ -2,6 +2,8 @@ const bcrypt = require("bcrypt");
 const ServicioAuth = require("../services/auth.service");
 const ServicioMS365 = require("../services/ms365.service");
 const Usuario = require("../models/usuario.model");
+const sinSecretos = require("../utils/sinSecretos");
+const SupabaseAdmin = require("../services/supabaseAdmin.service");
 
 const ControladorAuth = {
   async registroLocal(req, res) {
@@ -24,7 +26,7 @@ const ControladorAuth = {
 
       res.status(201).json({
         exito: true,
-        datos: resultado,
+        datos: { ...resultado, usuario: sinSecretos(resultado.usuario) },
         mensaje: "Usuario registrado exitosamente",
       });
     } catch (error) {
@@ -53,7 +55,7 @@ const ControladorAuth = {
 
       res.json({
         exito: true,
-        datos: resultado,
+        datos: { ...resultado, usuario: sinSecretos(resultado.usuario) },
         mensaje: "Inicio de sesión exitoso",
       });
     } catch (error) {
@@ -196,7 +198,7 @@ const ControladorAuth = {
       res.json({
         exito: true,
         datos: {
-          ...usuario,
+          ...sinSecretos(usuario),
           roles,
           permisos: Array.from(permisosUsuario),
         },
@@ -220,7 +222,7 @@ const ControladorAuth = {
         });
       }
 
-      const usuario = await Usuario.buscarPorId(req.user.usuario_id);
+      const usuario = await Usuario.buscarPorIdConHash(req.user.usuario_id);
 
       if (!usuario) {
         return res
@@ -249,10 +251,28 @@ const ControladorAuth = {
       const sal = await bcrypt.genSalt(10);
       const hashNueva = await bcrypt.hash(contraseña_nueva, sal);
 
-      await Usuario.actualizar(usuario.id, {
-        hash_password: hashNueva,
-        requiere_cambio_password: false,
-      });
+      // Escritura doble: Supabase Auth primero (si falla, no se cambia nada)
+      if (usuario.auth_uid) {
+        await SupabaseAdmin.actualizarPassword(
+          usuario.auth_uid,
+          contraseña_nueva,
+        );
+      }
+
+      try {
+        await Usuario.actualizar(usuario.id, {
+          hash_password: hashNueva,
+          requiere_cambio_password: false,
+        });
+      } catch (errorLocal) {
+        if (usuario.auth_uid) {
+          await SupabaseAdmin.actualizarPassword(
+            usuario.auth_uid,
+            contraseña_actual,
+          ).catch(() => {});
+        }
+        throw errorLocal;
+      }
 
       res.json({ exito: true, mensaje: "Contraseña actualizada exitosamente" });
     } catch (error) {

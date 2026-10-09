@@ -37,6 +37,10 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      SUPABASE_AUTH_URL: http://supabase-auth:9999
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      AUTH_LEGACY_ENABLED: ${AUTH_LEGACY_ENABLED:-true}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
       AZURE_AD_CLIENT_ID: ${AZURE_AD_CLIENT_ID:-}
       AZURE_AD_TENANT_ID: ${AZURE_AD_TENANT_ID:-}
@@ -50,6 +54,8 @@ services:
     depends_on:
       supabase-db-init:
         condition: service_completed_successfully
+      supabase-auth:
+        condition: service_healthy
     networks:
       - internal
 
