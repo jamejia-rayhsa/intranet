@@ -23,6 +23,7 @@ import './styles/rayhsa-system.css'; // <-- NUEVO sistema visual
 
 import PortalLogin from './pages/PortalLogin';
 import PortalRegistro from './pages/PortalRegistro';
+import AuthCallback from './pages/AuthCallback';
 import PortalHome from './pages/PortalHome';
 import PortalNoticias from './pages/PortalNoticias';
 import PortalAdminModulos from './pages/PortalAdminModulos';
@@ -151,6 +152,7 @@ function AppRutas() {
     <LayoutConMenu>
       <Routes>
         <Route path="/inicio-sesion" element={<PortalLogin />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
         <Route path="/registro" element={<PortalRegistro />} />
         <Route path="/" element={<RutaProtegida><PortalHome /></RutaProtegida>} />
         <Route path="/noticias" element={<RutaProtegida><PortalNoticias /></RutaProtegida>} />

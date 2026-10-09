@@ -1,4 +1,5 @@
 import { solicitar } from "../utils/api";
+import { obtenerToken } from "../utils/token";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000/api";
 
@@ -35,7 +36,7 @@ export async function eliminarNoticia(id) {
 }
 
 export async function subirImagenNoticia(noticiaId, archivo) {
-  const token = localStorage.getItem("token");
+  const token = await obtenerToken();
   const formData = new FormData();
   formData.append("imagen", archivo);
 

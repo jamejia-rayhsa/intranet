@@ -4,6 +4,10 @@ name: intranet-staging
 # Arquitectura: Cloudflare → Traefik (HTTP) → Frontend-nginx (sirve SPA + proxy /api/)
 #                                                             → Backend (Node.js :4000)
 #
+# NOTA: la anon key de Supabase (VITE_SUPABASE_ANON_KEY) se hornea en la imagen del
+# frontend al publicarla (scripts/staging/publicar-ghcr.sh la lee de SUPABASE_ANON_KEY).
+# Es pública por diseño; si rota el JWT secret hay que republicar la imagen.
+#
 # Uso:
 #   1. Login en ghcr.io (una sola vez):
 #        echo $GITHUB_TOKEN | docker login ghcr.io -u jamejia-rayhsa --password-stdin

@@ -67,6 +67,8 @@ services:
     environment:
       NODE_ENV: development
       VITE_API_URL: /api
+      VITE_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+      VITE_MS365_LOGIN: ${AZURE_AD_ENABLED:-false}
     ports:
       - "${FRONTEND_PORT:-3000}:5173"
     volumes:

@@ -6,6 +6,27 @@ type: project
 
 # Decisiones de Arquitectura
 
+### [2026-10-08] orquestador — Fase 4 completa: el frontend usa Supabase Auth
+
+**Delegación:** coder A (código React), coder B (infra: Vite, Dockerfile, compose, publicar-ghcr), revisor (APROBADO sin bloqueantes). Pruebas en vivo del orquestador con Chromium real (Playwright).
+
+**Decisiones:**
+1. **Mismo origen.** `lib/supabase.js` usa `VITE_SUPABASE_URL || window.location.origin`; Vite (dev) y nginx (staging/prod) proxifican `/auth/v1` y `/storage/v1`. Solo se hornea la anon key (pública por diseño) como `VITE_SUPABASE_ANON_KEY`; en staging hay que **republicar la imagen del frontend si rota la anon key**. Proxies de Vite con clave regex `^/auth/v1(/|$)` para no capturar `/auth/callback` de la SPA.
+2. **Supabase en exclusiva en el frontend.** `utils/token.js: obtenerToken()` es la única fuente del token; el token legado de `localStorage` se elimina al arrancar. Se migraron también 5 consumidores fuera del portal (rh, tickets, auditoria) que habrían enviado `Bearer null`.
+3. **AuthContext:** perfil del backend tras la sesión de Supabase; `onAuthStateChange` sin `await` dentro (difiere con `setTimeout`) para evitar deadlock; recarga el perfil solo si cambia el uid. 401/403 del perfil cierra la sesión y muestra `errorAuth`.
+4. **Botón de Microsoft detrás de `VITE_MS365_LOGIN`** (build; se alimenta de `AZURE_AD_ENABLED`, default false).
+5. **Fuera de alcance:** recuperación de contraseña por correo (requiere SMTP), Storage en el frontend (Fase 5), borrar lo legado (Fase 6).
+6. **Endurecimiento tras la revisión:** `error_description` de la URL se acota a 200 caracteres. El XSS no era explotable (React escapa; comprobado con payload `<img onerror>`), solo defensa en profundidad.
+
+**Verificado en vivo:** proxy de Vite (`/auth/v1/health`, `/storage/v1/status` 200, `/auth/callback` sirve la SPA); `supabase-js` real: contraseña incorrecta rechazada, sesión de 3600 s, token aceptado por el backend sin exponer hash ni `auth_uid`, refresh OK. **Chromium (16/16):** `/` sin sesión redirige al login, token legado limpiado, sin botón de Microsoft, contraseña incorrecta muestra error, login correcto entra, la home muestra al usuario, recargar mantiene la sesión, `/admin/usuarios` carga datos del backend con token de Supabase, cerrar sesión vuelve al login, usuario que existe en GoTrue pero no en la intranet queda en login con mensaje de sin acceso, callback con payload XSS no ejecuta script y se muestra como texto; 0 errores de consola.
+
+**Pendientes / riesgos:**
+- **Login con Microsoft NO probado** (requiere Azure real): configurar `AZURE_AD_*`, registrar el redirect `https://<host>/auth/v1/callback` en Azure y **revalidar `email_verified`** (ADR Fase 3) con un login real. Sin eso, `AZURE_AD_ENABLED` debe seguir en `false`.
+- `TOKEN_REFRESHED` no recarga el perfil si el uid es el mismo: un cambio de rol durante una sesión larga se ve tras F5 (aceptable).
+- El frontend no tiene tests unitarios; la cobertura actual es la prueba de Playwright (no commiteada).
+- **Registro público** (`/registro`) preexistente: cualquiera puede crear una cuenta sin permisos mientras `AUTH_LEGACY_ENABLED` esté activo. Decidir en Fase 6 si se elimina.
+- Recuperación de contraseña por correo: falta SMTP.
+
 ### [2026-10-08] orquestador — Fase 3 completa: Supabase Auth (GoTrue) conviviendo con el login legado
 
 **Delegación:** coder A (middleware, servicio admin, auth, compose), coder B (script de migración de usuarios, alta/reset), revisor (RECHAZADO por 1 hallazgo, rechazado a su vez por el orquestador; ver abajo), coder B de nuevo (ajustes). Verificación propia contra GoTrue real.

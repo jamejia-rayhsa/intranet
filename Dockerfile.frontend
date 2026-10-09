@@ -42,6 +42,14 @@ COPY config/ ./config/
 
 ARG VITE_API_URL=/api
 ENV VITE_API_URL=${VITE_API_URL}
+# Anon key de Supabase: pública por diseño, se hornea en el bundle.
+# VITE_SUPABASE_URL vacío = mismo origen (nginx enruta /auth/v1 y /storage/v1).
+ARG VITE_SUPABASE_ANON_KEY
+ARG VITE_SUPABASE_URL=
+ARG VITE_MS365_LOGIN=false
+ENV VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+ENV VITE_MS365_LOGIN=${VITE_MS365_LOGIN}
 
 RUN npm run build:frontend
 

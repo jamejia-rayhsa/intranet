@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { obtenerToken } from '../../../portal/frontend/utils/token';
 import AuditoriaFiltros from '../components/AuditoriaFiltros';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
@@ -13,7 +14,7 @@ export default function AuditoriaPage() {
   async function cargarRegistros() {
     setCargando(true);
     try {
-      const token = localStorage.getItem('token');
+      const token = await obtenerToken();
       const parametros = new URLSearchParams({
         pagina,
         limite: 20,

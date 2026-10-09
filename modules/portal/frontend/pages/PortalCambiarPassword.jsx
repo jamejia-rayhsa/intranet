@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { solicitar } from "../utils/api";
 import { usarAuth } from "../context/AuthContext";
 
 export default function PortalCambiarPassword() {
-  const { cerrarSesion } = usarAuth();
+  const { recargarPerfil } = usarAuth();
+  const navigate = useNavigate();
   const [contraseñaActual, setContraseñaActual] = useState("");
   const [contraseñaNueva, setContraseñaNueva] = useState("");
   const [confirmarContraseña, setConfirmarContraseña] = useState("");
@@ -36,7 +38,8 @@ export default function PortalCambiarPassword() {
       });
 
       if (respuesta.exito) {
-        cerrarSesion();
+        await recargarPerfil();
+        navigate("/");
       }
     } catch (err) {
       setError(err.message);

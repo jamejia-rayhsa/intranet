@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { registrarse } from '../services/auth.service';
 import { usarAuth } from '../context/AuthContext';
 
 export default function PortalRegistro() {
   const { iniciarSesion } = usarAuth();
+  const navigate = useNavigate();
   const [formulario, setFormulario] = useState({
     nombre: '',
     apellido: '',
@@ -43,10 +45,15 @@ export default function PortalRegistro() {
       });
 
       if (respuesta.exito) {
-        iniciarSesion(respuesta.datos.token, respuesta.datos.usuario);
+        await iniciarSesion(formulario.correo, formulario.contraseña);
+        navigate('/');
       }
     } catch (err) {
-      setError(err.message);
+      setError(
+        err.status === 404
+          ? 'El registro está deshabilitado; solicita tu alta al administrador'
+          : err.message,
+      );
     } finally {
       setCargando(false);
     }

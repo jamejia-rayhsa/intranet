@@ -1231,3 +1231,162 @@ Solo la línea 101 de SolicitudesListado necesita corrección.
 
 **Autobservación:** Test suite completo pasa (43/43), no hay bugs obvios en compilación. Hallazgo es de lógica de compensación en edge case de fallo en GoTrue durante eliminación.
 
+
+---
+
+### [2026-10-08] revisor — Fase 4A+4B: Frontend con Supabase Auth (GoTrue) y proxies Vite
+
+**Resumen:** Revisión de cambios frontend: AuthContext reescrito con GoTrue, nueva ruta AuthCallback, migración de lectores de localStorage["token"], vite.config.js con proxies, Dockerfile.frontend con VITE_SUPABASE_ANON_KEY, y script publicar-ghcr.sh. Verificaciones de seguridad, regresiones, proxy regex y manejo de tokens.
+
+#### ✅ VERIFICACIONES POSITIVAS (Sin hallazgos críticos)
+
+1. **Seguridad de tokens — migraciones correctas:**
+   - ✅ `obtenerToken()` implementado: extrae `session.access_token` desde `supabase.auth.getSession()`
+   - ✅ `localStorage.removeItem("token")` al montar AuthContext (línea 39)
+   - ✅ 5 consumidores migraron correctamente:
+     - `modules/rh/frontend/services/expediente.service.js:1` — importa `obtenerToken`
+     - `modules/tickets/frontend/services/adjuntos.service.js:1` — importa `obtenerToken`
+     - `modules/tickets/frontend/pages/TicketsDashboard.jsx:20` — importa `obtenerToken`
+     - `modules/auditoria/frontend/pages/AuditoriaPage.jsx:2` — importa `obtenerToken`
+     - `modules/auditoria/frontend/pages/AuditoriaDashboard.jsx:17` — importa `obtenerToken`
+   - ✅ NO hay referencias a `localStorage.getItem("token")` restantes en frontend
+   - ✅ FormData en subirDocumento/subirAdjunto/subirImagenNoticia NO fuerza Content-Type (navegador lo establece)
+   - **Archivos verificados:** modules/portal/frontend/utils/token.js, utils/api.js, 5 consumidores
+
+2. **Seguridad de la anon key:**
+   - ✅ `VITE_SUPABASE_ANON_KEY` es pública por diseño (JWT con claims `role: "anon"`)
+   - ✅ Dockerfile.frontend línea 47: `ARG VITE_SUPABASE_ANON_KEY` sin default — si no se pasa, vacío
+   - ✅ lib/supabase.js línea 6-7: console.error si falta, pero continúa con `'sin-anon-key'` placeholder
+   - ✅ Build +test con `VITE_SUPABASE_ANON_KEY=test-anon-key` → anon key aparece en dist/index*.js (esperado)
+   - ✅ Build con `VITE_SUPABASE_ANON_KEY=dummy` → OK, corre sin errores
+   - ✅ `SUPABASE_SERVICE_ROLE_KEY` NO se filtra al frontend (solo se usa en backend/scripts)
+   - ✅ scripts/staging/publicar-ghcr.sh línea 21-24: aborta con error si falta `SUPABASE_ANON_KEY`
+   - **Archivos:** Dockerfile.frontend:43-52, lib/supabase.js:1-17, scripts/staging/publicar-ghcr.sh:16-24
+
+3. **Proxy Vite — regex y headers correctos:**
+   - ✅ `/api` → backend:4000 (changeOrigin:true)
+   - ✅ `^/auth/v1(/|$)` → supabase-auth:9999 (changeOrigin:false, xfwd:true, rewrite: remove /auth/v1)
+   - ✅ `^/storage/v1(/|$)` → supabase-storage:5000 (changeOrigin:false, X-Forwarded-Prefix: /storage/v1)
+   - ✅ Regex `^/auth/v1(/|$)` NO captura `/auth/callback` (ruta SPA pura)
+   - ✅ AuthCallback registrado en main.jsx línea 155 como ruta pública (fuera de LayoutConMenu)
+   - **Archivos:** modules/portal/frontend/vite.config.js:13-37, main.jsx:155
+
+4. **AuthContext — deadlock, carreras y expiry:**
+   - ✅ `onAuthStateChange` callback con `setTimeout(() => {...}, 0)` para evitar await dentro (línea 56-68)
+   - ✅ `uidActual.current` referencia para detectar cambios de uid (línea 64) evita recargas innecesarias
+   - ✅ `cargarPerfil()` es `useCallback` con manejo de 401/403 (signOut si backend rechaza)
+   - ✅ `TOKEN_REFRESHED` solo recarga perfil si uid cambió (línea 63-64)
+   - ✅ `iniciarSesion()` espera a `cargarPerfil()` antes de resolver (login completo + perfil)
+   - ✅ `recargarPerfil()` usado en PortalCambiarPassword (línea 41) para re-sincronizar tras cambio
+   - **Archivos:** context/AuthContext.jsx:14-115, pages/PortalCambiarPassword.jsx:41
+
+5. **Manejo de errores en login/registro:**
+   - ✅ PortalRegistro.jsx línea 53-55: detecta 404 y muestra "registro deshabilitado" (DISABLE_SIGNUP=true)
+   - ✅ PortalCambiarPassword.jsx línea 32-42: POST a `/auth/cambiar-password`, luego `recargarPerfil()`, navega a `/`
+   - ✅ api.js línea 30-33: agrega `error.status` para distinguir 401/403/404 (usado en PortalRegistro)
+   - ✅ AuthCallback no hace await en el contexto (usa los estados cargando/usuario/errorAuth)
+   - **Archivos:** pages/PortalRegistro.jsx:40-55, pages/PortalCambiarPassword.jsx:32-49, utils/api.js:30-34
+
+6. **Bandera Microsoft:**
+   - ✅ PortalLogin.jsx línea 8: `LOGIN_MICROSOFT = import.meta.env.VITE_MS365_LOGIN === 'true'`
+   - ✅ Botón solo aparece si `LOGIN_MICROSOFT && !cargando` (línea 98-105)
+   - ✅ Dockerfile.frontend línea 49: `ARG VITE_MS365_LOGIN=false` (default seguro)
+   - ✅ AuthContext línea 95-102: `signInWithOAuth({ provider: "azure", ... })` con error genérico
+   - **Archivos:** pages/PortalLogin.jsx:8-98, context/AuthContext.jsx:93-103, Dockerfile.frontend:49
+
+#### ⚠️ HALLAZGOS — Clasificación
+
+##### IMPORTANTE: 1 hallazgo
+
+1. **XSS débil en AuthCallback: error_description no sanitizado antes de pasar a navigate**
+   - **Archivo:línea:** modules/portal/frontend/pages/AuthCallback.jsx:5-9
+   - **Problema:** `error_description` se extrae directamente de URLSearchParams sin sanitizar:
+     ```javascript
+     function errorDeLaUrl() {
+       const parametros = new URLSearchParams(window.location.search);
+       const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+       return parametros.get('error_description') || hash.get('error_description');
+     }
+     ```
+     Pasa a `navigate('/inicio-sesion', { replace: true, state: { error } })` (línea 19).
+   - **Mitigación:** React escapa strings en JSX (PortalLogin línea 73: `{errorMostrado}`), pero pasar datos sin sanitizar es mala práctica y crea deuda técnica.
+   - **Escenario:** Si GoTrue devuelve `error_description=<img src=x onerror="alert('xss')">`, se decodifica a string y React lo escapa (seguro HOY), pero futuras refactorizaciones (p.ej. usar innerHTML) romperían.
+   - **Fix sugerido:** Sanitizar en AuthCallback antes de pasar a navigate:
+     ```javascript
+     function errorDeLaUrl() {
+       const raw = parametros.get('error_description') || hash.get('error_description');
+       return raw ? String(raw).slice(0, 200) : null; // trim + text-only
+     }
+     ```
+   - **Severidad:** IMPORTANTE (deuda técnica, bajo riesgo actual gracias a React escaping)
+   - **Veredicto:** APROBADO CON OBSERVACIÓN — sin bloquear, pero reportar al orquestador
+
+##### MENOR: 3 hallazgos
+
+1. **MENOR: Fallback de anon key poco claro (fallback a string literal 'sin-anon-key')**
+   - **Archivo:línea:** modules/portal/frontend/lib/supabase.js:10
+   - **Problema:** Si `VITE_SUPABASE_ANON_KEY` no se pasa en build, crea cliente con string `'sin-anon-key'`:
+     ```javascript
+     export const supabase = createClient(url, anonKey || 'sin-anon-key', {...});
+     ```
+   - **Impacto:** La aplicación arranca (no falla), pero GoTrue rechazará cualquier request. UX confuso (error silencioso en consola línea 7).
+   - **Fix sugerido:** Mejor fail-fast en build: error de Vite si VITE_SUPABASE_ANON_KEY vacío
+   - **Severidad:** MENOR
+
+2. **MENOR: TOKEN_REFRESHED sin recarga de perfil si uid es el mismo**
+   - **Archivo:línea:** modules/portal/frontend/context/AuthContext.jsx:62-67
+   - **Problema:** Si el token se refrescca (GoTrue lo renueva), pero uid sigue igual, `cargarPerfil` NO se ejecuta:
+     ```javascript
+     } else if (
+       (evento === "SIGNED_IN" || evento === "TOKEN_REFRESHED") &&
+       sesion &&
+       sesion.user.id !== uidActual.current  // ← Aquí falta recarga si uid igual
+     ) {
+       cargarPerfil(sesion.user.id).catch(() => {});
+     }
+     ```
+   - **Impacto:** Si el usuario cambia de rol/permisos en la BD DURANTE una sesión larga (token refrescado automáticamente), la UI no refleja los cambios hasta que el usuario recarga la página.
+   - **Caso:** Admin le quita permisos a usuario → usuario sigue viendo menú/opciones hasta F5
+   - **Fix sugerido:** Agregar validación ligera en TOKEN_REFRESHED (p.ej. fetch `/auth/perfil` con timeout) o exponer `lastPermissionsCheck` en JWT
+   - **Severidad:** MENOR (edge case, sesiones largas raras en intranet)
+
+3. **MENOR: Falta de tests frontend para AuthContext, AuthCallback, PortalLogin**
+   - **Archivo:** modules/portal/frontend/ (no existe tests/)
+   - **Problema:** Cero tests de unitarios para lógica crítica:
+     - AuthContext: iniciarSesion, cerrarSesion, carreras de onAuthStateChange, compensación si 401
+     - AuthCallback: manejo de error_description, navegación condicional
+     - PortalLogin: error propagación, bloqueo de UI mientras carga
+   - **Fix sugerido:** Agregar tests Jest:
+     - Mock `supabase.auth.getSession()` / `onAuthStateChange()`
+     - Test cargarPerfil OK/401/403
+     - Test error_description sanitization
+   - **Severidad:** MENOR (deuda técnica, cero tests en frontend es riesgo)
+
+#### ✅ REGRESIONES — Verificadas ausentes
+
+1. **NO hay `Bearer null` en servicios migrantes:** Todos usan `obtenerToken()` correctamente
+2. **NO hay localStorage.getItem("token") en frontend:** Búsqueda exhaustiva vacía
+3. **NO hay Content-Type=application/json en FormData:** upload services OK
+4. **NO hay `error.status` undefined:** Todos los catchs del diff verificados
+5. **NO hay captura de `/auth/callback` por proxy:** Regex ^/auth/v1(/|$) correcto
+
+#### 📋 VEREDICTO
+
+**ESTADO:** 🟢 **APROBADO CON OBSERVACIÓN** 
+
+**Sin bloqueantes.** 1 hallazgo IMPORTANTE (XSS débil en error_description) es bajo riesgo actual gracias a escaping de React, pero debe documentarse y refactorizarse en siguiente revisión.
+
+**Cambios recomendados para siguiente commit:**
+1. ✏️ AuthCallback: sanitizar `error_description` (trim + validación)
+2. ✏️ lib/supabase.js: fail-fast si VITE_SUPABASE_ANON_KEY vacío
+3. ✏️ AuthContext: considerar recarga de perfil en TOKEN_REFRESHED sin validación de uid
+
+**Cobertura:**
+- ✅ Seguridad: tokens, anon key, SERVICE_ROLE_KEY
+- ✅ Proxy: regex, headers, routing SPA
+- ✅ Cambio de firma: iniciarSesion/cerrarSesion/usarAuth
+- ✅ Regresiones: localStorage, FormData, error.status
+- ⚠️ Tests: ausentes, prioridad futura
+
+**Build:** ✅ Vite build OK con VITE_SUPABASE_ANON_KEY=dummy. No hay imports no resueltos. Tamaño bundle ~977KB (warning de recharts/dependencies, no nuevo).
+

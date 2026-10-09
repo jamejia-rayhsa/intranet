@@ -1,10 +1,11 @@
 // modules/portal/frontend/pages/PermisosAdminPage.jsx
 import { useState, useEffect } from 'react';
+import { obtenerToken } from '../utils/token';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
 
-function obtenerToken() {
-  return localStorage.getItem('token');
+async function cabecerasAuth(extra = {}) {
+  return { ...extra, Authorization: `Bearer ${await obtenerToken()}` };
 }
 
 export default function PermisosAdminPage() {
@@ -17,13 +18,13 @@ export default function PermisosAdminPage() {
   const [mensajes, setMensajes] = useState({});
 
   useEffect(() => {
-    fetch(`${API}/roles`, { headers: { Authorization: `Bearer ${obtenerToken()}` } })
+    cabecerasAuth().then(headers => fetch(`${API}/roles`, { headers }))
       .then(r => r.json())
       .then(j => { if (j.exito) setRoles(j.datos); });
   }, []);
 
   useEffect(() => {
-    fetch(`${API}/permisos/opciones`, { headers: { Authorization: `Bearer ${obtenerToken()}` } })
+    cabecerasAuth().then(headers => fetch(`${API}/permisos/opciones`, { headers }))
       .then(r => r.json())
       .then(j => {
         if (!j.exito) return;
@@ -38,7 +39,7 @@ export default function PermisosAdminPage() {
 
   useEffect(() => {
     if (!rolSeleccionado) return;
-    fetch(`${API}/permisos/rol/${rolSeleccionado}`, { headers: { Authorization: `Bearer ${obtenerToken()}` } })
+    cabecerasAuth().then(headers => fetch(`${API}/permisos/rol/${rolSeleccionado}`, { headers }))
       .then(r => r.json())
       .then(j => {
         if (!j.exito) return;
@@ -85,7 +86,7 @@ export default function PermisosAdminPage() {
     try {
       const resp = await fetch(`${API}/permisos/rol/${rolSeleccionado}/modulo/${modulo}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${obtenerToken()}` },
+        headers: await cabecerasAuth({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ permisos: payload }),
       });
       const json = await resp.json();

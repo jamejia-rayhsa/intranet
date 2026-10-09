@@ -13,6 +13,7 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-08] orquestador → decisions.md — Fase 4 completa: frontend sobre Supabase Auth; Playwright 16/16; Microsoft sin probar
 - [2026-10-08] orquestador → decisions.md — Fase 3 completa: Supabase Auth conviviendo con login legado; hash fuera de la API; eliminar usuario local-primero
 - [2026-10-08] orquestador → decisions.md — Fase 2 completa: app sobre Postgres de Supabase; init en una transacción; pendientes (hash en /auth/perfil)
 - [2026-10-08] coder → code-notes.md — Fase 2: compose dev/staging/prod incluyen Supabase (include:), supabase-db-init one-shot, envs actualizados
@@ -55,3 +56,4 @@
 - [2026-04-28] orquestador → decisions.md — ADR: Listado separado vacaciones + visibilidad por rol + seed
 - [2026-04-28] coder → code-notes.md — Listado separado vacaciones + seed (bug req.user.usuario_id; correos @empresa.com corregidos)
 
+- [2026-10-08] revisor → reviews.md — Fase 4A+4B: Frontend Supabase Auth + proxies Vite (APROBADO CON OBSERVACIÓN, 1 IMPORTANTE bajo riesgo)
