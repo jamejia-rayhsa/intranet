@@ -78,7 +78,7 @@ export default function SolicitudCreditoForm() {
     } else {
       const guardado = localStorage.getItem(claveLS);
       if (guardado) {
-        try { setFormulario(JSON.parse(guardado)); } catch (_) {}
+        try { setFormulario(JSON.parse(guardado)); } catch (_) { /* borrador corrupto en localStorage: se ignora */ }
       }
     }
   }, [id]);

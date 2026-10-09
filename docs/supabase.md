@@ -90,10 +90,10 @@ Procedimiento ejecutado con éxito sobre el entorno de desarrollo (contenedor vi
          -1 -v ON_ERROR_STOP=1
    ```
    Si algo falla no queda nada a medias. Revisa antes del corte que no haya valores más largos que `init.sql` en `empleados.clabe/nss/infonavit/fonacot` (18/11/20/20).
-4. **Levantar el resto** (`up -d` completo) y **migrar usuarios a GoTrue**. Los scripts se ejecutan dentro de la red del compose (GoTrue y Storage no se publican); forma sugerida, probar siempre primero con `--dry-run`:
+4. **Levantar el resto** (`up -d` completo) y **migrar usuarios a GoTrue**. Los scripts van **dentro de la imagen del backend** (`/app/scripts`) y se ejecutan en la red del compose (GoTrue y Storage no se publican), sin necesitar el repositorio en el servidor. Prueba siempre primero con `--dry-run`:
    ```bash
    docker compose -f docker-compose.dev.yml --env-file .env.dev run --rm --no-deps \
-     -v "$PWD/scripts:/app/scripts:ro" backend \
+     backend \
      node scripts/migrar-usuarios-supabase.js --dry-run
    ```
    `scripts/migrar-usuarios-supabase.js` (también `npm run db:migrar-usuarios-supabase`): importa los hashes bcrypt tal cual (**nadie resetea contraseña**); usuarios `ms365` se crean en GoTrue sin contraseña y ya vinculados (`auth_uid`); en su primer login con Microsoft, GoTrue asocia la identidad de Azure a ese usuario por correo; usuarios locales sin hash se omiten (un admin debe resetearles la contraseña); es idempotente y sale con 1 si hubo errores. Opciones: `--dry-run`, `--only=<correo>`, `--limit=N`.

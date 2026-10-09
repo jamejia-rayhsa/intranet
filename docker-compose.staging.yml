@@ -32,7 +32,7 @@ name: intranet-staging
 # copia antes los archivos viejos (p. ej. `docker cp <contenedor_viejo>:/app/uploads/. <dir>` y de ahi
 # a un contenedor que monte el volumen). Luego, en ese orden:
 #   docker compose -f docker-compose.staging.yml --env-file .env.staging run --rm --no-deps \
-#     -v $PWD/scripts:/app/scripts:ro backend node scripts/migrar-archivos-storage.js --dry-run
+#     backend node scripts/migrar-archivos-storage.js --dry-run
 # y sin --dry-run para migrar. El script nunca borra los archivos de origen.
 
 include:

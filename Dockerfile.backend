@@ -19,6 +19,9 @@ RUN npm install
 # Copiar archivos de módulos
 COPY modules/ ./modules/
 COPY config/ ./config/
+# Scripts operativos (migración de usuarios/archivos, etc.): así se ejecutan con
+# `docker compose run --rm --no-deps backend node scripts/...` sin necesitar el repo en el servidor
+COPY scripts/ ./scripts/
 
 EXPOSE 4000
 
@@ -44,6 +47,9 @@ RUN npm ci --omit=dev
 # Copiar código de módulos
 COPY modules/ ./modules/
 COPY config/ ./config/
+# Scripts operativos (migración de usuarios/archivos, etc.): así se ejecutan con
+# `docker compose run --rm --no-deps backend node scripts/...` sin necesitar el repo en el servidor
+COPY scripts/ ./scripts/
 
 EXPOSE 4000
 

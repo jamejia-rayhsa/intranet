@@ -13,6 +13,7 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-09] orquestador → decisions.md — CI reparado antes del despliegue: lint 0 errores, scripts en la imagen del backend, npm test 78/78
 - [2026-10-09] orquestador → decisions.md — Frontend: anon key y flag de Microsoft leídos al arrancar el contenedor (una imagen para todos los entornos; arregla trampa del CI)
 - [2026-10-09] orquestador → decisions.md — Middleware sin vinculación por correo (user_metadata/correo editables por el usuario); Azure probado en dev
 - [2026-10-08] orquestador → decisions.md — Fase 6 completa: acceso por propietario, auth legado eliminado, respaldos probados, datos de dev migrados; Azure sin probar

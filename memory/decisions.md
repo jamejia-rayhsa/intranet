@@ -6,6 +6,14 @@ type: project
 
 # Decisiones de Arquitectura
 
+### [2026-10-09] orquestador — Pasos del CI reparados antes del despliegue (lint, pruebas en contenedor, scripts en la imagen)
+
+Al preparar la guía de staging/prod se reprodujeron en local los tres pasos del workflow (`lint`, `db:migrate`, `npm test`), de los que depende la publicación de imágenes (`build` necesita `test`):
+1. **`npm run lint` fallaba** por 1 error real (`catch (_) {}` vacío en `modules/comercial/frontend/pages/SolicitudCreditoForm.jsx:81`, de mayo, anterior a la migración) y, localmente, por 209 falsos errores sobre un `dist/` compilado que ESLint escaneaba. Corregido el bloque y añadido `ignorePatterns: ["**/dist/**", "**/node_modules/**"]` en `.eslintrc.json`. Resultado: 0 errores (171 avisos, no bloquean). Se borró el `dist/` local (artefacto ignorado por git).
+2. **`npm test` (contenedores) fallaba** porque `scripts/` no estaba en la imagen del backend y el test de `migrar-usuarios-supabase` lo importa. `Dockerfile.backend` ahora hace `COPY scripts/ ./scripts/` en ambas etapas. Resultado: 7 suites, 78 tests, código 0. Efecto colateral deseado: los scripts de migración (`node scripts/migrar-*.js`) corren en cualquier servidor con solo la imagen, sin montar el repo; se quitó el `-v $PWD/scripts:/app/scripts:ro` de la documentación.
+3. **`db:migrate`**: carga `init.sql` en una Postgres vacía sin errores (28 tablas).
+Nota operativa: `npm test` reutiliza imágenes ya construidas; para probar cambios de Dockerfile usar `docker compose -f docker-compose.test.yml up --build --abort-on-container-exit` (el CI parte de cero y siempre construye).
+
 ### [2026-10-09] orquestador — La imagen del frontend ya no lleva la anon key: configuración leída al arrancar el contenedor
 
 **Problema encontrado al preparar el despliegue a staging/prod:** (1) el workflow de CI (`.github/workflows/docker-build-deploy.yml`) construía la imagen del frontend **sin** `VITE_SUPABASE_ANON_KEY` (solo `publicar-ghcr.sh` la pasaba), y ambos publican con la misma etiqueta `ghcr.io/jamejia-rayhsa/intranet/frontend:<sha>`: un push a `main` podía sobrescribir la imagen buena con una que no puede iniciar sesión; (2) la anon key deriva del JWT secret de **cada entorno**, así que una imagen con la clave horneada no sirve para otro entorno; (3) rotar claves obligaba a reconstruir y republicar.
