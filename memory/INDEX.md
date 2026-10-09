@@ -13,6 +13,7 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-09] orquestador → decisions.md — Middleware sin vinculación por correo (user_metadata/correo editables por el usuario); Azure probado en dev
 - [2026-10-08] orquestador → decisions.md — Fase 6 completa: acceso por propietario, auth legado eliminado, respaldos probados, datos de dev migrados; Azure sin probar
 - [2026-10-08] revisor → reviews.md — Fase 6A+6B: Autorización por propietario + eliminación auth legado (APROBADO, 2 observaciones menores)
 - [2026-10-08] orquestador → decisions.md — Fase 5 completa: archivos en Supabase Storage; deriva de recibos_nomina corregida; autorización por propietario pendiente

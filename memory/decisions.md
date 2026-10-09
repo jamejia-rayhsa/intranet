@@ -6,6 +6,16 @@ type: project
 
 # Decisiones de Arquitectura
 
+### [2026-10-09] orquestador — Se elimina la vinculación por correo del middleware (resuelve el pendiente de `email_verified`)
+
+**Contexto:** el pendiente de la Fase 3/4 era revalidar `email_verified` con un login real de Azure. El usuario ejecutó la consulta sobre `auth.identities`/`auth.users` (usuario migrado con login de Microsoft): identidad `email` -> `identity_data.email_verified = false` y `raw_user_meta_data.email_verified = true`; identidad `azure` -> ambos `true`. Con esos datos, endurecer a `=== true` habría funcionado, pero al releer el middleware el problema real era otro.
+
+**Hallazgo:** `resolverUsuarioSupabase` vinculaba una fila local sin `auth_uid` cuando el token traía un `email` coincidente y `user_metadata.email_verified !== false`. Pero `user_metadata` y el correo de una cuenta de GoTrue **los edita el propio usuario** (`PUT /auth/v1/user`), y con `SUPABASE_EMAIL_AUTOCONFIRM=true` GoTrue aplica el cambio de correo sin confirmación (comportamiento de la opción; **no se reprodujo** el ataque en vivo). Con eso, cualquier cuenta de GoTrue podía adueñarse de una fila local sin `auth_uid` poniendo su correo. `email_verified` no lo evita porque sale de `user_metadata`.
+
+**Decisión:** el middleware resuelve al usuario **solo por `auth_uid`** (sub del token). Sin `auth_uid` -> 403 "Usuario no registrado en la intranet". El vínculo lo crea siempre un administrador (alta de usuario, alta de empleado con usuario, `scripts/migrar-usuarios-supabase.js`), de modo que ningún flujo legítimo se pierde: los 11 usuarios de desarrollo ya están vinculados. El correo solo importa en el primer login con Microsoft, donde **GoTrue** (no la intranet) asocia la identidad `azure` al usuario de GoTrue que tiene ese correo. Tras este cambio el correo de GoTrue es irrelevante para la autorización, así que ya no hay nada que hacer con `email_verified`. Tests: 11 en el middleware (dos nuevos: no vincula aunque coincida el correo, ni con `email_verified: true`); 197 en total.
+
+**Consecuencia:** un usuario existente en GoTrue pero no vinculado (p. ej. creado a mano en Studio) ya no se autovincula: hay que fijar `usuarios.auth_uid` o recrearlo desde el panel. `docs/supabase.md` §5 actualizado con el estado probado.
+
 ### [2026-10-08] orquestador — Fase 6 completa: acceso por propietario, auth legado eliminado, respaldos y documentación
 
 **Delegación:** coder A (política de acceso, 3 rondas), coder B (eliminación del auth legado y alta de empleados con GoTrue), coder C (respaldos/restauración y documentación), revisor (APROBADO). Verificación propia con un stack aislado (`intranet_e2e`) y Chromium.

@@ -96,7 +96,7 @@ Procedimiento ejecutado con éxito sobre el entorno de desarrollo (contenedor vi
      -v "$PWD/scripts:/app/scripts:ro" backend \
      node scripts/migrar-usuarios-supabase.js --dry-run
    ```
-   `scripts/migrar-usuarios-supabase.js` (también `npm run db:migrar-usuarios-supabase`): importa los hashes bcrypt tal cual (**nadie resetea contraseña**); usuarios `ms365` se crean sin contraseña y se vinculan por correo en su primer login con Microsoft; usuarios locales sin hash se omiten (un admin debe resetearles la contraseña); es idempotente y sale con 1 si hubo errores. Opciones: `--dry-run`, `--only=<correo>`, `--limit=N`.
+   `scripts/migrar-usuarios-supabase.js` (también `npm run db:migrar-usuarios-supabase`): importa los hashes bcrypt tal cual (**nadie resetea contraseña**); usuarios `ms365` se crean en GoTrue sin contraseña y ya vinculados (`auth_uid`); en su primer login con Microsoft, GoTrue asocia la identidad de Azure a ese usuario por correo; usuarios locales sin hash se omiten (un admin debe resetearles la contraseña); es idempotente y sale con 1 si hubo errores. Opciones: `--dry-run`, `--only=<correo>`, `--limit=N`.
 5. **Migrar archivos a Storage**: `scripts/migrar-archivos-storage.js` (`npm run db:migrar-archivos-storage`) con `--dry-run` primero; opciones `--limit=N`, `--tabla=<nombre>`. Lee de `UPLOADS_DIR` (default `./uploads`), no borra el origen, es idempotente y sale con 1 si hay faltantes. En **staging/prod** el volumen `uploads_data` se monta `:ro` y nace **vacío**: copia ahí los archivos viejos antes de migrar (`docker cp <contenedor_viejo>:/app/uploads/. <dir>` y de ahí al volumen).
 6. **Verificar**:
    ```bash
@@ -110,15 +110,17 @@ Procedimiento ejecutado con éxito sobre el entorno de desarrollo (contenedor vi
    ```
    `auth.users` debe igualar a los usuarios activos con contraseña o `ms365`; inicia sesión con un usuario real.
 
-## 5. Microsoft / Azure (pendiente de PROBAR con credenciales reales)
+## 5. Microsoft / Azure
 
 El botón de Microsoft está apagado por defecto. Para activarlo:
 
-1. En Azure Portal (Entra ID, single-tenant) registra el redirect URI **`https://<host>/auth/v1/callback`**.
-2. En el `.env.<entorno>`: `AZURE_AD_ENABLED=true`, `AZURE_AD_TENANT_ID`, `AZURE_AD_CLIENT_ID`, `AZURE_AD_CLIENT_SECRET`. `AZURE_AD_ENABLED` alimenta también `VITE_MS365_LOGIN` (se hornea al construir el frontend: reconstruir/republicar).
-3. Todo usuario debe existir antes en GoTrue (el registro público está apagado, `SUPABASE_DISABLE_SIGNUP=true`): el primer login con Microsoft se vincula por correo.
+1. En Azure Portal (Entra ID, single-tenant) registra el redirect URI **`https://<host>/auth/v1/callback`** (en desarrollo `http://localhost:3000/auth/v1/callback`).
+2. En el `.env.<entorno>` (en desarrollo, `.env.dev.local`: `.env.dev` está versionado, no pongas ahí el secreto): `AZURE_AD_ENABLED=true`, `AZURE_AD_TENANT_ID`, `AZURE_AD_CLIENT_ID`, `AZURE_AD_CLIENT_SECRET`. `AZURE_AD_ENABLED` alimenta también `VITE_MS365_LOGIN` (se hornea al construir el frontend: reconstruir/republicar). `GOTRUE_EXTERNAL_AZURE_URL` es solo `https://login.microsoftonline.com/<tenant>`, **sin `/v2.0`**.
+3. Todo usuario debe existir antes en GoTrue **y vinculado** (`usuarios.auth_uid`): el registro público está apagado (`SUPABASE_DISABLE_SIGNUP=true`) y el backend autoriza solo por `auth_uid`. Lo crea un administrador (panel, alta de empleado) o `scripts/migrar-usuarios-supabase.js`.
 
-**Estado:** el flujo NO se ha probado contra Azure real. Al probarlo hay que **revalidar `email_verified`**: el middleware lo acepta si no es `false` (permisivo a propósito); si GoTrue emite el claim de forma fiable, conviene exigir `=== true`. Mientras tanto déjalo en `false`.
+**Cómo se identifica a un usuario de Microsoft:** en el primer login, GoTrue asocia la identidad `azure` al usuario de GoTrue que ya tiene ese correo (ese es el único punto donde el correo importa; debe coincidir con el correo de Microsoft). A partir de ahí el backend resuelve la fila local por `auth_uid`, nunca por correo (ver ADR de la Fase 6 sobre por qué se eliminó la vinculación por correo del middleware).
+
+**Estado:** probado en desarrollo con un usuario real (2026-10-09): GoTrue creó la identidad `azure` y la asoció al usuario existente. Observado en `auth.identities`/`auth.users`: la identidad `email` del usuario migrado tiene `identity_data.email_verified = false` aunque `raw_user_meta_data.email_verified = true`, y la identidad `azure` tiene ambos en `true`. Como el backend ya no depende de `email_verified`, no hace falta hacer nada con esa diferencia. Pendiente de probar: staging/prod con sus propias URIs.
 
 ## 6. Respaldos y restauración
 

@@ -19,34 +19,21 @@ function verificarTokenSupabase(token) {
 const COLUMNAS_USUARIO = "id, correo, nombre, apellido, activo, auth_uid";
 
 /**
- * Busca el usuario local por auth_uid (sub). Si no existe, intenta vincular
- * por correo (solo si el usuario local aún no tiene auth_uid).
+ * Busca el usuario local por auth_uid (sub del token de GoTrue).
+ *
+ * NO se vincula por correo: el correo y user_metadata de un usuario de GoTrue los puede
+ * editar el propio usuario (PUT /auth/v1/user) y, con SUPABASE_EMAIL_AUTOCONFIRM activo,
+ * el cambio de correo no pide confirmación. Vincular por correo permitiría a cualquier
+ * cuenta de GoTrue adueñarse de una fila local sin auth_uid con solo poner su correo.
+ * El vínculo lo crea siempre un administrador (alta de usuario/empleado o
+ * scripts/migrar-usuarios-supabase.js).
  */
 async function resolverUsuarioSupabase(claims) {
   const porUid = await grupo.query(
     `SELECT ${COLUMNAS_USUARIO} FROM usuarios WHERE auth_uid = $1`,
     [claims.sub],
   );
-  if (porUid.rows.length > 0) return porUid.rows[0];
-
-  const verificado =
-    !claims.user_metadata || claims.user_metadata.email_verified !== false;
-  if (!claims.email || !verificado) return null;
-
-  const vinculado = await grupo.query(
-    `UPDATE usuarios SET auth_uid = $1
-     WHERE lower(correo) = lower($2) AND auth_uid IS NULL
-     RETURNING ${COLUMNAS_USUARIO}`,
-    [claims.sub, claims.email],
-  );
-  if (vinculado.rows.length > 0) return vinculado.rows[0];
-
-  // Otra petición pudo vincularlo en paralelo
-  const reintento = await grupo.query(
-    `SELECT ${COLUMNAS_USUARIO} FROM usuarios WHERE auth_uid = $1`,
-    [claims.sub],
-  );
-  return reintento.rows[0] || null;
+  return porUid.rows[0] || null;
 }
 
 /** Agrega rol_id, rol_nombre y roles a req.user (misma forma que antes). */

@@ -13,8 +13,9 @@
  *  - Toma usuarios con `activo = true AND auth_uid IS NULL`.
  *  - Si el correo ya existe en GoTrue, solo vincula `auth_uid`.
  *  - Si no, lo crea importando el hash bcrypt tal cual (GoTrue acepta $2a/$2b/$2y).
- *    Usuarios `auth_tipo = 'ms365'` se crean sin contrasena (el primer login con
- *    Microsoft se vincula por correo). Usuarios locales sin hash se omiten.
+ *    Usuarios `auth_tipo = 'ms365'` se crean sin contrasena y ya vinculados (en su
+ *    primer login con Microsoft, GoTrue asocia la identidad azure por correo; el
+ *    backend autoriza solo por auth_uid). Usuarios locales sin hash se omiten.
  *  - Idempotente: re-ejecutar no duplica (el UPDATE exige auth_uid IS NULL).
  *  - Continua ante errores por usuario; codigo de salida 1 si hubo errores.
  *  - --dry-run no escribe en BD ni en GoTrue (solo consulta por correo).

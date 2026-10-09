@@ -64,19 +64,15 @@ describe('authenticateJWT', () => {
     expect(grupo.query.mock.calls[0][1]).toEqual([UID]);
   });
 
-  it('vincula por correo cuando el usuario aun no tiene auth_uid', async () => {
-    grupo.query
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [usuarioFila] })
-      .mockResolvedValueOnce({ rows: [] });
+  it('NO vincula por correo: una fila local sin auth_uid con el mismo correo recibe 403 y ningun UPDATE', async () => {
+    grupo.query.mockResolvedValue({ rows: [] });
     const { req, res, next } = crearMocks(tokenSupabase());
     await authenticateJWT(req, res, next);
-    expect(next).toHaveBeenCalled();
-    expect(grupo.query.mock.calls[1][0]).toMatch(/UPDATE usuarios SET auth_uid/);
-    expect(grupo.query.mock.calls[1][0]).toMatch(/auth_uid IS NULL/);
-    expect(grupo.query.mock.calls[1][1]).toEqual([UID, 'ana@rayhsa.com']);
-    expect(req.user.rol_id).toBeNull();
-    expect(req.user.roles).toEqual([]);
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
+    expect(grupo.query).toHaveBeenCalledTimes(1);
+    expect(grupo.query.mock.calls[0][0]).toMatch(/WHERE auth_uid = \$1/);
+    grupo.query.mock.calls.forEach(([sql]) => expect(sql).not.toMatch(/UPDATE/i));
   });
 
   it('responde 403 si el usuario no esta registrado en la intranet', async () => {
@@ -88,9 +84,9 @@ describe('authenticateJWT', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('no vincula por correo si el email no esta verificado', async () => {
+  it('tampoco vincula con email_verified true en user_metadata (campo editable por el usuario)', async () => {
     grupo.query.mockResolvedValue({ rows: [] });
-    const { req, res, next } = crearMocks(tokenSupabase({ user_metadata: { email_verified: false } }));
+    const { req, res, next } = crearMocks(tokenSupabase({ user_metadata: { email_verified: true } }));
     await authenticateJWT(req, res, next);
     expect(res.status).toHaveBeenCalledWith(403);
     expect(grupo.query).toHaveBeenCalledTimes(1);
