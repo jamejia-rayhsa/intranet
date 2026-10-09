@@ -250,11 +250,12 @@ Cada registro muestra:
 ## Ejecutar
 
 ```bash
-# La auditoría se ejecuta como parte del backend del portal
-cd modules/portal/backend && npm install && npm run dev
+# La auditoría se ejecuta como parte del backend del portal (stack completo, incluido Supabase):
+docker compose -f docker-compose.dev.yml --env-file .env.dev up -d
+# Detalles de la base (Supabase self-hosted, base `postgres`): docs/supabase.md
 
 # Ver logs de auditoría en la base de datos
-docker exec -it intranet_postgres_dev psql -U postgres -d intranet_dev \
+docker exec -it intranet_supabase_db psql -U supabase_admin -h /var/run/postgresql -d postgres \
   -c "SELECT modulo, tabla, accion, fecha FROM auditoria ORDER BY fecha DESC LIMIT 10;"
 ```
 

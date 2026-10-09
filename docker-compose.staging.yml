@@ -1,0 +1,100 @@
+name: intranet-staging
+
+# Ambiente de pruebas — usa imágenes publicadas en ghcr.io
+# Arquitectura: Cloudflare → Traefik (HTTP) → Frontend-nginx (sirve SPA + proxy /api/)
+#                                                             → Backend (Node.js :4000)
+#
+# NOTA: la imagen del frontend es la MISMA para todos los entornos (también la que construye el CI):
+# la anon key de Supabase, la URL y el flag de Microsoft se leen al ARRANCAR el contenedor
+# (SUPABASE_ANON_KEY y AZURE_AD_ENABLED del .env; config/nginx/40-config-js.sh genera /config.js).
+# Si rota el JWT secret basta con cambiar SUPABASE_ANON_KEY y recrear el contenedor del frontend.
+#
+# Uso:
+#   1. Login en ghcr.io (una sola vez):
+#        echo $GITHUB_TOKEN | docker login ghcr.io -u jamejia-rayhsa --password-stdin
+#   2. Definir IMAGE_TAG en .env.staging con el SHA del commit
+#   3. Levantar (incluye el stack Supabase vía `include:`; supabase-db es el único Postgres):
+#        docker compose -f docker-compose.staging.yml --env-file .env.staging up -d
+#   4. Actualizar a nueva versión:
+#        docker compose -f docker-compose.staging.yml --env-file .env.staging pull
+#        docker compose -f docker-compose.staging.yml --env-file .env.staging up -d
+#
+# Base de datos: supabase-db-init (one-shot) carga config/database/init.sql si no existe
+# public.usuarios y siempre aplica 004-rls-deny-all.sql. Para restaurar un dump: hacerlo ANTES
+# del primer `up` completo (levantar solo supabase-db) o con psql contra supabase-db
+# (usuario/base `postgres`); el init se salta la carga si `usuarios` ya existe.
+# Secretos Supabase: scripts/supabase/generar-secretos.sh (ver .env.supabase.example).
+#
+# Acceso: https://staging.rayhsa.net
+#
+# Archivos (Supabase Storage): el backend monta `uploads_data` en /app/uploads SOLO LECTURA
+# para migrar adjuntos/expedientes/recibos/imagenes legados a Storage. El volumen nace vacio:
+# copia antes los archivos viejos (p. ej. `docker cp <contenedor_viejo>:/app/uploads/. <dir>` y de ahi
+# a un contenedor que monte el volumen). Luego, en ese orden:
+#   docker compose -f docker-compose.staging.yml --env-file .env.staging run --rm --no-deps \
+#     backend node scripts/migrar-archivos-storage.js --dry-run
+# y sin --dry-run para migrar. El script nunca borra los archivos de origen.
+
+include:
+  - docker-compose.supabase.yml
+
+services:
+  backend:
+    image: ghcr.io/jamejia-rayhsa/intranet/backend:${IMAGE_TAG:?Define IMAGE_TAG en .env.staging con el SHA del commit}
+    container_name: intranet_backend_staging
+    environment:
+      NODE_ENV: production
+      POSTGRES_HOST: supabase-db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      SUPABASE_AUTH_URL: http://supabase-auth:9999
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_STORAGE_URL: http://supabase-storage:5000
+      MSSQL_HOST: ${MSSQL_HOST:-}
+      MSSQL_PORT: ${MSSQL_PORT:-1433}
+      MSSQL_USER: ${MSSQL_USER:-}
+      MSSQL_PASSWORD: ${MSSQL_PASSWORD:-}
+      MSSQL_DB: ${MSSQL_DB:-}
+    restart: unless-stopped
+    depends_on:
+      supabase-db-init:
+        condition: service_completed_successfully
+      supabase-auth:
+        condition: service_healthy
+      supabase-storage:
+        condition: service_healthy
+    volumes:
+      # Solo lectura: archivos legados que migra scripts/migrar-archivos-storage.js
+      - uploads_data:/app/uploads:ro
+    networks:
+      - internal
+
+  frontend:
+    image: ghcr.io/jamejia-rayhsa/intranet/frontend:${IMAGE_TAG:?Define IMAGE_TAG en .env.staging con el SHA del commit}
+    container_name: intranet_frontend_staging
+    environment:
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:?Define SUPABASE_ANON_KEY en .env.staging}
+      MS365_LOGIN: ${AZURE_AD_ENABLED:-false}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - internal
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.intranet-staging.rule=Host(`staging.rayhsa.net`)"
+      - "traefik.http.routers.intranet-staging.entrypoints=web"
+      - "traefik.http.services.intranet-staging.loadbalancer.server.port=80"
+      - "traefik.docker.network=proxy"
+
+volumes:
+  uploads_data:
+
+networks:
+  internal:
+  proxy:
+    external: true

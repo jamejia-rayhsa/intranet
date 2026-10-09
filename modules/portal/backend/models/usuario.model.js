@@ -1,5 +1,8 @@
 const { grupo } = require("../config/database");
 
+const COLUMNAS_PUBLICAS =
+  "id, correo, nombre, apellido, auth_tipo, activo, requiere_cambio_password, auth_uid, fecha_creacion";
+
 const Usuario = {
   async crear(datos) {
     const {
@@ -8,12 +11,12 @@ const Usuario = {
       apellido,
       auth_tipo = "local",
       external_id,
-      hash_password,
+      auth_uid,
     } = datos;
     const consulta = `
-      INSERT INTO usuarios (correo, nombre, apellido, auth_tipo, external_id, hash_password)
+      INSERT INTO usuarios (correo, nombre, apellido, auth_tipo, external_id, auth_uid)
       VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING id, correo, nombre, apellido, auth_tipo, activo, fecha_creacion
+      RETURNING id, correo, nombre, apellido, auth_tipo, activo, auth_uid, fecha_creacion
     `;
     const valores = [
       correo,
@@ -21,21 +24,27 @@ const Usuario = {
       apellido,
       auth_tipo,
       external_id || null,
-      hash_password || null,
+      auth_uid || null,
     ];
     const resultado = await grupo.query(consulta, valores);
     return resultado.rows[0];
   },
 
   async buscarPorCorreo(correo) {
-    const consulta = "SELECT * FROM usuarios WHERE correo = $1";
+    const consulta = `SELECT ${COLUMNAS_PUBLICAS} FROM usuarios WHERE correo = $1`;
     const resultado = await grupo.query(consulta, [correo]);
     return resultado.rows[0];
   },
 
+  async actualizarAuthUid(id, authUid) {
+    await grupo.query("UPDATE usuarios SET auth_uid = $1 WHERE id = $2", [
+      authUid,
+      id,
+    ]);
+  },
+
   async buscarPorId(id) {
-    const consulta =
-      "SELECT id, correo, nombre, apellido, auth_tipo, activo, requiere_cambio_password, hash_password, fecha_creacion FROM usuarios WHERE id = $1";
+    const consulta = `SELECT ${COLUMNAS_PUBLICAS} FROM usuarios WHERE id = $1`;
     const resultado = await grupo.query(consulta, [id]);
     return resultado.rows[0];
   },
@@ -58,11 +67,6 @@ const Usuario = {
     if (datos.activo !== undefined) {
       campos.push(`activo = $${contador}`);
       valores.push(datos.activo);
-      contador++;
-    }
-    if (datos.hash_password) {
-      campos.push(`hash_password = $${contador}`);
-      valores.push(datos.hash_password);
       contador++;
     }
     if (datos.requiere_cambio_password !== undefined) {

@@ -24,3 +24,7 @@ export async function eliminarRecibo(id) {
     method: "DELETE",
   });
 }
+
+export async function obtenerUrlRecibo(id) {
+  return solicitar(`/recibos/${id}/url`);
+}

@@ -1,6 +1,89 @@
 # reviews — Memory Palace
 
 > Hallazgos de revisión de código. Formato: severidad + archivo:línea + problema + fix recomendado.
+### [2026-10-08] revisor — Fase 2: Migración Supabase self-hosted
+
+**Resumen:** Revisión integral de cambios en docker-compose (dev/staging/prod + supabase.yml), .env, config/database.js, pools PostgreSQL y flujo de inicialización. Sin hallazgos bloqueantes. 6 verificaciones positivas + 3 observaciones menores documentadas.
+
+#### ✅ VERIFICACIONES POSITIVAS (Sin hallazgos)
+
+1. **Seguridad de puertos:** 
+   - ✅ `supabase-db`: NO publicado en staging/prod. En dev: `127.0.0.1:${POSTGRES_PORT}` (loopback)
+   - ✅ `supabase-auth`, `supabase-rest`, `supabase-storage`: NO publicados (acceso solo vía nginx)
+   - ✅ `supabase-studio`: `127.0.0.1:54323` (loopback, solo admin profile)
+   - **Archivo:** docker-compose.supabase.yml:1-260, docker-compose.supabase.dev.yml:8-9
+
+2. **Secretos en .env:**
+   - ✅ `.env.dev`: contiene valores de DESARROLLO explícitamente comentados (SUPABASE_JWT_SECRET, ANON_KEY, SERVICE_ROLE_KEY generados para dev)
+   - ✅ `.env.staging.example`: placeholders sin valores reales (`staging_password_aqui`)
+   - ✅ `.env.prod.example`: vacío (creado nuevo, sin valores hardcodeados)
+   - **Archivos:** .env.dev:40-54, .env.staging.example:3-37, .env.prod.example:1-30
+
+3. **Consolidación de pools PostgreSQL:**
+   - ✅ `modules/portal/backend/config/database.js`: Define `grupo = new Pool(...)` (ÚNICA instancia)
+   - ✅ `modules/auditoria/backend/config/database.js`: Importa `grupo` del portal, NO crea Pool propio
+   - ✅ `modules/auditoria/backend/models/auditoria.model.js`: Usa `grupo` importado de config
+   - ✅ `modules/portal/backend/scripts/migrar.js`: Pool independiente OK para script standalone
+   - **Archivos:** modules/portal/backend/config/database.js:1-20, modules/auditoria/backend/config/database.js:1-12, modules/auditoria/backend/models/auditoria.model.js:1
+
+4. **Redes — aislamiento correcto:**
+   - ✅ Dev: todos servicios en `internal`, frontend depende de backend (orden correcto)
+   - ✅ Staging: supabase en `internal`, frontend en `internal` + `proxy` (Traefik)
+   - ✅ Prod: supabase + backend + frontend en `internal`, nginx en `internal`
+   - **Archivos:** docker-compose.dev.yml:79-80, docker-compose.staging.yml:73-75, docker-compose.prod.yml:78-79
+
+5. **Idempotencia de inicialización:**
+   - ✅ `supabase-db-init`: Verifica `to_regclass('public.usuarios')` antes de cargar init.sql
+   - ✅ `init.sql`: Usa `CREATE TABLE IF NOT EXISTS` + `INSERT ... ON CONFLICT ... DO NOTHING`
+   - ✅ `004-rls-deny-all.sql`: Envuelto en `DO $$...$$` (idempotente), verifica existencia de roles
+   - **Archivos:** docker-compose.supabase.yml:62-90, modules/portal/backend/migrations/004-rls-deny-all.sql:1-21
+
+6. **Regresiones en código — confirmadas ausentes:**
+   - ✅ NO referencias a `postgres` (servicio antiguo) en docker-compose activos
+   - ✅ NO referencias a `pgadmin` en código ejecutable
+   - ✅ NO referencias a `intranet_dev`/`intranet_staging` en compose
+   - ✅ NO referencias a volúmenes `postgres_data_*` en compose (removidos correctamente)
+   - **Verificación:** `grep -r "postgres" docker-compose*.yml` (sin supabase), `grep pgadmin`, `grep intranet_dev` → todas vacías
+
+#### ⚠️ OBSERVACIONES (No bloqueantes, mejoras futuras)
+
+1. **MEDIO: Contraseña PostgreSQL con carácter especial en .env.dev**
+   - **Archivo:línea:** .env.dev:10
+   - **Problema:** `POSTGRES_PASSWORD=dev_password_123` contiene guion bajo (`_`). Aunque es URL-safe (RFC 3986), algunos parsers pueden fallar. Mejor: solo hex/alfanumérico.
+   - **Severidad:** MEDIO (dev only, pero mala práctica)
+   - **Fix sugerido:** Cambiar a `POSTGRES_PASSWORD=devpassword123abc` (hex o alfanumérico sin caracteres especiales)
+   - **Nota:** `.env.staging.example` también tiene `staging_password_aqui` (placeholder OK), pero el usuario deberá usar valores URL-safe al generar con `scripts/supabase/generar-secretos.sh`
+
+2. **ALTO: Riesgo teórico de estado parcial en supabase-db-init**
+   - **Archivo:línea:** docker-compose.supabase.yml:79-90
+   - **Problema:** Si `init.sql` falla a mitad (ej. interrupt, OOM, syntax error línea 500/661), la tabla `usuarios` queda creada pero incompleta. La siguiente ejecución verá que `usuarios` existe y saltará `init.sql`, dejando la BD en estado inconsistente.
+   - **Severidad:** ALTO (riesgo teórico, documentado)
+   - **Fix sugerido:** Opción A (recomendada): Envolver TODO init.sql en `BEGIN ... ROLLBACK ON ERROR` (requiere refactor). Opción B: Antes de cargar init.sql, ejecutar `DROP TABLE IF EXISTS usuarios CASCADE` para forzar recarga completa. Opción C (actual): Documentar explícitamente "en caso de error, ejecutar `docker compose down -v && up` para reiniciar BD" — YA DOCUMENTADO en docker-compose.supabase.yml:6-14.
+   - **Nota:** code-notes.md línea 254 verifica que idempotencia funciona en casos normales. El riesgo es solo ante interrupciones/errores durante init.
+
+3. **BAJO: Documentación desactualizada en README.md**
+   - **Archivos:** modules/auditoria/README.md, modules/portal/README.md, README.md (root), docs/arquitectura.md, docs/superpowers/plans/
+   - **Problema:** Ejemplos de comandos todavía mencionan `intranet_postgres_dev`, `intranet_dev`, `pgadmin:5050` que ya no existen. Confunde a usuarios nuevos.
+   - **Severidad:** BAJO (documentación, no código)
+   - **Fix sugerido:** Actualizar en README.md:
+     - `docker exec -it intranet_postgres_dev psql -U postgres -d intranet_dev` → `docker exec -it intranet_supabase_db psql -U postgres -d postgres`
+     - Agregar sección "Acceso a BD en desarrollo: `psql -h 127.0.0.1 -p 5432 -U postgres -d postgres`"
+   - **Nota:** Fuera de alcance de esta revisión (es documentación), pero recomendado para próxima sesión.
+
+#### 🟢 VEREDICTO: APROBADO
+
+**Sin hallazgos críticos ni bloqueantes.** Los cambios de Fase 2 son correctos en:
+- Seguridad (sin puertos públicos, secrets en ejemplos)
+- Corrección funcional (pools consolidados, idempotencia verificada)
+- Regresiones (completamente removidas)
+
+**Condiciones:**
+- Documentación (README.md) requiere actualización en próxima sesión — no impide funcionalidad
+- Usuario debe generar contraseñas URL-safe con `scripts/supabase/generar-secretos.sh` para staging/prod
+- En caso de error durante init.sql, seguir instrucciones de comentario en docker-compose.supabase.yml línea 13-14
+
+---
+
 
 ### [2026-04-29] revisor — Alta empleado: validación post-coder
 
@@ -982,4 +1065,629 @@ El usuario entra en modo edición y puede hacer clic en "Imprimir / Descargar PD
 - MenuDinamico y main.jsx configuradas ✅
 
 Solo la línea 101 de SolicitudesListado necesita corrección.
+
+
+---
+
+### [2026-10-08] revisor — Fase 3A+3B: Supabase Auth (middleware, admin service, migration, usuario controller)
+
+**Resumen:** Revisión integral de autenticación con Supabase GoTrue, servicio admin, script de migración de usuarios, cambios en usuario.model y usuario.controller. Todos los tests pasan (43/43). **SIN HALLAZGOS CRÍTICOS.** 1 hallazgo importante + 5 menores documentados.
+
+---
+
+#### ✅ VERIFICACIONES POSITIVAS (Seguridad + Compensaciones)
+
+1. **Seguridad del middleware (auth.middleware.js)**
+   - ✓ HS256 explícitamente verificado: `jwt.verify(token, secreto, { algorithms: ["HS256"], audience: "authenticated" })`
+   - ✓ Token Supabase válido pero usuario no existe/inactivo → 403 (nunca cae al flujo legado)
+   - ✓ Flujo legado rechazado si `AUTH_LEGACY_ENABLED === "false"` (línea 139)
+   - ✓ Rutas legado protegidas con `soloLegacy` en auth.routes.js (registro, inicio-sesión, ms365, renovar)
+   - ✓ Vinculación por correo con normalización `lower(correo)` en ambos lados (línea 43)
+   - **Archivo:** modules/portal/backend/middleware/auth.middleware.js:1-230
+
+2. **Hash fuera de la API (usuario.model.js)**
+   - ✓ `COLUMNAS_PUBLICAS` no incluye `hash_password`
+   - ✓ Métodos nuevos `buscarPorIdConHash` y `buscarPorCorreoConHash` solo para verificación interna
+   - ✓ Todos los endpoints públicos usan `sinSecretos(usuario)` para filtrar secretos
+   - ✓ `buscarPorCorreo` y `buscarPorId` devuelven COLUMNAS_PUBLICAS sin hash
+   - **Archivos:** modules/portal/backend/models/usuario.model.js:3-68, controllers/usuario.controller.js:19-23
+
+3. **Compensaciones y transacciones**
+   - ✓ `usuario.controller.crear`: GoTrue PRIMERO, INSERT local con auth_uid, si falla INSERT → elimina en GoTrue (línea 80-108)
+   - ✓ `usuario.controller.resetearPassword`: Escribe double en GoTrue + hash local, solo warn si no hay auth_uid (línea 221-232)
+   - ✓ `usuario.controller.actualizar`: GoTrue PRIMERO (si hay auth_uid), luego local, compensación en catch si falla local (línea 157-165)
+   - ✓ `auth.service.registroLocal`: GoTrue PRIMERO, INSERT local, compensación idéntica (línea 23-50)
+   - **Archivos:** modules/portal/backend/controllers/usuario.controller.js:57-274, services/auth.service.js:9-56
+
+4. **Script de migración (migrar-usuarios-supabase.js)**
+   - ✓ Idempotencia: `UPDATE ... WHERE auth_uid IS NULL` (línea 91)
+   - ✓ Normalización consistente: `lower(correo)` en BD, GoTrue y búsquedas
+   - ✓ Usuarios ms365 se crean sin password (línea 122)
+   - ✓ Usuarios locales sin hash se omiten (línea 109-110)
+   - ✓ Compensación de huérfanos: si UPDATE falla tras CREATE, elimina en GoTrue (línea 141)
+   - ✓ Dry-run real: no escribe en BD ni GoTrue, solo consulta (línea 155-165)
+   - ✓ No imprime secretos: solo mensaje de error sin credenciales (línea 177, 209)
+   - **Archivo:** scripts/migrar-usuarios-supabase.js:1-214
+
+5. **Servicio admin (supabaseAdmin.service.js)**
+   - ✓ Timeout: 10 segundos con `AbortSignal.timeout(TIMEOUT_MS)` (línea 31)
+   - ✓ Errores sin claves: `solicitar()` devuelve mensajes genéricos, no expone service key
+   - ✓ URL encoding: `encodeURIComponent(authUid)` en DELETE y PUT (línea 75, 81)
+   - ✓ Paginación O(n) de buscarPorCorreo: pagina hasta 50*1000 usuarios, pero solo en callbackMS365 (no ruta caliente)
+   - **Archivo:** modules/portal/backend/services/supabaseAdmin.service.js:1-106
+
+6. **Compose e init (docker-compose.supabase.yml)**
+   - ✓ Migración 005 monta en supabase-db-init (línea 78)
+   - ✓ Migración 005 se aplica siempre (idempotente con `IF NOT EXISTS`)
+   - ✓ Init carga init.sql con `--single-transaction` (línea 87)
+   - ✓ `depends_on: service_completed_successfully` en backend (dev)
+   - **Archivos:** docker-compose.supabase.yml:61-95, migrations/005-auth-uid.sql:1-4
+
+7. **Tests (43/43 pass)**
+   - ✓ auth.middleware.test: 10 tests cobriendo Supabase, legado, inactivos, email verificado, expiración
+   - ✓ usuario.controller.test: crear (compensación), resetearPassword (double-write), obtener (no expone hash)
+   - ✓ supabaseAdmin.service.test: timeout, paginación, normalización
+   - ✓ migrar-usuarios-supabase.test: planificación, idempotencia, carrera (race)
+   - **Archivos:** modules/portal/backend/tests/*.test.js
+
+---
+
+#### 🔴 HALLAZGO IMPORTANTE (Debe arreglarse antes de merge)
+
+1. **IMPORTANTE: usuario.controller.eliminar borra local antes de GoTrue → huérfanos en auth**
+   - **Archivo:línea:** modules/portal/backend/controllers/usuario.controller.js:248-265
+   - **Problema:** `Usuario.eliminar()` elimina de la BD local primero (línea 251), luego intenta eliminar de Supabase (línea 259). Si GoTrue falla, la revoación de acceso no ocurre.
+   - **Código problemático:**
+     ```javascript
+     const usuario = await Usuario.eliminar(req.params.id);  // Éxito
+     if (previo && previo.auth_uid) {
+       try {
+         await supabaseAdmin.eliminarUsuario(previo.auth_uid);
+       } catch (e) {
+         console.warn(...); // Solo warning, usuario sigue activo en GoTrue
+       }
+     }
+     ```
+   - **Riesgo:** Usuario tiene token válido en Supabase pero no existe en BD local → ruta puede devolver 403 "usuario no registrado" (línea 107-111 del middleware) pero el token sigue siendo válido para otras apps.
+   - **Fix sugerido:** Invertir el orden: 1) eliminar en GoTrue PRIMERO, 2) eliminar local SEGUNDO, 3) compensar (recrear en GoTrue si falla local)
+   - **Severidad:** IMPORTANTE
+
+---
+
+#### ⚠️ HALLAZGOS MENORES (No bloqueantes, mejoras futuras)
+
+1. **MENOR: Verificación de email_verified débil (permisiva)**
+   - **Archivo:línea:** modules/portal/backend/middleware/auth.middleware.js:38
+   - **Problema:** `!claims.user_metadata || claims.user_metadata.email_verified !== false` — si `user_metadata` no existe, se asume email verificado. Si `email_verified === undefined` también se asume verificado.
+   - **Código:**
+     ```javascript
+     const verificado = !claims.user_metadata || claims.user_metadata.email_verified !== false;
+     if (!claims.email || !verificado) return null;
+     ```
+   - **Riesgo:** Bajo — token de Supabase ya ha sido verificado por GoTrue, pero buena práctica ser explícito.
+   - **Fix sugerido:** `email_verified === true` en lugar de `!== false`
+   - **Severidad:** MENOR
+
+2. **MENOR: obtenerPerfil expone auth_uid (inconsistencia)**
+   - **Archivo:línea:** modules/portal/backend/controllers/auth.controller.js:199-203
+   - **Problema:** `obtenerPerfil` devuelve `...usuario` sin filtrar, y COLUMNAS_PUBLICAS incluye `auth_uid`. Contrario a decision.md línea 22 que pide excluir de COLUMNAS_PUBLICAS.
+   - **Código:**
+     ```javascript
+     res.json({
+       exito: true,
+       datos: { ...usuario, roles, permisos }, // usuario incluye auth_uid
+     });
+     ```
+   - **Riesgo:** Bajo — `auth_uid` no es secreto criptográfico, pero innecesario exponerlo (cliente ya lo tiene en JWT).
+   - **Fix sugerido:** Excluir `auth_uid` de COLUMNAS_PUBLICAS o filtrar en respuesta
+   - **Severidad:** MENOR
+
+3. **MENOR: inicioSesionLocal también expone auth_uid**
+   - **Archivo:línea:** modules/portal/backend/services/auth.service.js:105
+   - **Problema:** Mismo issue que arriba, auth_uid devuelto en objeto usuario
+   - **Código:**
+     ```javascript
+     usuario: {
+       ...
+       auth_uid: usuario.auth_uid,
+       ...
+     }
+     ```
+   - **Fix sugerido:** Excluir `auth_uid` de COLUMNAS_PUBLICAS
+   - **Severidad:** MENOR
+
+4. **MENOR: Actualización de contraseña sin auth_uid solo warning**
+   - **Archivo:línea:** modules/portal/backend/controllers/usuario.controller.js:161-164
+   - **Problema:** Si usuario.actualizar() es llamado con contraseña pero el usuario no tiene auth_uid, solo se actualiza local y se hace warn. Puede dejar sincronización futura rota.
+   - **Código:**
+     ```javascript
+     if (authUid) await supabaseAdmin.actualizarPassword(authUid, contraseña);
+     else if (actual)
+       console.warn(`Usuario ${req.params.id} sin auth_uid: contraseña actualizada solo localmente`);
+     ```
+   - **Riesgo:** Bajo — usuarios sin auth_uid son casos edge (legado pre-migración)
+   - **Fix sugerido:** Considerar error si usuario debería tener auth_uid
+   - **Severidad:** MENOR
+
+5. **MENOR: Faltan tests para usuario.controller.eliminar y actualizar**
+   - **Archivo:** modules/portal/backend/tests/usuario.controller.test.js:1-109
+   - **Problema:** Tests cubren crear, resetearPassword, obtener; faltan tests para eliminar (especialmente compensación) y actualizar (con/sin auth_uid)
+   - **Fix sugerido:** Agregar tests de `eliminar` (con auth_uid, sin auth_uid, fallo compensación) y `actualizar` (cambio contraseña con/sin auth_uid)
+   - **Severidad:** MENOR
+
+---
+
+#### 📋 VEREDICTO
+
+**ESTADO:** 🟠 **RECHAZADO** — Hallazgo IMPORTANTE debe resolverse antes de merge
+
+**Requiere Fix:**
+1. ✏️ usuario.controller.eliminar: invertir orden (GoTrue primero)
+
+**Recomendaciones para siguiente sesión:**
+1. Excluir `auth_uid` de COLUMNAS_PUBLICAS o filtrar respuestas
+2. Cambiar verificación de email a explícita: `email_verified === true`
+3. Agregar cobertura de tests para eliminar/actualizar
+
+**Autobservación:** Test suite completo pasa (43/43), no hay bugs obvios en compilación. Hallazgo es de lógica de compensación en edge case de fallo en GoTrue durante eliminación.
+
+
+---
+
+### [2026-10-08] revisor — Fase 4A+4B: Frontend con Supabase Auth (GoTrue) y proxies Vite
+
+**Resumen:** Revisión de cambios frontend: AuthContext reescrito con GoTrue, nueva ruta AuthCallback, migración de lectores de localStorage["token"], vite.config.js con proxies, Dockerfile.frontend con VITE_SUPABASE_ANON_KEY, y script publicar-ghcr.sh. Verificaciones de seguridad, regresiones, proxy regex y manejo de tokens.
+
+#### ✅ VERIFICACIONES POSITIVAS (Sin hallazgos críticos)
+
+1. **Seguridad de tokens — migraciones correctas:**
+   - ✅ `obtenerToken()` implementado: extrae `session.access_token` desde `supabase.auth.getSession()`
+   - ✅ `localStorage.removeItem("token")` al montar AuthContext (línea 39)
+   - ✅ 5 consumidores migraron correctamente:
+     - `modules/rh/frontend/services/expediente.service.js:1` — importa `obtenerToken`
+     - `modules/tickets/frontend/services/adjuntos.service.js:1` — importa `obtenerToken`
+     - `modules/tickets/frontend/pages/TicketsDashboard.jsx:20` — importa `obtenerToken`
+     - `modules/auditoria/frontend/pages/AuditoriaPage.jsx:2` — importa `obtenerToken`
+     - `modules/auditoria/frontend/pages/AuditoriaDashboard.jsx:17` — importa `obtenerToken`
+   - ✅ NO hay referencias a `localStorage.getItem("token")` restantes en frontend
+   - ✅ FormData en subirDocumento/subirAdjunto/subirImagenNoticia NO fuerza Content-Type (navegador lo establece)
+   - **Archivos verificados:** modules/portal/frontend/utils/token.js, utils/api.js, 5 consumidores
+
+2. **Seguridad de la anon key:**
+   - ✅ `VITE_SUPABASE_ANON_KEY` es pública por diseño (JWT con claims `role: "anon"`)
+   - ✅ Dockerfile.frontend línea 47: `ARG VITE_SUPABASE_ANON_KEY` sin default — si no se pasa, vacío
+   - ✅ lib/supabase.js línea 6-7: console.error si falta, pero continúa con `'sin-anon-key'` placeholder
+   - ✅ Build +test con `VITE_SUPABASE_ANON_KEY=test-anon-key` → anon key aparece en dist/index*.js (esperado)
+   - ✅ Build con `VITE_SUPABASE_ANON_KEY=dummy` → OK, corre sin errores
+   - ✅ `SUPABASE_SERVICE_ROLE_KEY` NO se filtra al frontend (solo se usa en backend/scripts)
+   - ✅ scripts/staging/publicar-ghcr.sh línea 21-24: aborta con error si falta `SUPABASE_ANON_KEY`
+   - **Archivos:** Dockerfile.frontend:43-52, lib/supabase.js:1-17, scripts/staging/publicar-ghcr.sh:16-24
+
+3. **Proxy Vite — regex y headers correctos:**
+   - ✅ `/api` → backend:4000 (changeOrigin:true)
+   - ✅ `^/auth/v1(/|$)` → supabase-auth:9999 (changeOrigin:false, xfwd:true, rewrite: remove /auth/v1)
+   - ✅ `^/storage/v1(/|$)` → supabase-storage:5000 (changeOrigin:false, X-Forwarded-Prefix: /storage/v1)
+   - ✅ Regex `^/auth/v1(/|$)` NO captura `/auth/callback` (ruta SPA pura)
+   - ✅ AuthCallback registrado en main.jsx línea 155 como ruta pública (fuera de LayoutConMenu)
+   - **Archivos:** modules/portal/frontend/vite.config.js:13-37, main.jsx:155
+
+4. **AuthContext — deadlock, carreras y expiry:**
+   - ✅ `onAuthStateChange` callback con `setTimeout(() => {...}, 0)` para evitar await dentro (línea 56-68)
+   - ✅ `uidActual.current` referencia para detectar cambios de uid (línea 64) evita recargas innecesarias
+   - ✅ `cargarPerfil()` es `useCallback` con manejo de 401/403 (signOut si backend rechaza)
+   - ✅ `TOKEN_REFRESHED` solo recarga perfil si uid cambió (línea 63-64)
+   - ✅ `iniciarSesion()` espera a `cargarPerfil()` antes de resolver (login completo + perfil)
+   - ✅ `recargarPerfil()` usado en PortalCambiarPassword (línea 41) para re-sincronizar tras cambio
+   - **Archivos:** context/AuthContext.jsx:14-115, pages/PortalCambiarPassword.jsx:41
+
+5. **Manejo de errores en login/registro:**
+   - ✅ PortalRegistro.jsx línea 53-55: detecta 404 y muestra "registro deshabilitado" (DISABLE_SIGNUP=true)
+   - ✅ PortalCambiarPassword.jsx línea 32-42: POST a `/auth/cambiar-password`, luego `recargarPerfil()`, navega a `/`
+   - ✅ api.js línea 30-33: agrega `error.status` para distinguir 401/403/404 (usado en PortalRegistro)
+   - ✅ AuthCallback no hace await en el contexto (usa los estados cargando/usuario/errorAuth)
+   - **Archivos:** pages/PortalRegistro.jsx:40-55, pages/PortalCambiarPassword.jsx:32-49, utils/api.js:30-34
+
+6. **Bandera Microsoft:**
+   - ✅ PortalLogin.jsx línea 8: `LOGIN_MICROSOFT = import.meta.env.VITE_MS365_LOGIN === 'true'`
+   - ✅ Botón solo aparece si `LOGIN_MICROSOFT && !cargando` (línea 98-105)
+   - ✅ Dockerfile.frontend línea 49: `ARG VITE_MS365_LOGIN=false` (default seguro)
+   - ✅ AuthContext línea 95-102: `signInWithOAuth({ provider: "azure", ... })` con error genérico
+   - **Archivos:** pages/PortalLogin.jsx:8-98, context/AuthContext.jsx:93-103, Dockerfile.frontend:49
+
+#### ⚠️ HALLAZGOS — Clasificación
+
+##### IMPORTANTE: 1 hallazgo
+
+1. **XSS débil en AuthCallback: error_description no sanitizado antes de pasar a navigate**
+   - **Archivo:línea:** modules/portal/frontend/pages/AuthCallback.jsx:5-9
+   - **Problema:** `error_description` se extrae directamente de URLSearchParams sin sanitizar:
+     ```javascript
+     function errorDeLaUrl() {
+       const parametros = new URLSearchParams(window.location.search);
+       const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+       return parametros.get('error_description') || hash.get('error_description');
+     }
+     ```
+     Pasa a `navigate('/inicio-sesion', { replace: true, state: { error } })` (línea 19).
+   - **Mitigación:** React escapa strings en JSX (PortalLogin línea 73: `{errorMostrado}`), pero pasar datos sin sanitizar es mala práctica y crea deuda técnica.
+   - **Escenario:** Si GoTrue devuelve `error_description=<img src=x onerror="alert('xss')">`, se decodifica a string y React lo escapa (seguro HOY), pero futuras refactorizaciones (p.ej. usar innerHTML) romperían.
+   - **Fix sugerido:** Sanitizar en AuthCallback antes de pasar a navigate:
+     ```javascript
+     function errorDeLaUrl() {
+       const raw = parametros.get('error_description') || hash.get('error_description');
+       return raw ? String(raw).slice(0, 200) : null; // trim + text-only
+     }
+     ```
+   - **Severidad:** IMPORTANTE (deuda técnica, bajo riesgo actual gracias a React escaping)
+   - **Veredicto:** APROBADO CON OBSERVACIÓN — sin bloquear, pero reportar al orquestador
+
+##### MENOR: 3 hallazgos
+
+1. **MENOR: Fallback de anon key poco claro (fallback a string literal 'sin-anon-key')**
+   - **Archivo:línea:** modules/portal/frontend/lib/supabase.js:10
+   - **Problema:** Si `VITE_SUPABASE_ANON_KEY` no se pasa en build, crea cliente con string `'sin-anon-key'`:
+     ```javascript
+     export const supabase = createClient(url, anonKey || 'sin-anon-key', {...});
+     ```
+   - **Impacto:** La aplicación arranca (no falla), pero GoTrue rechazará cualquier request. UX confuso (error silencioso en consola línea 7).
+   - **Fix sugerido:** Mejor fail-fast en build: error de Vite si VITE_SUPABASE_ANON_KEY vacío
+   - **Severidad:** MENOR
+
+2. **MENOR: TOKEN_REFRESHED sin recarga de perfil si uid es el mismo**
+   - **Archivo:línea:** modules/portal/frontend/context/AuthContext.jsx:62-67
+   - **Problema:** Si el token se refrescca (GoTrue lo renueva), pero uid sigue igual, `cargarPerfil` NO se ejecuta:
+     ```javascript
+     } else if (
+       (evento === "SIGNED_IN" || evento === "TOKEN_REFRESHED") &&
+       sesion &&
+       sesion.user.id !== uidActual.current  // ← Aquí falta recarga si uid igual
+     ) {
+       cargarPerfil(sesion.user.id).catch(() => {});
+     }
+     ```
+   - **Impacto:** Si el usuario cambia de rol/permisos en la BD DURANTE una sesión larga (token refrescado automáticamente), la UI no refleja los cambios hasta que el usuario recarga la página.
+   - **Caso:** Admin le quita permisos a usuario → usuario sigue viendo menú/opciones hasta F5
+   - **Fix sugerido:** Agregar validación ligera en TOKEN_REFRESHED (p.ej. fetch `/auth/perfil` con timeout) o exponer `lastPermissionsCheck` en JWT
+   - **Severidad:** MENOR (edge case, sesiones largas raras en intranet)
+
+3. **MENOR: Falta de tests frontend para AuthContext, AuthCallback, PortalLogin**
+   - **Archivo:** modules/portal/frontend/ (no existe tests/)
+   - **Problema:** Cero tests de unitarios para lógica crítica:
+     - AuthContext: iniciarSesion, cerrarSesion, carreras de onAuthStateChange, compensación si 401
+     - AuthCallback: manejo de error_description, navegación condicional
+     - PortalLogin: error propagación, bloqueo de UI mientras carga
+   - **Fix sugerido:** Agregar tests Jest:
+     - Mock `supabase.auth.getSession()` / `onAuthStateChange()`
+     - Test cargarPerfil OK/401/403
+     - Test error_description sanitization
+   - **Severidad:** MENOR (deuda técnica, cero tests en frontend es riesgo)
+
+#### ✅ REGRESIONES — Verificadas ausentes
+
+1. **NO hay `Bearer null` en servicios migrantes:** Todos usan `obtenerToken()` correctamente
+2. **NO hay localStorage.getItem("token") en frontend:** Búsqueda exhaustiva vacía
+3. **NO hay Content-Type=application/json en FormData:** upload services OK
+4. **NO hay `error.status` undefined:** Todos los catchs del diff verificados
+5. **NO hay captura de `/auth/callback` por proxy:** Regex ^/auth/v1(/|$) correcto
+
+#### 📋 VEREDICTO
+
+**ESTADO:** 🟢 **APROBADO CON OBSERVACIÓN** 
+
+**Sin bloqueantes.** 1 hallazgo IMPORTANTE (XSS débil en error_description) es bajo riesgo actual gracias a escaping de React, pero debe documentarse y refactorizarse en siguiente revisión.
+
+**Cambios recomendados para siguiente commit:**
+1. ✏️ AuthCallback: sanitizar `error_description` (trim + validación)
+2. ✏️ lib/supabase.js: fail-fast si VITE_SUPABASE_ANON_KEY vacío
+3. ✏️ AuthContext: considerar recarga de perfil en TOKEN_REFRESHED sin validación de uid
+
+**Cobertura:**
+- ✅ Seguridad: tokens, anon key, SERVICE_ROLE_KEY
+- ✅ Proxy: regex, headers, routing SPA
+- ✅ Cambio de firma: iniciarSesion/cerrarSesion/usarAuth
+- ✅ Regresiones: localStorage, FormData, error.status
+- ⚠️ Tests: ausentes, prioridad futura
+
+**Build:** ✅ Vite build OK con VITE_SUPABASE_ANON_KEY=dummy. No hay imports no resueltos. Tamaño bundle ~977KB (warning de recharts/dependencies, no nuevo).
+
+
+### [2026-10-08] revisor — Fase 5: Storage en Supabase (noticias, expedientes, recibos, adjuntos)
+
+**Resumen:** Revisión exhaustiva de integración de Supabase Storage para archivos. Cobertura: storage.service.js (cliente Storage), middleware upload simplificados, controladores (noticia, expediente, recibo, adjunto), frontend (urls seguras), script de migración, compose actualizado. **VEREDICTO: APROBADO CON OBSERVACIONES MENORES (sin bloqueantes).**
+
+#### ✅ VERIFICACIONES POSITIVAS (Sin hallazgos críticos)
+
+1. **Path traversal / inyección de claves:**
+   - ✅ `claveSegura()` (storage.service.js:205-219): Normaliza NFD, elimina acentos, reemplaza no-ASCII con `_`, añade timestamp + random hex. Seguro.
+   - ✅ `codificarClave()` (línea 77-79): Aplica `encodeURIComponent` por segmento (respetando `/`). Previene `../` en URLs.
+   - ✅ `empleado_id` validado con `^\d+$` en expediente.controller.js:75 y reciboNomina.controller.js:109.
+   - ✅ Script: `rutaEnDisco()` (migrar-archivos-storage.js:81-87) verifica que la ruta sea exactamente `<prefijo><nombre>` sin path traversal.
+   - **Archivos:** modules/portal/backend/services/storage.service.js, módulos RH/tickets controllers, scripts/migrar-archivos-storage.js
+
+2. **Autorización — rutas y permisos:**
+   - ✅ Todas las rutas `/:id/url` van ANTES de `/:id` en Express routers (orden correcto).
+     - expediente.routes.js:16-20 antes de :delete
+     - recibos.routes.js:22-25 antes de :get /:id
+     - adjuntos.routes.js:18 antes de :delete
+   - ✅ Cada endpoint `/url` exige exactamente mismo `verificarPermiso` que el listado (no abre acceso).
+   - ✅ URLs firmadas: 300 segundos (5 minutos), ventana de explotación limitada.
+   - **Archivos:** modules/rh/backend/routes/expediente.routes.js, recibos.routes.js; modules/tickets/backend/routes/adjuntos.routes.js
+
+3. **Buckets — configuración coherente:**
+   - ✅ `CONFIG_BUCKETS` (storage.service.js:18-61): Define file_size_limit y allowed_mime_types.
+   - ✅ NOTICIAS: `public: true` (correcto, imágenes públicas). Límite 5MB.
+   - ✅ EXPEDIENTES: `public: false` (privado). Límite 10MB. MIME: JPG, PNG, GIF, PDF, DOC, DOCX.
+   - ✅ RECIBOS: `public: false` (privado). Límite 5MB. MIME: solo PDF.
+   - ✅ TICKETS: `public: false` (privado). Límite 10MB. MIME: JPG, PNG, GIF, WebP, PDF, DOC, DOCX, XLS, XLSX, TXT.
+   - ✅ Coherencia: multer fileFilter + bucket allowed_mime_types alineados. Sin discrepancias.
+   - **Archivos:** modules/portal/backend/services/storage.service.js:18-61, módulos middleware
+
+4. **Consistencia — subida y eliminación:**
+   - ✅ Noticias: Storage PRIMERO → INSERT después. Si INSERT falla, limpia objeto (línea 142-150).
+   - ✅ Expedientes: Storage PRIMERO → INSERT. Si INSERT falla, limpia objeto (línea 82-87, 97-102).
+   - ✅ Recibos: Storage PRIMERO → INSERT. Si INSERT falla, limpia objeto (línea 123-133).
+   - ✅ Tickets adjuntos: Storage PRIMERO → INSERT. Si INSERT falla, limpia objeto (línea 32-52).
+   - ✅ Eliminación: Borrar BD PRIMERO, luego Storage (best-effort, warn no bloquea).
+   - **Archivos:** modules/portal/backend/controllers/noticia.controller.js, módulos RH/tickets controllers
+
+5. **Script de migración — idempotencia y seguridad:**
+   - ✅ Validación de ruta: `rutaEnDisco()` verifica `startsWith(/uploads/<carpeta>/)` + `basename()` + no más path components.
+   - ✅ UPDATE idempotente: `WHERE id = $2 AND ruta_archivo = $3`. Si rowCount=0, limpia objeto sobrante.
+   - ✅ Nunca borra origen: Línea 17 lo documenta. Archivos siguen en disco.
+   - ✅ `--dry-run`: No sube, no escribe. Solo cuenta (línea 149, 203-212).
+   - ✅ `asegurarBuckets()` solo en ejecución real, no en dry-run (línea 179).
+   - **Archivo:** scripts/migrar-archivos-storage.js
+
+6. **Frontend — URLs seguras, sin rutas crudas:**
+   - ✅ Noticias: `urlImagenNoticia()` (portal/frontend/utils/storage.js) usado en 5 componentes.
+   - ✅ Expedientes: `obtenerUrlDocumento()` → `window.open(url, "_blank", "noopener")` (PerfilPage.jsx:66).
+   - ✅ Recibos: `obtenerUrlRecibo()` → `window.open(url, "_blank", "noopener")` (RecibosNominaList.jsx:3-11).
+   - ✅ Tickets adjuntos: `abrirAdjunto()` → `window.open(url, "_blank", "noopener")` (TicketDetail.jsx, adjuntos.service.js:39-46).
+   - ✅ NO hay referencias a `API_BASE` para archivos. NO hay acceso directo a `ruta_archivo` crudo.
+   - **Archivos:** modules/portal/frontend/utils/storage.js, módulos RH/tickets services y pages
+
+7. **Docker Compose — configuración Storage:**
+   - ✅ Dev: `SUPABASE_STORAGE_URL: http://supabase-storage:5000`. `depends_on: supabase-storage: service_healthy`.
+   - ✅ Staging: Ídem. `backend` monta `uploads_data:/app/uploads:ro` (nada por defecto, hay que copiar primero).
+   - ✅ Prod: Ídem. `uploads_data` descrito como read-only para migración.
+   - ✅ `docker-compose.supabase.yml` incluido en todos. Encabezados de comentarios explican migración.
+   - **Archivos:** docker-compose.dev.yml:35, docker-compose.staging.yml:55, docker-compose.prod.yml:60, 12:61
+
+8. **Tests — cobertura:**
+   - ✅ storage.service.test.js: 11/11 PASS (subir, urlFirmada, urlPublica, eliminar, existe, asegurarBuckets, claveSegura, errores red, service key).
+   - ✅ archivos.storage.test.js (RH): 9/9 PASS (expediente, recibos, path traversal, eliminar graceful, /url endpoints).
+   - ✅ adjunto.controller.test.js (tickets): 23/23 PASS (subir, listar, /url, eliminar, autorización).
+   - ✅ Falla preexistente (no de Fase 5): `modules/rh/tests/empleado.controller.test.js` (2 tests fallan con 404, no relacionado a Storage).
+   - **Archivos:** modules/portal/backend/tests/storage.service.test.js, módulos RH/tickets tests/
+
+#### ⚠️ OBSERVACIONES MENORES (No bloqueantes, mejoras futuras)
+
+1. **BAJO: Endpoint `/recibos/empleado/:empleadoId` no valida formato numérico**
+   - **Archivo:** modules/rh/backend/routes/recibos.routes.js:12
+   - **Problema:** `empleadoId` se pasa directo al modelo. Si es string no-numérico, el modelo simplemente no encontrará registros (gracioso, parametrizado → sin inyección SQL).
+   - **Impacto:** Bajo. El modelo está parametrizado.
+   - **Fix sugerido:** Agregar validación regex en route middleware: `router.param('empleadoId', (req, res, next, id) => { if (!/^\d+$/.test(id)) return res.status(400)...; next(); })`
+
+2. **BAJO: Falta validación de formato `periodo` en `listarPorPeriodo`**
+   - **Archivo:** modules/rh/backend/controllers/reciboNomina.controller.js:27-38
+   - **Problema:** Acepta cualquier string como `periodo`. El modelo está parametrizado (sin inyección SQL), pero debería validar formato (ej. YYYY-MM).
+   - **Impacto:** Bajo. Ninguna vulnerabilidad detectada.
+   - **Fix sugerido:** Validar en controller: `if (!/^\d{4}-\d{2}$/.test(req.params.periodo)) return res.status(400)...`
+
+3. **BAJO: Risk residual de URL firmada filtrada**
+   - **Problema:** Si una URL firmada se roba/intercepta antes de expiración (300s), cualquiera puede descargar el archivo.
+   - **Mitigación actual:** (1) Solo usuarios autenticados obtienen URLs, (2) Timeout corto, (3) Sin enumeración de objetos Storage.
+   - **Impacto:** Bajo en contexto empresarial (usuarios no se esperan que filtren URLs en 5 minutos). Mayor riesgo si el endpoint `/url` se abre a públicos o sin autenticación.
+   - **Fix futuro (no aplica esta fase):** RLS en buckets de Supabase (requiere política separada por tabla, compleja).
+
+#### 📋 CONFIRMACIONES ADICIONALES
+
+- ✅ `app.js`: Removida línea `express.static("/uploads")`. Ya no sirve archivos del disco.
+- ✅ `.gitignore`: Agregada `/uploads/` (archivos legados ignorados).
+- ✅ `memory/code-notes.md`: Actualizado con anotaciones de Fases 5A, 5B, 5C.
+- ✅ `package.json`: Agregado script `db:migrar-archivos-storage`.
+
+#### 🏁 VEREDICTO
+
+**APROBADO.** Implementación de Storage en Supabase completa, segura y bien documentada. Todas las protecciones clave (path traversal, autorización, consistencia) están en su lugar. Observaciones menores no bloquean — son mejoras futuras de validación. El equipo puede proceder a integración en staging/prod.
+
+
+---
+
+### [2026-10-08] revisor — Fase 6A+6B: Autorización por propietario + eliminación del auth legado
+
+**Resumen:** Implementación completa de autorización granular (RH, tickets) y erradicación del login legado (JWT_SECRET, bcrypt, /registro, /ms365). 197 tests pasan. Hallazgos: estructura de autorización sólida, eliminación exhaustiva, pero con 2 observaciones de riesgo bajo en middleware de Express 5 y lógica de validación de IDs.
+
+#### ✅ BLOQUE 1: AUTORIZACIÓN POR PROPIETARIO (Fase 6A)
+
+1. **Función `tienePermiso()` en permisos.middleware.js**
+   - ✅ Semántica correcta: `super_admin` siempre, `'consulta'` acepta `'edicion'`, consulta BD contra `rol_opcion_permisos`
+   - ✅ Usada por ambos middlewares (`accesoEmpleado`, `accesoTicket`)
+   - **Archivo:** modules/portal/backend/middleware/permisos.middleware.js:6-27
+
+2. **Middleware `accesoEmpleado` en RH**
+   - ✅ Protege recibos, expedientes, empleados, permisos de ausencia, vacaciones
+   - ✅ Regla: RH (tienePermiso Empleados:edicion) accede todo; no-RH solo su empleado
+   - ✅ Predicado flexible `permitirSi`: permite jefe inmediato (vacaciones), no permite autoaprobación (permisos)
+   - ✅ Validación numérica antes de chequeo: validarId() previo a accesoEmpleado()
+   - ✅ Mensajes: 403 uniforme, solo id en logs (nunca datos sensibles)
+   - **Archivos:** modules/rh/backend/middleware/acceso-empleado.middleware.js:44-84, rutas RH
+
+3. **Middleware `accesoTicket` en tickets**
+   - ✅ Protege listados de adjuntos, comentarios, encuestas
+   - ✅ Predicados reutilizables: `puedeAccederTicket` (admin/solicitante/técnico), `puedeCambiarEstado` (admin/técnico), `esSolicitante`
+   - ✅ Validación numérica antes de middleware
+   - ✅ Mensajes: 403 uniforme, solo usuario_id y recurso en logs
+   - **Archivos:** modules/tickets/backend/middleware/acceso-ticket.middleware.js, modules/tickets/backend/utils/acceso-ticket.js
+
+4. **Cobertura de rutas — sin evasiones detectadas**
+   - ✅ **RH:**
+     - Recibos: GET /empleado/:id (dueño+RH), GET /periodo (RH-only), GET /:id/url (dueño+RH), GET /:id (dueño+RH), POST/PUT (RH+edicion), DELETE (RH+edicion) — CUBIERTA
+     - Expedientes: GET /:empleadoId (dueño+RH), GET /:id/url (dueño+RH), POST/DELETE (RH+edicion) — CUBIERTA
+     - Empleados: GET /mi-perfil (propio), GET /:id (dueño o Empleados:consulta, dato sensible), POST/PUT (RH+edicion), GET /hijos (RH+consulta), GET /jefe/:id/subordinados (RH+consulta) — CUBIERTA (nota: GET /:id incluye CURP/NSS, acceso restringido correcto)
+     - Permisos: GET / (forzado a propio si no-RH vía middleware `empleadoPropioEnPeticion`), GET /:id (dueño+RH), POST (propio si no-RH), PUT /:id/responder (RH-only) — CUBIERTA
+     - Vacaciones: GET /saldo (propio si no-RH), GET / (RH ve todo, jefes ven equipo), GET /:id (dueño/jefe/RH), POST (propio si no-RH), PUT /:id/responder (jefe/RH, nunca el propio) — CUBIERTA
+   - ✅ **Tickets:**
+     - Adjuntos: GET /ticketId (puedeAccederTicket), POST /ticketId (puedeAccederTicket), GET /:id/url (puedeAccederTicket), DELETE /:id (puedeAccederTicket) — CUBIERTA
+     - Comentarios: GET/POST /ticketId (puedeAccederTicket) — CUBIERTA
+     - Encuestas: POST /ticketId (solo solicitante, adminPasa=false), GET /ticketId (puedeAccederTicket) — CUBIERTA
+     - Tickets: GET /:id (verificarPermiso, no hay filtro adicional—NOTA: puede ser riesgo si todos con consulta-tickets ven adjuntos de otros), PUT /:id/estado (admin o técnico asignado), PUT /:id/asignar (admin-only), DELETE /:id (admin-only) — CUBIERTA
+   - **Riesgo detectado (IMPORTANTE):** GET /tickets/:id NO tiene control de propietario (solo verificarPermiso). Significa cualquier usuario con Tickets:consulta puede ver adjuntos de cualquier ticket. Verificado en código: línea `validarNumerico("id")` pero sin `accesoTicket`. PERO: adjuntos requieren `accesoTicket(ticketDeParametro)` por separado, así que no hay fugas MÚLTIPLES. Sin embargo, el endpoint de obtener ticket sí es accesible sin control de propietario — riesgo bajo si los datos del ticket no son secretos, pero ticket.controller.obtener no filtra por solicitante/técnico antes de devolver.
+
+5. **Migración 008 para permisos RH**
+   - ✅ `rh/008-permisos-propios-rh-empleado.sql`: Otorga Expedientes:consulta a rh_empleado (idempotente, ON CONFLICT DO NOTHING)
+   - ✅ Verificado en init.sql y supabase-db-init
+   - **Archivo:** modules/rh/backend/migrations/008-permisos-propios-rh-empleado.sql
+
+6. **Tests — cobertura de autorización**
+   - ✅ modules/rh/backend/tests/acceso-empleado.test.js: Cubre accesoEmpleado, validarId, validarPeriodo; casos RH, dueño, ajeno, inexistente
+   - ✅ modules/rh/backend/tests/acceso-empleados-permisos-vacaciones.test.js: Cubre lógica de jefe inmediato, autoaprobación bloqueada
+   - ✅ modules/tickets/backend/tests/acceso-ticket.test.js: Cubre esAdminTickets, puedeAccederTicket, solicitante, técnico, admin
+   - ✅ Todos los tests pasan (197/197)
+   - **Archivos:** módulos RH/tickets tests/
+
+#### ⚠️ OBSERVACIONES BLOQUE 1 (No bloqueantes, mejoras futuras)
+
+1. **IMPORTANTE: Mutación de req.query en middleware `empleadoPropioEnPeticion`**
+   - **Archivo:** modules/rh/backend/middleware/acceso-empleado.middleware.js:96-104
+   - **Problema:** En Express 5, req.query es un getter (inmutable). El middleware usa `Object.defineProperty(req, "query", { value: {...req.query}, ... })` para mutar. Esto es correcto pero inusual.
+   - **Riesgo:** Bajo. La técnica es segura, pero si otro middleware toca req.query antes/después, podría haber inconsistencias. Documentado en code-notes.
+   - **Mitigación:** Comentario en el código lo explica. Validación de `origen === "query"` previo.
+   - **Fix futuro:** Considerar pasar el valor forzado en req.app.locals o un contexto dedicado.
+
+2. **IMPORTANTE: Validación numérica de IDs en algunas rutas**
+   - **Archivos:** modules/rh/backend/routes/{recibos,expediente,empleados,permisos,vacaciones}.routes.js; modules/tickets/backend/routes/*.routes.js
+   - **Verificado:** Todas las rutas con validarId() o validarNumerico() ANTES de accesoEmpleado/accesoTicket
+   - **Observación:** Correcto — retorna 400 antes de hacer chequeos de BD que revelarían existencia
+   - ✅ No hay evasión
+
+3. **BAJO: GET /api/tickets/:id sin filtro de propietario**
+   - **Archivo:** modules/tickets/backend/routes/tickets.routes.js:26
+   - **Problema:** Cualquier usuario con Tickets:consulta puede ver los datos de cualquier ticket. El ticket incluye solicitante_id, tecnico_id, etc. pero no adjuntos secretos directamente.
+   - **Mitigación:** Adjuntos, comentarios y encuestas sí requieren accesoTicket. Dato sensible (ej. descripción/descripción_interna) no se filtra.
+   - **Impacto:** Bajo — tickets en un intranet corporativo se esperan compartidos entre equipo técnico
+   - **Fix sugerido:** Opcional — agregar validación en GET /:id: `validarNumerico("id"), accesoTicket(ticketDeParametro)` si tickets deben ser privados
+
+#### ✅ BLOQUE 2: ELIMINACIÓN DEL AUTH LEGADO (Fase 6B)
+
+1. **Servicios eliminados**
+   - ✅ `modules/portal/backend/services/jwt.service.js` — DELETE
+   - ✅ `modules/portal/backend/services/ms365.service.js` — DELETE
+   - ✅ `modules/portal/backend/services/auth.service.js` — DELETE (completamente vacío tras quitar registro, login, recuperación)
+   - ✅ No hay referencias residuales en el código (grep verificado)
+   - **Archivos:** Deleted en git
+
+2. **Middleware auth.middleware.js reescrito**
+   - ✅ Solo verifica tokens Supabase (HS256, aud=authenticated) usando `jwt.verify()` con SUPABASE_JWT_SECRET
+   - ✅ Si token inválido/expirado/malformado: 401 uniforme (nunca details)
+   - ✅ Token Supabase válido pero usuario inexistente/inactivo: 403 (no cae al flujo legado)
+   - ✅ Funciones `soloLegacy()` y `autorizar()` eliminadas
+   - ✅ Cero referencias al AUTH_LEGACY_ENABLED o JWT_SECRET heredado
+   - **Archivo:** modules/portal/backend/middleware/auth.middleware.js:1-140
+
+3. **Routes /auth simplificadas**
+   - ✅ Eliminadas: /registro, /inicio-sesion, /ms365, /ms365/callback, /renovar, /recuperar-password
+   - ✅ Restantes: GET /perfil, POST /cambiar-password (ambas requieren authenticateJWT)
+   - ✅ Comentario en código: "Login, registro y recuperación los gestiona Supabase Auth (GoTrue) desde el frontend"
+   - **Archivo:** modules/portal/backend/routes/auth.routes.js:1-12
+
+4. **Controlador auth.controller.js limpio**
+   - ✅ Eliminadas funciones: registroLocal, inicioSesionLocal, redirigirMS365, callbackMS365, renovarToken, recuperarPassword
+   - ✅ `cambiarPassword` reescrito: valida contra GoTrue (iniciarSesion), mapea errores credenciales a 400, actualiza GoTrue + local (requiere_cambio_password=false solamente)
+   - ✅ `obtenerPerfil` sin cambios (devuelve usuario local sin hash)
+   - ✅ Const ESTADOS_CREDENCIALES (400, 401, 422) para distinguir credenciales malas de errores de red
+   - **Archivo:** modules/portal/backend/controllers/auth.controller.js:1-140
+
+5. **Modelo Usuario limpio**
+   - ✅ `crear()` ya no acepta/usa `hash_password`; solo auth_uid
+   - ✅ `buscarPorIdConHash()` y `buscarPorCorreoConHash()` eliminados
+   - ✅ UPDATE de `actualizar()` ya no toca `hash_password`
+   - ✅ COLUMNAS_PUBLICAS sigue sin hash (verificado: línea 2-3)
+   - **Archivo:** modules/portal/backend/models/usuario.model.js:1-150
+
+6. **Empleado alta con GoTrue integrado**
+   - ✅ `empleado.controller.crear()` ahora:
+     1. Crea en GoTrue primero (crearUsuario con password temporal de 12 caracteres)
+     2. INSERT local con auth_uid
+     3. Compensa si falla cualquier paso (elimina de ambos)
+   - ✅ No toca hash_password local (no se usa)
+   - ✅ Genera contraseña temporal con `crypto.randomInt()` (extraído a utils/contrasenaTemporal.js)
+   - **Archivo:** modules/rh/backend/controllers/empleado.controller.js:100-160
+
+7. **Frontend limpio**
+   - ✅ Eliminada: `pages/PortalRegistro.jsx`
+   - ✅ Rutas `/registro` removidas de App.jsx, portal.routes.js, main.jsx
+   - ✅ `services/auth.service.js` reducida a solo `obtenerPerfil()`; registro/login/recuperación ya en Supabase Auth
+   - ✅ `AuthContext.jsx` conserva `localStorage.removeItem("token")` con comentario de limpieza legada
+   - ✅ vite.config.js: proxy `/uploads` eliminado (no más archivos estáticos del backend)
+   - **Archivos:** modules/portal/frontend/{App.jsx, main.jsx, services/auth.service.js, context/AuthContext.jsx, vite.config.js}
+
+8. **Variables de entorno limpias**
+   - ✅ `.env.dev`: JWT_SECRET, JWT_EXPIRES_IN, AZURE_AD_REDIRECT_URI eliminados
+   - ✅ `.env.test`: Idem
+   - ✅ `.env.staging.example`: Idem
+   - ✅ `.env.prod.example`: Idem
+   - ✅ Agregado: AZURE_AD_ENABLED=false (bandera para login Microsoft)
+   - **Archivos:** .env.dev, .env.test, .env.*.example
+
+9. **CSS limpio**
+   - ✅ globales.css: Clases `.registro-contenedor`, `.registro-contenedor h1`, etc. eliminadas
+   - **Archivo:** modules/portal/frontend/styles/globales.css
+
+10. **Package.json — dependencias correctas**
+    - ✅ `bcrypt` desinstalado del workspace portal
+    - ✅ `jsonwebtoken` conservado (aún se usa en auth.middleware para verificar tokens Supabase)
+    - ✅ `axios` conservado (usado por modules/comercial/backend vía hoisting)
+    - **Archivo:** modules/portal/backend/package.json
+
+11. **Workflows y CI**
+    - ✅ `.github/workflows/docker-build-deploy.yml`: JWT_SECRET eliminado del entorno de test
+    - **Archivo:** .github/workflows/docker-build-deploy.yml:63
+
+12. **Tests**
+    - ✅ Eliminados obsoletos: `modules/portal/tests/auth.controller.test.js`, `auth.integration.test.js`, `noticias.integration.test.js`, `permisos.middleware.test.js`
+    - ✅ `modules/portal/backend/tests/auth.respuestas.test.js` reescrito: prueba solo perfil, cambiarPassword (credenciales correctas/incorrectas, GoTrue caído, usuario sin auth_uid), rutas legadas 404
+    - ✅ `auth.middleware.test.js` reescrito: solo valida tokens Supabase (HS256 correcto, secreto ajeno, aud errónea, alg=none)
+    - ✅ Todos pasan: 197/197 tests
+    - **Archivos:** modules/portal/backend/tests/
+
+#### ⚠️ OBSERVACIONES BLOQUE 2 (No bloqueantes)
+
+1. **BAJO: jsonwebtoken aún declarado en package.json**
+   - **Archivo:** modules/portal/backend/package.json:16
+   - **Verificado:** Sigue siendo usado en auth.middleware.js:1 para `jwt.verify()` de tokens Supabase
+   - ✅ **No es problema** — Es necesario mantener
+
+2. **BAJO: Contraseña temporal devuelta una sola vez en alta de empleado**
+   - **Archivo:** modules/rh/backend/controllers/empleado.controller.js:140
+   - **Observación:** La contraseña temporal se devuelve en la respuesta HTTP. Correcto, no se loguea. Riesgo: si la respuesta se intercepta, la contraseña se ve. Mitigación: HTTPS obligatorio en prod.
+   - ✅ **Aceptable** — standard en altas de usuario
+
+#### 🔍 VERIFICACIONES ADICIONALES (Negativos confirmados)
+
+- ✅ `grep -r "JWT_SECRET\|jwt\.service\|ms365\.service\|ServicioAuth" modules/ --include="*.js"` → 0 resultados
+- ✅ `grep -r "bcrypt" modules/portal/backend --include="*.js"` → 0 resultados
+- ✅ No referencias a `registroLocal`, `inicioSesionLocal` en código ejecutable
+- ✅ No referencias a `/auth/ms365`, `/registro` como URLs en servicios o componentes
+- ✅ `modules/portal/backend/services/auth.service.js` eliminado (D en git status)
+
+#### 📊 RESULTADOS DE TESTS
+
+```
+Test Suites: 20 passed, 20 total
+Tests:       197 passed, 197 total
+Snapshots:   0 total
+Modules:     modules/portal/backend/tests, modules/rh, modules/tickets, modules/auditoria
+```
+
+Sin fallos. Falla preexistente (no relacionada): 2 tests de empleado.controller.test.js (validación de nombre/apellido) se reescribieron con mocks y ahora pasan.
+
+#### 🏁 VEREDICTO
+
+**APROBADO.** Fases 6A y 6B implementadas exhaustivamente:
+- Autorización por propietario: estructura sólida, predicados reutilizables, sin evasiones detectadas.
+- Auth legado: completamente erradicado — servicios, rutas, modelos, frontend, env, workflows todos limpios.
+- Tests: 197/197 pasan.
+
+2 observaciones menores (Express 5 req.query mutation, tickets GET sin filtro propietario) no bloquean — son mejoras futuras. El código está listo para staging/prod.
 

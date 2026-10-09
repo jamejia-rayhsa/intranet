@@ -1,7 +1,9 @@
+import { obtenerToken } from "./token";
+
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000/api";
 
 export async function solicitar(ruta, opciones = {}) {
-  const token = localStorage.getItem("token");
+  const token = await obtenerToken();
 
   const encabezados = {
     "Content-Type": "application/json",
@@ -26,7 +28,9 @@ export async function solicitar(ruta, opciones = {}) {
   const datos = await respuesta.json();
 
   if (!respuesta.ok) {
-    throw new Error(datos.mensaje || "Error en la solicitud");
+    const error = new Error(datos.mensaje || "Error en la solicitud");
+    error.status = respuesta.status;
+    throw error;
   }
 
   return datos;

@@ -2,11 +2,13 @@
 
 ## Stack tecnico
 
-- **DB:** PostgreSQL
+- **DB:** PostgreSQL de Supabase self-hosted (base `postgres`; runbook en `docs/supabase.md`)
 - **Backend:** Node.js + Express
 - **Frontend:** React 18 + Vite (unico frontend, sirve todos los modulos)
-- **Infraestructura:** Docker + WSL2 (Linux 6.6)
-- **Auth:** JWT + Azure AD
+- **Infraestructura:** Docker + WSL2 (Linux 6.6); `docker-compose.supabase.yml` se incluye desde dev/staging/prod
+- **Respaldos:** `scripts/supabase/backup.sh` y `restore.sh`
+- **Auth:** Supabase Auth (GoTrue) con Microsoft/Azure como proveedor; el backend solo acepta tokens de GoTrue (sin login ni registro propios)
+- **Archivos:** Supabase Storage (buckets privados con URL firmada de 300 s; `noticias` publico)
 
 ## Estructura de modulos
 

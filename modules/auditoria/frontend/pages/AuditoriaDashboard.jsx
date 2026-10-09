@@ -14,6 +14,7 @@ import ChartCard from '../../../portal/frontend/components/ChartCard';
 import BarChart from '../../../portal/frontend/components/BarChart';
 import DonutChart from '../../../portal/frontend/components/DonutChart';
 import Icons from '../../../portal/frontend/components/Icons';
+import { obtenerToken } from '../../../portal/frontend/utils/token';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
 
@@ -25,10 +26,9 @@ export default function AuditoriaDashboard() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    fetch(`${API}/auditoria/dashboard`, {
+    obtenerToken().then(token => fetch(`${API}/auditoria/dashboard`, {
       headers: { Authorization: `Bearer ${token}` },
-    })
+    }))
       .then(r => r.json())
       .then(json => { if (json.exito) setDatos(json.datos); else setError(json.mensaje); })
       .catch(() => setError('Error al conectar con el servidor'))

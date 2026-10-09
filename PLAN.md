@@ -1,5 +1,17 @@
 # PLAN DE IMPLEMENTACIÓN - INTRANET CORPORATIVA PERN
 
+## Migración a Supabase self-hosted (2026-10)
+
+Postgres, autenticación y archivos pasaron a un stack Supabase propio (contenedores en el mismo host). Runbook completo: [docs/supabase.md](docs/supabase.md). Decisiones: `memory/decisions.md`.
+
+- [x] Fase 0-1: línea base del esquema (`init.sql`), stack `docker-compose.supabase.yml`, RLS deny-all
+- [x] Fase 2: la app usa el Postgres de Supabase (`include:` en dev/staging/prod, `supabase-db-init`)
+- [x] Fase 3: Supabase Auth (GoTrue) y migración de usuarios con sus hashes bcrypt
+- [x] Fase 4: frontend con `supabase-js` (PKCE, mismo origen vía proxies)
+- [x] Fase 5: archivos en Supabase Storage (URL firmada de 300 s)
+- [x] Fase 6: login casero eliminado (solo tokens de GoTrue), políticas de acceso por propietario, respaldos (`scripts/supabase/backup.sh` / `restore.sh`, probados) y documentación
+- [ ] Pendiente: probar el login con Microsoft con credenciales reales de Azure y revalidar `email_verified`; configurar SMTP; retirar `usuarios.hash_password`
+
 ## Estado de Avance
 
 | Etapa | Módulo             | Estado        | Archivos |

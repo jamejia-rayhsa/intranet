@@ -1,10 +1,12 @@
 // modules/portal/frontend/pages/PortalLogin.jsx
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { usarAuth } from '../context/AuthContext';
 import CarruselNoticias from '../components/CarruselNoticias';
+import { config } from '../lib/config';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+const LOGIN_MICROSOFT = config.ms365Login;
 const NOMBRE_EMPRESA = import.meta.env.VITE_NOMBRE_EMPRESA || 'Intranet Corporativa';
 
 export default function PortalLogin() {
@@ -13,8 +15,10 @@ export default function PortalLogin() {
   const [error, setError] = useState('');
   const [cargando, setCargando] = useState(false);
   const [noticias, setNoticias] = useState([]);
-  const { iniciarSesion } = usarAuth();
+  const { iniciarSesion, iniciarSesionMicrosoft, errorAuth } = usarAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const errorMostrado = error || location.state?.error || errorAuth;
 
   // Cargar noticias públicas para el carrusel
   useEffect(() => {
@@ -24,22 +28,24 @@ export default function PortalLogin() {
       .catch(() => {});
   }, []);
 
+  async function manejarMicrosoft() {
+    setError('');
+    try {
+      await iniciarSesionMicrosoft();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   async function manejarEnvio(e) {
     e.preventDefault();
     setError('');
     setCargando(true);
     try {
-      const resp = await fetch(`${API}/auth/inicio-sesion`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ correo, contraseña }),
-      });
-      const json = await resp.json();
-      if (!json.exito) { setError(json.mensaje || 'Credenciales incorrectas'); return; }
-      iniciarSesion(json.datos.token, json.datos.usuario);
+      await iniciarSesion(correo, contraseña);
       navigate('/');
-    } catch {
-      setError('Error al conectar con el servidor');
+    } catch (err) {
+      setError(err.message || 'Error al conectar con el servidor');
     } finally {
       setCargando(false);
     }
@@ -63,9 +69,9 @@ export default function PortalLogin() {
 
         {/* Formulario */}
         <form onSubmit={manejarEnvio} style={{ width: '100%', maxWidth: '360px' }}>
-          {error && (
+          {errorMostrado && (
             <div style={{ background: '#fdecea', border: '1px solid var(--color-error)', borderRadius: '6px', padding: '0.75rem', marginBottom: '1rem', color: 'var(--color-error)', fontSize: '0.9rem' }}>
-              {error}
+              {errorMostrado}
             </div>
           )}
           <div style={{ marginBottom: '1rem' }}>
@@ -90,6 +96,14 @@ export default function PortalLogin() {
           >
             {cargando ? 'Iniciando sesión...' : 'Iniciar sesión'}
           </button>
+          {LOGIN_MICROSOFT && (
+            <button
+              type="button" className="btn btn-secundario" onClick={manejarMicrosoft} disabled={cargando}
+              style={{ width: '100%', marginTop: '0.75rem', padding: '0.75rem' }}
+            >
+              Entrar con Microsoft
+            </button>
+          )}
         </form>
       </div>
 

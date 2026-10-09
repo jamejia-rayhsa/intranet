@@ -6,6 +6,164 @@ type: project
 
 # Decisiones de Arquitectura
 
+### [2026-10-09] orquestador — Pasos del CI reparados antes del despliegue (lint, pruebas en contenedor, scripts en la imagen)
+
+Al preparar la guía de staging/prod se reprodujeron en local los tres pasos del workflow (`lint`, `db:migrate`, `npm test`), de los que depende la publicación de imágenes (`build` necesita `test`):
+1. **`npm run lint` fallaba** por 1 error real (`catch (_) {}` vacío en `modules/comercial/frontend/pages/SolicitudCreditoForm.jsx:81`, de mayo, anterior a la migración) y, localmente, por 209 falsos errores sobre un `dist/` compilado que ESLint escaneaba. Corregido el bloque y añadido `ignorePatterns: ["**/dist/**", "**/node_modules/**"]` en `.eslintrc.json`. Resultado: 0 errores (171 avisos, no bloquean). Se borró el `dist/` local (artefacto ignorado por git).
+2. **`npm test` (contenedores) fallaba** porque `scripts/` no estaba en la imagen del backend y el test de `migrar-usuarios-supabase` lo importa. `Dockerfile.backend` ahora hace `COPY scripts/ ./scripts/` en ambas etapas. Resultado: 7 suites, 78 tests, código 0. Efecto colateral deseado: los scripts de migración (`node scripts/migrar-*.js`) corren en cualquier servidor con solo la imagen, sin montar el repo; se quitó el `-v $PWD/scripts:/app/scripts:ro` de la documentación.
+3. **`db:migrate`**: carga `init.sql` en una Postgres vacía sin errores (28 tablas).
+Nota operativa: `npm test` reutiliza imágenes ya construidas; para probar cambios de Dockerfile usar `docker compose -f docker-compose.test.yml up --build --abort-on-container-exit` (el CI parte de cero y siempre construye).
+
+### [2026-10-09] orquestador — La imagen del frontend ya no lleva la anon key: configuración leída al arrancar el contenedor
+
+**Problema encontrado al preparar el despliegue a staging/prod:** (1) el workflow de CI (`.github/workflows/docker-build-deploy.yml`) construía la imagen del frontend **sin** `VITE_SUPABASE_ANON_KEY` (solo `publicar-ghcr.sh` la pasaba), y ambos publican con la misma etiqueta `ghcr.io/jamejia-rayhsa/intranet/frontend:<sha>`: un push a `main` podía sobrescribir la imagen buena con una que no puede iniciar sesión; (2) la anon key deriva del JWT secret de **cada entorno**, así que una imagen con la clave horneada no sirve para otro entorno; (3) rotar claves obligaba a reconstruir y republicar.
+
+**Decisión:** el contenedor genera `/config.js` al arrancar (`config/nginx/40-config-js.sh`, ejecutado por el entrypoint de nginx) a partir de `SUPABASE_ANON_KEY`, `SUPABASE_URL` (opcional) y `MS365_LOGIN` (= `AZURE_AD_ENABLED`). `modules/portal/frontend/lib/config.js` da prioridad a esa configuración y cae a `VITE_*` en desarrollo (donde `public/config.js` queda vacío). `index.html` carga `/config.js` antes del bundle; nginx lo sirve con `Cache-Control: no-store`. Los valores se filtran a `[A-Za-z0-9._:/-]` para impedir inyección de JS. `Dockerfile.frontend`, los compose de staging/prod y `publicar-ghcr.sh` ya no hornean nada. **Una sola imagen (la del CI) sirve para todos los entornos**, y rotar la anon key o activar Microsoft solo requiere cambiar el `.env` y recrear el contenedor.
+
+**Verificado:** imagen de producción construida sin ninguna clave (0 archivos con un JWT); tres arranques con variables distintas generan su propio `config.js`; un intento de inyección (`";alert(1);//<script>`) queda como `alert1//script`; sin clave el contenedor avisa en el arranque; Chromium: el navegador recibe la clave del arranque, el botón de Microsoft aparece solo con `MS365_LOGIN=true`, y las peticiones a `/auth/v1` llevan esa clave en `apikey` (8/8). Compose dev/staging/prod validan.
+
+**Consecuencia para el despliegue:** staging/prod exigen `SUPABASE_ANON_KEY` en su `.env` (el compose falla con mensaje claro si falta).
+
+### [2026-10-09] orquestador — Se elimina la vinculación por correo del middleware (resuelve el pendiente de `email_verified`)
+
+**Contexto:** el pendiente de la Fase 3/4 era revalidar `email_verified` con un login real de Azure. El usuario ejecutó la consulta sobre `auth.identities`/`auth.users` (usuario migrado con login de Microsoft): identidad `email` -> `identity_data.email_verified = false` y `raw_user_meta_data.email_verified = true`; identidad `azure` -> ambos `true`. Con esos datos, endurecer a `=== true` habría funcionado, pero al releer el middleware el problema real era otro.
+
+**Hallazgo:** `resolverUsuarioSupabase` vinculaba una fila local sin `auth_uid` cuando el token traía un `email` coincidente y `user_metadata.email_verified !== false`. Pero `user_metadata` y el correo de una cuenta de GoTrue **los edita el propio usuario** (`PUT /auth/v1/user`), y con `SUPABASE_EMAIL_AUTOCONFIRM=true` GoTrue aplica el cambio de correo sin confirmación (comportamiento de la opción; **no se reprodujo** el ataque en vivo). Con eso, cualquier cuenta de GoTrue podía adueñarse de una fila local sin `auth_uid` poniendo su correo. `email_verified` no lo evita porque sale de `user_metadata`.
+
+**Decisión:** el middleware resuelve al usuario **solo por `auth_uid`** (sub del token). Sin `auth_uid` -> 403 "Usuario no registrado en la intranet". El vínculo lo crea siempre un administrador (alta de usuario, alta de empleado con usuario, `scripts/migrar-usuarios-supabase.js`), de modo que ningún flujo legítimo se pierde: los 11 usuarios de desarrollo ya están vinculados. El correo solo importa en el primer login con Microsoft, donde **GoTrue** (no la intranet) asocia la identidad `azure` al usuario de GoTrue que tiene ese correo. Tras este cambio el correo de GoTrue es irrelevante para la autorización, así que ya no hay nada que hacer con `email_verified`. Tests: 11 en el middleware (dos nuevos: no vincula aunque coincida el correo, ni con `email_verified: true`); 197 en total.
+
+**Consecuencia:** un usuario existente en GoTrue pero no vinculado (p. ej. creado a mano en Studio) ya no se autovincula: hay que fijar `usuarios.auth_uid` o recrearlo desde el panel. `docs/supabase.md` §5 actualizado con el estado probado.
+
+### [2026-10-08] orquestador — Fase 6 completa: acceso por propietario, auth legado eliminado, respaldos y documentación
+
+**Delegación:** coder A (política de acceso, 3 rondas), coder B (eliminación del auth legado y alta de empleados con GoTrue), coder C (respaldos/restauración y documentación), revisor (APROBADO). Verificación propia con un stack aislado (`intranet_e2e`) y Chromium.
+
+**Datos reales de desarrollo (decisión del usuario: "si hay copia, los migras"):** la base vieja (volumen `intranet_postgres_data_dev`) tenía 11 usuarios, 5 empleados, 3 noticias (+3 imágenes), 1 solicitud de vacaciones y 17 registros de auditoría; se migraron a `intranet_supabase_db_data` (`pg_dump --data-only --column-inserts --disable-triggers`, TRUNCATE + carga en una transacción **como `supabase_admin`**; con `postgres` falla por triggers RI del sistema) y se crearon los 11 usuarios en GoTrue con sus hashes (conservan contraseña). El volumen viejo queda como respaldo. **No había archivos que copiar:** las 3 imágenes de noticias apuntaban a archivos que ya no existían en ningún volumen. Incidente propio: durante la prueba de la Fase 5 dejé 4 archivos `legado_*` en el volumen real `intranet_uploads_data`; se detectaron y borraron. Desde entonces las pruebas del orquestador usan un proyecto aparte (`COMPOSE_PROJECT_NAME=intranet_e2e`).
+
+**Decisiones:**
+1. **Política de acceso (usuario):** recibos y expedientes solo el empleado dueño o RH. Para tickets (decisión del orquestador, confirmada tácitamente): solicitante, técnico asignado o administrador. **RH = permiso `edicion`** sobre la opción (o `super_admin`) vía `tienePermiso`; en permisos de ausencia y vacaciones RH = `Empleados:edicion` (no `Permisos/Vacaciones:edicion`, que el seed da a `rh_empleado` para solicitar). Migración `rh/008` concede a `rh_empleado` `Expedientes:consulta`. 403 uniforme `{mensaje:"No tienes acceso a este recurso"}`, ids numéricos 400 antes del chequeo. Se cerró el hueco más grave preexistente: `GET /empleados/:id` no tenía control y exponía CURP/NSS/CLABE a cualquier usuario autenticado. También: listado de vacaciones sin vínculo de empleado devolvía todo; permisos de ausencia sin filtro de dueño; escrituras de tickets (asignar/borrar solo administrador; estado administrador o técnico asignado; `tecnico_id` del cuerpo solo si es admin; encuesta solo solicitante).
+2. **Auth legado eliminado:** `ms365.service`, `jwt.service`, `auth.service`, rutas `/auth/{inicio-sesion,registro,ms365,renovar}`, `AUTH_LEGACY_ENABLED`, `JWT_*` y `/registro` en el frontend. El middleware solo acepta tokens de GoTrue (probado: secreto legado, otro secreto, audiencia errónea y `alg:none` dan 401). Contraseñas solo en GoTrue (`cambiarPassword` valida la actual contra GoTrue); `usuarios.hash_password` queda en desuso y **no se borra** (el script de migración la necesita para entornos no migrados; eliminable cuando todos lo estén). `bcrypt` retirado; `axios` se queda (lo usa comercial).
+3. **Bugs que la prueba en vivo destapó:** (a) `POST /api/usuarios` **nunca existió** (el controlador `crear` sí; el panel de administración daba 404 y las cuentas solo se creaban por el registro público): se agregó la ruta con permiso `Usuarios:edicion`; (b) el alta de empleado con `crear_usuario` insertaba un usuario sin cuenta en GoTrue (no podría iniciar sesión): ahora GoTrue primero, `auth_uid` en el INSERT, `requiere_cambio_password`, contraseña temporal de 12 caracteres devuelta una sola vez y compensación completa; (c) 2 tests preexistentes eran tautológicos (Express vacío esperando 401): reescritos contra el controlador real; (d) test muerto `modules/portal/tests/noticia.controller.test.js` eliminado.
+4. **Respaldos (faltaba desde la Fase 1):** `scripts/supabase/backup.sh` y `restore.sh` (volcado `pg_dump -Fc` de `public`+`auth`+`storage`, tar de objetos con xattrs usando `debian:bookworm-slim` porque busybox no soporta `--xattrs` y Storage guarda ahí el content-type, MANIFEST con sha256 y conteos, retención, cifrado opcional). **Probado de extremo a extremo:** usuario con contraseña + fila + objeto, respaldo (con y sin cifrar), destrucción total del proyecto, restauración, y verificación de login, filas, sha256 del objeto y continuidad de secuencias. Estrategia de restauración: stack destino arrancado al menos una vez, restauración solo de datos como `supabase_admin` en una transacción, excluyendo `auth.schema_migrations` y `storage.migrations`. **No está programado:** `docs/supabase.md` trae ejemplos de cron/systemd timer; hay que activarlo en el host y mantener copias fuera de él.
+5. **Trampa de Compose descubierta:** `docker-compose.test.yml` compartía nombre de proyecto y de servicio con el de desarrollo, y `npm test` recreó `intranet_postgres_dev` como `intranet_postgres_test` **heredando el volumen `intranet_postgres_data_dev`**. Verificado sobre una copia que los datos originales siguen intactos (11/5/3/3/1/17). Se añadió `name: intranet-test` al compose de tests y se documentó en `docs/supabase.md`.
+
+**Verificado en vivo (stack aislado, 59/59):** recibos y expedientes (dueño sí, ajeno 403, RH sí, listado por periodo solo RH, empleado no sube); fichas de empleados (propia 200, ajena 403, listado general 403, rol sin relación 403); permisos de ausencia y vacaciones (no actúa por otro); tickets (técnico no asignado 403 en detalle/adjuntos/subida/estado; asignado 200; reasignar y borrar solo admin; usuario de otro módulo 403 — **el revisor afirmó erróneamente que `GET /tickets/:id` no filtraba**); alta por admin (`POST /usuarios`, rol, login, sin hash local); alta de empleado con usuario; cambio de contraseña solo en GoTrue; rutas legadas 404 y token legado 401. Chromium: el login no ofrece registro, `/registro` no da formulario, el admin crea un usuario desde el panel y este inicia sesión. 197 tests jest (0 fallos), `vite build` y `config -q` OK.
+
+**Pendientes / riesgos:**
+- **Microsoft/Azure sigue sin probarse** (requiere credenciales reales); revalidar `email_verified` en el primer login real. Mantener `AZURE_AD_ENABLED=false` hasta entonces.
+- **Staging/prod:** ejecutar `supabase-db-init` (aplica 004/005/007/008), `scripts/migrar-usuarios-supabase.js` y, tras copiar los archivos viejos a `uploads_data`, `scripts/migrar-archivos-storage.js --dry-run` primero. El procedimiento exacto está en `docs/supabase.md` §4. Restaurar un dump de staging real puede chocar con los anchos de `varchar` de `empleados` (ver ADR Fase 0).
+- Respaldos sin programar (ver 4). El volumen viejo `intranet_postgres_data_dev` y los orquestadores huérfanos (`intranet_pgadmin_dev`) pueden retirarse cuando el usuario confirme.
+- `GET /empleados` y el dashboard RH los sirve cualquier rol con `Empleados:consulta` (en el seed solo `rh_admin`/`super_admin`; una base migrada podría tener otros).
+- `tickets_tecnico` no ve los botones de estado en la UI porque `req.user.permisos` nunca se llena (preexistente); por API un técnico asignado sí puede cambiarlo.
+- `.claude/settings.json` conserva permisos `curl` a `/api/auth/inicio-sesion` (inofensivos; del usuario, no se tocó) y `.claude/rules/backend/api.md` tiene `paths:` como texto, no como arreglo (el IDE lo marca; preexistente).
+- Las 3 imágenes de noticias de desarrollo ya no existen en disco: hay que volver a subirlas.
+
+### [2026-10-08] orquestador — Fase 5 completa: archivos en Supabase Storage
+
+**Delegación:** coder A (storage.service, noticias, app.js), coder B (RH expedientes y recibos), coder C (tickets, script de migración, compose), revisor (APROBADO), y coder B de nuevo para los hallazgos de la prueba en vivo. Verificación propia contra Storage real, API y Chromium.
+
+**Decisiones:**
+1. **`storage.service.js`** (fetch nativo, mismo patrón que `supabaseAdmin`): `subir`, `urlFirmada`, `urlPublica`, `eliminar`, `existe`, `asegurarBuckets`, `claveSegura` (ASCII, único). Los 4 buckets se crean solos al arrancar el backend (no fatal, 1 reintento) con visibilidad, límite y mimes alineados con los filtros de multer. Verificado en vivo, incluido `existe`.
+2. **Buckets privados** (`tickets-adjuntos`, `rh-expedientes`, `rh-recibos`) con URL firmada de 300 s emitida por `GET .../:id/url` con el mismo `verificarPermiso` que el listado; **`noticias` público de solo lectura** (esas imágenes ya se mostraban sin login). `ruta_archivo` guarda la clave del objeto (`<id>/<archivo>` o plano en noticias); las filas legadas (`/uploads/...`) responden 409 hasta migrarse.
+3. **Descarga forzada** (`Content-Disposition: attachment` vía `&download=`) y `window.location.assign` en vez de `window.open` tras un `await`: `/storage/v1` comparte origen con la app, así que servir contenido en línea sería riesgoso, y `window.open` tras una petición asíncrona puede bloquearse como popup. Se acepta que los PDFs ya no se vean en pestaña nueva.
+4. **Se eliminó `express.static("/uploads")`** (los recibos y expedientes eran públicos por URL). Probado: `/uploads/...` da 404. `/uploads/` queda en `.gitignore`. El proxy `/uploads` de `vite.config.js` es candidato a limpiar en la Fase 6.
+5. **Compensaciones:** si el INSERT falla tras subir, se elimina el objeto (noticias, tickets, expedientes, recibos; probado: 0 huérfanos). Al borrar fila y objeto: BD primero, Storage best-effort con aviso.
+6. **`scripts/migrar-archivos-storage.js`** (`npm run db:migrar-archivos-storage`): `--dry-run` (no crea buckets ni escribe), `--limit`, `--tabla`; `UPDATE ... AND ruta_archivo=$vieja` (idempotente y a prueba de carreras); no borra el origen; rutas con `..` cuentan como faltantes; claves ASCII (`Mi Factura Ñandú.pdf` -> `Mi_Factura_Nandu.pdf`; el nombre original se conserva en `nombre_archivo`). Exit 1 si hay faltantes o errores. En staging/prod el volumen `uploads_data` se monta `:ro` y **nace vacío**: hay que copiar ahí los archivos viejos antes de migrar.
+
+**Hallazgo de la prueba en vivo (deriva de esquema, mi línea base de Fase 0 se quedó corta):** `init.sql` definía `recibos_nomina` sin `fecha_pago`, `importe_total`, `descripcion`, `creado_por_id` ni `fecha_creacion` (la migración rh/001 sí los tenía), así que **crear y listar recibos daba 500 antes de esta fase**. La comparación de Fase 0 (dev vs init.sql) no podía verlo porque ambos estaban igual de desactualizados. Corregido con `rh/007-recibos-nomina-columnas.sql` (idempotente, también en `init.sql` y aplicada siempre por `supabase-db-init`, de modo que bases restauradas de un dump también se corrigen). Además `listarPorPeriodo` usaba `e.apellido` (SELECT y ORDER BY) y el perfil mostraba `doc.fecha_carga`: corregidos. Se comparó el resto de tablas RH contra sus modelos: coinciden. Se recorrieron todos los GET de la API: solo recibos fallaba. **Los caminos de escritura de otros módulos no se auditaron exhaustivamente.**
+
+**Verificado en vivo (stack real):** buckets con config correcta; noticias (subida, URL pública idéntica, tipo no permitido rechazado, sin token 401, borrar elimina el objeto); tickets, expedientes y recibos (clave con prefijo, URL firmada idéntica, firma y payload alterados 400, acceso directo y `/public/` a bucket privado rechazados, `/url` sin token 401, empleadoId no numérico rechazado, borrar elimina el objeto); migración con 4 tablas (dry-run no escribe, real migra, faltante y traversal intactos, segunda ejecución idempotente, origen conservado); Chromium: home carga imágenes de noticias desde Storage (200) y el clic en un adjunto descarga el archivo con su nombre original sin popup. 119 tests jest pasan; 2 fallan y son preexistentes (`empleado.controller.test.js`, validación de nombre/apellido: el commit 63fc4f3 cambió el formulario a `apellido_paterno` sin actualizar el test).
+
+**Pendientes / decisiones del usuario:**
+- **Autorización por propietario ausente (preexistente):** cualquier usuario con permiso de *consulta* puede obtener el adjunto de cualquier ticket y el expediente o recibo de cualquier empleado (solo se aplica `verificarPermiso`). Las URLs firmadas no lo empeoran, pero conviene decidir una política (solicitante/técnico/administrador en tickets; propio empleado o RH en recibos).
+- Validaciones menores sugeridas por el revisor: `empleadoId` numérico en `GET /recibos/empleado/:id`, `GET /recibos/:id` con id no numérico da 500, formato `YYYY-MM` en `periodo`.
+- Los PDFs ya no se visualizan en pestaña nueva (descarga forzada); si se quiere visor, requeriría servirlos desde otro origen.
+- `permisos_ausencia` (nombre real) vs. índices de la migración rh/001 que mencionan `permisos_ausencias`: preexistente, sin tocar.
+- Los 2 tests fallidos de `empleado.controller.test.js` siguen sin arreglar.
+
+### [2026-10-08] orquestador — Fase 4 completa: el frontend usa Supabase Auth
+
+**Delegación:** coder A (código React), coder B (infra: Vite, Dockerfile, compose, publicar-ghcr), revisor (APROBADO sin bloqueantes). Pruebas en vivo del orquestador con Chromium real (Playwright).
+
+**Decisiones:**
+1. **Mismo origen.** `lib/supabase.js` usa `VITE_SUPABASE_URL || window.location.origin`; Vite (dev) y nginx (staging/prod) proxifican `/auth/v1` y `/storage/v1`. Solo se hornea la anon key (pública por diseño) como `VITE_SUPABASE_ANON_KEY`; en staging hay que **republicar la imagen del frontend si rota la anon key**. Proxies de Vite con clave regex `^/auth/v1(/|$)` para no capturar `/auth/callback` de la SPA.
+2. **Supabase en exclusiva en el frontend.** `utils/token.js: obtenerToken()` es la única fuente del token; el token legado de `localStorage` se elimina al arrancar. Se migraron también 5 consumidores fuera del portal (rh, tickets, auditoria) que habrían enviado `Bearer null`.
+3. **AuthContext:** perfil del backend tras la sesión de Supabase; `onAuthStateChange` sin `await` dentro (difiere con `setTimeout`) para evitar deadlock; recarga el perfil solo si cambia el uid. 401/403 del perfil cierra la sesión y muestra `errorAuth`.
+4. **Botón de Microsoft detrás de `VITE_MS365_LOGIN`** (build; se alimenta de `AZURE_AD_ENABLED`, default false).
+5. **Fuera de alcance:** recuperación de contraseña por correo (requiere SMTP), Storage en el frontend (Fase 5), borrar lo legado (Fase 6).
+6. **Endurecimiento tras la revisión:** `error_description` de la URL se acota a 200 caracteres. El XSS no era explotable (React escapa; comprobado con payload `<img onerror>`), solo defensa en profundidad.
+
+**Verificado en vivo:** proxy de Vite (`/auth/v1/health`, `/storage/v1/status` 200, `/auth/callback` sirve la SPA); `supabase-js` real: contraseña incorrecta rechazada, sesión de 3600 s, token aceptado por el backend sin exponer hash ni `auth_uid`, refresh OK. **Chromium (16/16):** `/` sin sesión redirige al login, token legado limpiado, sin botón de Microsoft, contraseña incorrecta muestra error, login correcto entra, la home muestra al usuario, recargar mantiene la sesión, `/admin/usuarios` carga datos del backend con token de Supabase, cerrar sesión vuelve al login, usuario que existe en GoTrue pero no en la intranet queda en login con mensaje de sin acceso, callback con payload XSS no ejecuta script y se muestra como texto; 0 errores de consola.
+
+**Pendientes / riesgos:**
+- **Login con Microsoft NO probado** (requiere Azure real): configurar `AZURE_AD_*`, registrar el redirect `https://<host>/auth/v1/callback` en Azure y **revalidar `email_verified`** (ADR Fase 3) con un login real. Sin eso, `AZURE_AD_ENABLED` debe seguir en `false`.
+- `TOKEN_REFRESHED` no recarga el perfil si el uid es el mismo: un cambio de rol durante una sesión larga se ve tras F5 (aceptable).
+- El frontend no tiene tests unitarios; la cobertura actual es la prueba de Playwright (no commiteada).
+- **Registro público** (`/registro`) preexistente: cualquiera puede crear una cuenta sin permisos mientras `AUTH_LEGACY_ENABLED` esté activo. Decidir en Fase 6 si se elimina.
+- Recuperación de contraseña por correo: falta SMTP.
+
+### [2026-10-08] orquestador — Fase 3 completa: Supabase Auth (GoTrue) conviviendo con el login legado
+
+**Delegación:** coder A (middleware, servicio admin, auth, compose), coder B (script de migración de usuarios, alta/reset), revisor (RECHAZADO por 1 hallazgo, rechazado a su vez por el orquestador; ver abajo), coder B de nuevo (ajustes). Verificación propia contra GoTrue real.
+
+**Decisiones:**
+1. **Coexistencia con bandera `AUTH_LEGACY_ENABLED` (default `true`).** El frontend sigue en login legado hasta la Fase 4. Con la bandera en `false`, `/auth/inicio-sesion`, `/registro`, `/ms365*` y `/renovar` dan 404 y el middleware rechaza tokens legados. El código legado se borra en Fase 6.
+2. **Middleware** (`auth.middleware.js`): verifica HS256 con `SUPABASE_JWT_SECRET` y `aud=authenticated`; busca por `auth_uid`, y si no hay vínculo, por `lower(correo)` (solo `UPDATE ... WHERE auth_uid IS NULL`). Token Supabase válido pero usuario inexistente o inactivo = 403 y nunca cae al flujo legado. `req.user` conserva su forma (los 10 archivos que usan `usuario_id` no cambian).
+3. **Cliente GoTrue sin dependencia nueva:** `supabaseAdmin.service.js` con `fetch` nativo contra `SUPABASE_AUTH_URL` (red interna; sin gateway no existe `/auth/v1` interno). `buscarPorCorreo` pagina `/admin/users` (O(n)): solo para scripts y el callback legado de MS365, no para rutas calientes.
+4. **Escritura doble de contraseñas** (GoTrue + `hash_password`) mientras convivan ambos sistemas; con compensación si falla el segundo paso. Alta/registro: GoTrue primero, `auth_uid` en el INSERT, y si el INSERT falla se elimina el usuario de GoTrue.
+5. **El hash y `auth_uid` no salen por la API** (corrige la fuga preexistente de `hash_password` en `/auth/perfil`): `buscarPorId/buscarPorCorreo` sin hash, variantes `*ConHash` solo internas, y `utils/sinSecretos.js` en las respuestas.
+6. **`eliminar` usuario: orden local primero, GoTrue después** (el revisor pidió invertirlo; se rechazó). El middleware autoriza por la fila local, así que una identidad huérfana en GoTrue recibe 403 (verificado); invertirlo sería irrecuperable si el borrado local falla, porque no se puede recrear la identidad con su contraseña. Un fallo de limpieza en GoTrue se registra y no bloquea.
+7. **GoTrue con `DISABLE_SIGNUP=true`:** el script `scripts/migrar-usuarios-supabase.js` debe precrear a TODOS los usuarios activos (incluidos `ms365`, sin contraseña); el primer login con Microsoft se vincula por correo. Un usuario nuevo de Microsoft que no esté en GoTrue ni en la intranet NO puede entrar.
+
+**Verificado contra GoTrue real:** GoTrue acepta los hashes bcrypt `$2b$` tal cual (no hizo falta normalizar a `$2a$`); script en dry-run no escribe, en real crea 7/7 y es idempotente; token de GoTrue accede a `/usuarios`, `/empleados` y `/auditoria` como super_admin; usuario inactivo = 403; usuario en GoTrue sin fila local = 403; vinculación por correo con mayúsculas distintas OK; token legado OK con bandera activa y 401 con bandera apagada (rutas legadas 404, Supabase sigue 200); cambio de contraseña actualiza GoTrue y la BD local (la vieja deja de funcionar, el login legado acepta la nueva); 54 tests jest verdes.
+
+**Pendientes / riesgos conocidos:**
+- `email_verified !== false` en el middleware se mantiene permisivo a propósito: con el auto-registro apagado solo un admin puede crear identidades, y exigir `=== true` podría dejar fuera a usuarios de Azure si GoTrue no emite el claim. **Revalidar al probar Azure en la Fase 4.**
+- Cambio de correo de un usuario no se sincroniza con GoTrue (hoy `actualizar` no lo acepta; hay un TODO en el código).
+- Un usuario eliminado cuya limpieza en GoTrue falló deja una identidad huérfana; recrear ese correo chocaría (422). Limpieza manual con el servicio admin.
+- Usuarios locales sin `hash_password` se omiten en la migración (quedan sin acceso hasta que un admin les resetee la contraseña).
+- Acción externa: registrar en Azure Portal el redirect URI `https://<host>/auth/v1/callback` y configurar `AZURE_AD_*` en el `.env` (la Fase 4 lo necesita).
+
+### [2026-10-08] orquestador — Fase 2 completa: la app corre sobre el Postgres de Supabase
+
+**Delegación:** coder A (compose/env), coder B (pools), revisor (APROBADO sin bloqueantes, ver reviews.md). Verificación propia del orquestador con el flujo real de dev.
+
+**Decisiones:**
+1. **`include:` en dev/staging/prod** para incorporar `docker-compose.supabase.yml`; dev suma `docker-compose.supabase.dev.yml` (DB publicada solo en `127.0.0.1`). El `name:` del compose raíz gana: los volúmenes de Supabase quedan con el prefijo del entorno (`intranet_supabase_db_data` en dev, `intranet-staging_...` en staging).
+2. **`supabase-db-init`** (one-shot): carga `init.sql` con `--single-transaction` solo si no existe `public.usuarios`, y siempre aplica `004-rls-deny-all.sql`. El backend espera `service_completed_successfully`. `--single-transaction` se añadió tras la revisión: sin él, un fallo a mitad dejaba `usuarios` creada y el siguiente arranque saltaba el init (probado: fallo provocado → 0 tablas).
+3. Backend: `POSTGRES_HOST=supabase-db`, `POSTGRES_DB=postgres`. Un solo pool (`grupo` de portal); auditoría ya no crea pools propios.
+4. Observación del revisor descartada: `dev_password_123` NO es problema de URL (`_` es carácter seguro).
+
+**Verificado (dev real, sin `down -v`):** init crea 28 tablas con RLS; backend conecta; registro, login, perfil y 401 sin token OK; como super_admin responden 200 usuarios, roles, módulos, noticias, empleados, tickets, auditoría, rh/dashboard y vacaciones; crear ticket escribe `solicitante_id` y deja un registro de auditoría (pool consolidado OK). Volúmenes de prueba eliminados; `intranet_postgres_data_dev` y `intranet_uploads_data` intactos.
+
+**Pendientes detectados (no resueltos en esta fase):**
+- **Seguridad, preexistente:** `GET /api/auth/perfil` devuelve `hash_password` al cliente. Corregir en Fase 3 al reescribir el perfil (excluir el campo en el modelo, no solo en el controlador, y revisar `/usuarios`).
+- Los datos de la BD anterior (volumen `intranet_postgres_data_dev`) no se migran solos: la BD nueva arranca con las semillas de `init.sql`. Para conservar datos, `pg_dump` del contenedor viejo y restaurar en `supabase-db` ANTES del primer `up` completo.
+- Contenedores huérfanos `intranet_postgres_dev` e `intranet_pgadmin_dev` siguen en el host (detenidos); retirar tras confirmar.
+- README.md (portal/auditoría) aún cita `intranet_postgres_dev`, `intranet_dev`, `pgadmin:5050`: actualizar en Fase 6.
+- Los mensajes de las rutas de comentarios de tickets no se probaron por API (la tabla sí existe); verificar en Fase 3.
+
+### [2026-10-08] orquestador — Migración a Supabase self-hosted (DB + Auth + Storage): decisiones de Fase 0-1
+
+**Contexto:** Se migra Postgres, auth (JWT/Azure AD casero) y archivos (disco local) a Supabase self-hosted en contenedores propios. Plan completo: `.claude/plans/` (sesión) / rama `feat/supabase-selfhosted`.
+
+**Decisiones:**
+
+1. **Línea base del esquema = `config/database/init.sql`** (no las migraciones de módulo ni la BD de dev). El código coincide con `init.sql` (`tickets.solicitante_id/tecnico_id`, tabla `permisos_ausencia` en singular con `respondedor_id`). Las migraciones `tickets/001` y `rh/001` (`usuario_id`, `permisos_ausencias`) están **obsoletas**; la BD de dev también (no tiene `empleado_hijos`, `ticket_comentarios`).
+   - Se agregó a `init.sql` lo que faltaba: `tabla_calculo_vacaciones`, `solicitudes_vacaciones` (de `rh/002`) y `ticket_comentarios` (nueva `tickets/002`). Verificado: carga limpia con `ON_ERROR_STOP` y crea 28 tablas.
+   - Diferencia conocida: `init.sql` define `empleados.clabe/nss/infonavit/fonacot` más angostos que la BD de dev (18/11/20/20 vs 20/20/50/50). Si un dump de staging tiene datos más largos, la restauración fallará: revisar antes del corte.
+2. **Sin gateway (Kong/Envoy).** El compose oficial actual usa Envoy; aquí nginx enruta `/auth/v1/` → GoTrue y `/storage/v1/` → Storage (quita el prefijo y manda `X-Forwarded-Prefix`, requisito de las URLs firmadas). Menos piezas; PostgREST queda solo interno (dependencia de Storage). Studio+meta solo con perfil `admin` (sin gateway, solo Table/SQL editor).
+3. **Imagen `supabase/postgres:17.6.1.136`** (PG 17 ≥ 16 actual). La base debe llamarse `postgres`: el backend pasa a `POSTGRES_DB=postgres`. El rol `postgres` es superusuario en esa imagen (ignora RLS).
+4. **Secretos propios con prefijo `SUPABASE_*`** (`SUPABASE_JWT_SECRET`, etc.) para no chocar con el `JWT_SECRET` del auth actual durante la transición. `POSTGRES_PASSWORD` se comparte con el backend y debe ser URL-safe (va en URLs de GoTrue/Storage). Generador: `scripts/supabase/generar-secretos.sh`.
+5. **RLS deny-all** en todas las tablas de `public` + revocar `anon/authenticated` (incl. privilegios por defecto): migración `portal/004-rls-deny-all.sql`. Necesario porque PostgREST/anon key expondrían `hash_password`, CURP, NSS, etc.
+
+**Trampas encontradas al probar el stack (todas resueltas en `config/supabase/db/roles.sql` y el compose):**
+   - `roles.sql` oficial falla en `supabase_functions_admin` (lo crea `webhooks.sql`, que omitimos) y se detiene: `supabase_storage_admin` queda sin password.
+   - GoTrue falla con `must be owner of function uid`: la imagen crea `auth.uid/role/email` como `postgres`; se reasignan a `supabase_auth_admin`.
+   - Healthcheck de Storage con `localhost` falla (resuelve a `::1`, Storage escucha en IPv4): usar `127.0.0.1`.
+
+**Validado en pruebas (stack aislado, ya eliminado):** importar hash bcrypt con `password_hash` en `POST /admin/users` → login con la contraseña original OK, incorrecta rechazada; bucket privado → subida con service key OK, sin credenciales rechazado, URL firmada descarga OK, token alterado rechazado; `anon` sin acceso a `public` (tablas actuales y futuras).
+
 ### [2026-04-28] orquestador — Módulo Vacaciones RH: diseño e implementación
 
 **Contexto:** El usuario pidió eliminar la opción "Perfil" del módulo RH y crear una nueva sección "Vacaciones" con formulario de solicitud, control de saldo, flujo de aprobación y registro en auditoría.

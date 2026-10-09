@@ -1,3 +1,4 @@
+import { obtenerToken } from "../../../portal/frontend/utils/token";
 import { solicitar } from "../../../portal/frontend/utils/api";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000/api";
@@ -12,7 +13,7 @@ export async function subirDocumento(
   tipoDocumento,
   descripcion = "",
 ) {
-  const token = localStorage.getItem("token");
+  const token = await obtenerToken();
   const formulario = new FormData();
   formulario.append("archivo", archivo);
   formulario.append("tipo_documento", tipoDocumento);
@@ -37,4 +38,8 @@ export async function eliminarDocumento(id) {
   return solicitar(`/expediente/${id}`, {
     method: "DELETE",
   });
+}
+
+export async function obtenerUrlDocumento(id) {
+  return solicitar(`/expediente/${id}/url`);
 }

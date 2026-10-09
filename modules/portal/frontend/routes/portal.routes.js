@@ -2,7 +2,6 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { usarAuth } from "../context/AuthContext";
 
 import PortalLogin from "../pages/PortalLogin";
-import PortalRegistro from "../pages/PortalRegistro";
 import PortalHome from "../pages/PortalHome";
 import PortalNoticias from "../pages/PortalNoticias";
 import PortalAdminModulos from "../pages/PortalAdminModulos";
@@ -26,7 +25,6 @@ export default function RutasPortal() {
   return (
     <Routes>
       <Route path="/inicio-sesion" element={<PortalLogin />} />
-      <Route path="/registro" element={<PortalRegistro />} />
       <Route path="/" element={<PortalHome />} />
       <Route path="/noticias" element={<PortalNoticias />} />
       <Route

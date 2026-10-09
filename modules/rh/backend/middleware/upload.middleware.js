@@ -1,17 +1,6 @@
 const multer = require("multer");
 const ServicioArchivoRH = require("../services/archivo.service");
 
-function crearAlmacenamiento(obtenerRuta) {
-  return multer.diskStorage({
-    destination: (req, file, cb) => {
-      cb(null, obtenerRuta());
-    },
-    filename: (req, file, cb) => {
-      cb(null, ServicioArchivoRH.generarNombreArchivo(file.originalname));
-    },
-  });
-}
-
 const MSG_TIPO_EXPEDIENTE =
   "Tipo de archivo no válido. Formatos permitidos: JPG, PNG, GIF, PDF, DOC, DOCX (máx. 10 MB)";
 const MSG_TIPO_RECIBO =
@@ -27,7 +16,7 @@ function errorTipo(mensaje) {
 
 // Documentos de expediente: imágenes, PDF, Word — máx. 10 MB
 const subirDocumentoExpediente = multer({
-  storage: crearAlmacenamiento(() => ServicioArchivoRH.obtenerRutaExpediente()),
+  storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
     if (ServicioArchivoRH.validarTipoDocumento(file.mimetype)) {
       cb(null, true);
@@ -40,7 +29,7 @@ const subirDocumentoExpediente = multer({
 
 // Recibos de nómina: solo PDF — máx. 5 MB
 const subirRecibo = multer({
-  storage: crearAlmacenamiento(() => ServicioArchivoRH.obtenerRutaRecibos()),
+  storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
     if (ServicioArchivoRH.validarTipoRecibo(file.mimetype)) {
       cb(null, true);

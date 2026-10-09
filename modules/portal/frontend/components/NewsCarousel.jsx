@@ -1,8 +1,8 @@
+import { urlImagenNoticia } from "../utils/storage";
 // modules/portal/frontend/components/NewsCarousel.jsx
 import { useState, useEffect, useRef, useMemo } from 'react';
 import Icons from './Icons';
 
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:4000/api').replace('/api', '');
 
 /**
  * NewsCarousel — rail horizontal con scroll-snap + chips de filtro.
@@ -85,7 +85,7 @@ export default function NewsCarousel({ noticias = [], onOpen, categorias }) {
                 <div
                   className="news-card__media"
                   style={primera ? {
-                    backgroundImage: `url(${API_BASE}${primera.ruta_archivo})`,
+                    backgroundImage: `url(${urlImagenNoticia(primera)})`,
                     backgroundSize: 'cover',
                     backgroundPosition: 'center',
                   } : undefined}

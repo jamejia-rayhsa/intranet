@@ -1,8 +1,15 @@
 const TicketAdjunto = require("../models/ticketAdjunto.model");
 const ServicioArchivo = require("../services/archivo.service");
+const storage = require("../../../portal/backend/services/storage.service");
 const {
   registrarAccion,
 } = require("../../../auditoria/backend/services/auditoria.service");
+
+const SEGUNDOS_URL = 300;
+
+function esRutaLegada(ruta) {
+  return typeof ruta === "string" && ruta.startsWith("/uploads/");
+}
 
 const ControladorAdjunto = {
   async subir(req, res) {
@@ -21,20 +28,29 @@ const ControladorAdjunto = {
         });
       }
 
-      const nombreArchivo = ServicioArchivo.generarNombreArchivo(
-        req.file.originalname,
+      const clave = `${req.params.ticketId}/${storage.claveSegura(req.file.originalname)}`;
+      await storage.subir(
+        storage.BUCKETS.TICKETS,
+        clave,
+        req.file.buffer,
+        req.file.mimetype,
       );
-      const rutaRelativa = `/uploads/tickets/${nombreArchivo}`;
-      const rutaDestino = `${ServicioArchivo.obtenerRutaAlmacenamiento()}/${nombreArchivo}`;
 
-      await require("fs").promises.rename(req.file.path, rutaDestino);
-
-      const adjunto = await TicketAdjunto.crear({
-        ticket_id: req.params.ticketId,
-        nombre_archivo: req.file.originalname,
-        tipo_mime: req.file.mimetype,
-        ruta_archivo: rutaRelativa,
-      });
+      let adjunto;
+      try {
+        adjunto = await TicketAdjunto.crear({
+          ticket_id: req.params.ticketId,
+          nombre_archivo: req.file.originalname,
+          tipo_mime: req.file.mimetype,
+          ruta_archivo: clave,
+        });
+      } catch (errorBd) {
+        // No dejar objetos huérfanos en Storage si falla el INSERT
+        await storage
+          .eliminar(storage.BUCKETS.TICKETS, clave)
+          .catch(() => console.warn("No se pudo limpiar el objeto de Storage tras fallo de BD"));
+        throw errorBd;
+      }
 
       try {
         await registrarAccion(
@@ -79,6 +95,46 @@ const ControladorAdjunto = {
     }
   },
 
+  // Misma autorización que listar: verificarPermiso("tickets","Adjuntos","consulta") en la ruta
+  async obtenerUrl(req, res) {
+    try {
+      const adjunto = await TicketAdjunto.obtenerPorId(req.params.id);
+
+      if (!adjunto) {
+        return res
+          .status(404)
+          .json({ exito: false, mensaje: "Adjunto no encontrado" });
+      }
+
+      if (esRutaLegada(adjunto.ruta_archivo)) {
+        return res.status(409).json({
+          exito: false,
+          mensaje: "Archivo pendiente de migración a Storage",
+        });
+      }
+
+      const url = await storage.urlFirmada(
+        storage.BUCKETS.TICKETS,
+        adjunto.ruta_archivo,
+        { segundos: SEGUNDOS_URL, descargar: adjunto.nombre_archivo },
+      );
+
+      res.json({
+        exito: true,
+        datos: {
+          url,
+          nombre_archivo: adjunto.nombre_archivo,
+          expira_en: SEGUNDOS_URL,
+        },
+      });
+    } catch (error) {
+      res.status(500).json({
+        exito: false,
+        mensaje: "Error al generar la URL del adjunto",
+      });
+    }
+  },
+
   async eliminar(req, res) {
     try {
       const adjunto = await TicketAdjunto.obtenerPorId(req.params.id);
@@ -89,7 +145,16 @@ const ControladorAdjunto = {
           .json({ exito: false, mensaje: "Adjunto no encontrado" });
       }
 
-      await ServicioArchivo.eliminarArchivo(adjunto.ruta_archivo);
+      // Filas legadas (/uploads/...) siguen en disco hasta migrarse: no hay objeto que borrar
+      if (!esRutaLegada(adjunto.ruta_archivo)) {
+        try {
+          await storage.eliminar(storage.BUCKETS.TICKETS, adjunto.ruta_archivo);
+        } catch (errorStorage) {
+          console.warn(
+            `No se pudo eliminar el objeto de Storage del adjunto ${adjunto.id}: ${errorStorage.message}`,
+          );
+        }
+      }
       await TicketAdjunto.eliminar(req.params.id);
 
       try {

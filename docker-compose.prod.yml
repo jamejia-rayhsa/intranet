@@ -1,23 +1,26 @@
-version: '3.8'
+# Producción. Postgres es supabase-db (docker-compose.supabase.yml, vía include).
+#
+# Uso:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#
+# Base de datos: supabase-db-init (one-shot) carga config/database/init.sql si no existe
+# public.usuarios y siempre aplica 004-rls-deny-all.sql. Para restaurar un dump: hacerlo ANTES
+# del primer `up` completo (levantar solo supabase-db) o con psql contra supabase-db
+# (usuario/base `postgres`); el init se salta la carga si `usuarios` ya existe.
+# Secretos Supabase: scripts/supabase/generar-secretos.sh (ver .env.supabase.example).
+#
+# Archivos (Supabase Storage): el backend monta `uploads_data` en /app/uploads SOLO LECTURA
+# para migrar adjuntos/expedientes/recibos/imagenes legados a Storage. El volumen nace vacio:
+# copia antes los archivos viejos (p. ej. `docker cp <contenedor_viejo>:/app/uploads/. <dir>` y de ahi
+# a un contenedor que monte el volumen). Luego, en ese orden:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm --no-deps \
+#     backend node scripts/migrar-archivos-storage.js --dry-run
+# y sin --dry-run para migrar. El script nunca borra los archivos de origen.
+
+include:
+  - docker-compose.supabase.yml
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: intranet_postgres_prod
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - postgres_data_prod:/var/lib/postgresql/data
-      - ./config/database/init.sql:/docker-entrypoint-initdb.d/init.sql
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER}']
-      interval: 30s
-      timeout: 10s
-      retries: 5
-    restart: always
-
   backend:
     build:
       context: .
@@ -26,16 +29,15 @@ services:
     container_name: intranet_backend_prod
     environment:
       NODE_ENV: production
-      POSTGRES_HOST: postgres
+      POSTGRES_HOST: supabase-db
       POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-24h}
-      AZURE_AD_CLIENT_ID: ${AZURE_AD_CLIENT_ID}
-      AZURE_AD_TENANT_ID: ${AZURE_AD_TENANT_ID}
-      AZURE_AD_REDIRECT_URI: ${AZURE_AD_REDIRECT_URI}
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      SUPABASE_AUTH_URL: http://supabase-auth:9999
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_STORAGE_URL: http://supabase-storage:5000
       MSSQL_HOST: ${MSSQL_HOST}
       MSSQL_PORT: ${MSSQL_PORT}
       MSSQL_USER: ${MSSQL_USER}
@@ -43,8 +45,17 @@ services:
       MSSQL_DB: ${MSSQL_DB}
     restart: always
     depends_on:
-      postgres:
+      supabase-db-init:
+        condition: service_completed_successfully
+      supabase-auth:
         condition: service_healthy
+      supabase-storage:
+        condition: service_healthy
+    volumes:
+      # Solo lectura: archivos legados que migra scripts/migrar-archivos-storage.js
+      - uploads_data:/app/uploads:ro
+    networks:
+      - internal
 
   frontend:
     build:
@@ -56,9 +67,14 @@ services:
     container_name: intranet_frontend_prod
     environment:
       NODE_ENV: production
+      # Se leen al arrancar (config/nginx/40-config-js.sh genera /config.js): no se hornean en la imagen
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:?Define SUPABASE_ANON_KEY en .env.prod}
+      MS365_LOGIN: ${AZURE_AD_ENABLED:-false}
     restart: always
     depends_on:
       - backend
+    networks:
+      - internal
 
   nginx:
     image: nginx:alpine
@@ -73,6 +89,11 @@ services:
       - frontend
       - backend
     restart: always
+    networks:
+      - internal
 
 volumes:
-  postgres_data_prod:
+  uploads_data:
+
+networks:
+  internal:

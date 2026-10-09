@@ -1,6 +1,7 @@
 const SolicitudVacaciones = require("../models/solicitudVacaciones.model");
 const Empleado = require("../models/empleado.model");
 const ServicioNotificacionRH = require("../services/notificacion.service");
+const { tienePermiso } = require("../../../portal/backend/middleware/permisos.middleware");
 const { registrarAccion } = require("../../../auditoria/backend/services/auditoria.service");
 
 const ControladorVacaciones = {
@@ -209,7 +210,9 @@ const ControladorVacaciones = {
       const { pagina = 1, limite = 20, estatus, periodo, busqueda } = req.query;
 
       const rolNombre = req.user.rol_nombre;
-      const esAdmin = ["super_admin", "rh_admin"].includes(rolNombre);
+      const esAdmin =
+        ["super_admin", "rh_admin"].includes(rolNombre) ||
+        (await tienePermiso(req.user, "rh", "Empleados", "edicion"));
 
       const empleadoUsuario = await Empleado.obtenerPorUsuarioId(req.user.usuario_id);
 
@@ -225,6 +228,11 @@ const ControladorVacaciones = {
         filtros.ver_todo = true;
       } else if (empleadoUsuario) {
         filtros.empleado_o_jefe_id = empleadoUsuario.id;
+      } else {
+        // Sin empleado vinculado no hay "lo propio": antes caia en listado completo
+        return res
+          .status(403)
+          .json({ exito: false, mensaje: "No tienes acceso a este recurso" });
       }
 
       const solicitudes = await SolicitudVacaciones.listar(filtros);

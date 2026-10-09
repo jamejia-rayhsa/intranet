@@ -1,7 +1,7 @@
+import { urlImagenNoticia } from "../utils/storage";
 // modules/portal/frontend/components/CarruselNoticias.jsx
 import { useState, useEffect, useCallback } from "react";
 
-const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:4000/api").replace("/api", "");
 
 const GRADIENTES = [
   "linear-gradient(135deg, #1a5276, #2e86c1)",
@@ -86,7 +86,7 @@ export default function CarruselNoticias({
         {tieneImagenes ? (
           <>
             <img
-              src={`${API_BASE}${imagenActual.ruta_archivo}`}
+              src={`${urlImagenNoticia(imagenActual)}`}
               alt={imagenActual.nombre_archivo || noticia.titulo}
               className="carrusel-imagen"
             />

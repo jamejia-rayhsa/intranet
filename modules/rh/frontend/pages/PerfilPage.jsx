@@ -4,6 +4,7 @@ import {
   obtenerDocumentos,
   subirDocumento,
   eliminarDocumento,
+  obtenerUrlDocumento,
 } from "../services/expediente.service";
 import { obtenerRecibos } from "../services/recibos.service";
 import ExpedienteUpload from "../components/ExpedienteUpload";
@@ -56,6 +57,16 @@ export default function EmpleadoProfileCard({ empleadoId, alVolver }) {
       if (respuesta.exito) setDocumentos(respuesta.datos);
     } catch (error) {
       console.error("Error al subir documento:", error);
+    }
+  }
+
+  async function abrirDocumento(docId) {
+    try {
+      const respuesta = await obtenerUrlDocumento(docId);
+      window.location.assign(respuesta.datos.url); // descarga forzada: no navega fuera de la página
+    } catch (error) {
+      console.error("Error al abrir documento:", error);
+      alert(error.message || "No se pudo abrir el documento");
     }
   }
 
@@ -174,16 +185,24 @@ export default function EmpleadoProfileCard({ empleadoId, alVolver }) {
                   <tr key={doc.id}>
                     <td>{doc.tipo_documento}</td>
                     <td>
-                      <a
-                        href={doc.ruta_archivo}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        type="button"
+                        className="boton-enlace"
+                        style={{
+                          background: "none",
+                          border: "none",
+                          padding: 0,
+                          cursor: "pointer",
+                          color: "var(--color-primario)",
+                          textDecoration: "underline",
+                        }}
+                        onClick={() => abrirDocumento(doc.id)}
                       >
                         {doc.nombre_archivo}
-                      </a>
+                      </button>
                     </td>
                     <td>
-                      {new Date(doc.fecha_carga).toLocaleDateString("es-MX")}
+                      {new Date(doc.fecha_subida).toLocaleDateString("es-MX")}
                     </td>
                     <td>
                       <button

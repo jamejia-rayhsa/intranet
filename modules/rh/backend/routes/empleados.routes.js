@@ -4,6 +4,8 @@ const ControladorHijo = require("../controllers/empleadoHijo.controller");
 const { authenticateJWT } = require("../../../portal/backend/middleware/auth.middleware");
 const { verificarPermiso } = require("../../../portal/backend/middleware/permisos.middleware");
 
+const { accesoEmpleado, validarId } = require("../middleware/acceso-empleado.middleware");
+
 const router = Router();
 
 router.use(authenticateJWT);
@@ -14,9 +16,20 @@ router.get("/mi-perfil", ControladorEmpleado.obtenerPorUsuario);
 router.get(
   "/jefe/:jefeId/subordinados",
   verificarPermiso("rh", "Empleados", "consulta"),
+  validarId("jefeId"),
   ControladorEmpleado.listarSubordinados,
 );
-router.get("/:id", ControladorEmpleado.obtener);
+// Dueno de la ficha o Empleados:consulta (la ficha incluye CURP, NSS, CLABE)
+router.get(
+  "/:id",
+  validarId("id"),
+  accesoEmpleado({
+    opcion: "Empleados",
+    tipoRH: "consulta",
+    obtenerEmpleadoId: (req) => req.params.id,
+  }),
+  ControladorEmpleado.obtener,
+);
 router.post("/", verificarPermiso("rh", "Empleados", "edicion"), ControladorEmpleado.crear);
 router.put("/:id", verificarPermiso("rh", "Empleados", "edicion"), ControladorEmpleado.actualizar);
 router.put(
@@ -29,6 +42,7 @@ router.put(
 router.get(
   "/:empleadoId/hijos",
   verificarPermiso("rh", "Empleados", "consulta"),
+  validarId("empleadoId"),
   ControladorHijo.listar,
 );
 router.post(

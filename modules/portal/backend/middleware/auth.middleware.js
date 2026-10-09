@@ -1,7 +1,61 @@
 const jwt = require("jsonwebtoken");
 const Usuario = require("../models/usuario.model");
-const Rol = require("../models/rol.model");
 const { grupo } = require("../config/database");
+
+/** Devuelve los claims si el token es un JWT de Supabase válido; si no, null. */
+function verificarTokenSupabase(token) {
+  const secreto = process.env.SUPABASE_JWT_SECRET;
+  if (!secreto) return null;
+  try {
+    return jwt.verify(token, secreto, {
+      algorithms: ["HS256"],
+      audience: "authenticated",
+    });
+  } catch (error) {
+    return null;
+  }
+}
+
+const COLUMNAS_USUARIO = "id, correo, nombre, apellido, activo, auth_uid";
+
+/**
+ * Busca el usuario local por auth_uid (sub del token de GoTrue).
+ *
+ * NO se vincula por correo: el correo y user_metadata de un usuario de GoTrue los puede
+ * editar el propio usuario (PUT /auth/v1/user) y, con SUPABASE_EMAIL_AUTOCONFIRM activo,
+ * el cambio de correo no pide confirmación. Vincular por correo permitiría a cualquier
+ * cuenta de GoTrue adueñarse de una fila local sin auth_uid con solo poner su correo.
+ * El vínculo lo crea siempre un administrador (alta de usuario/empleado o
+ * scripts/migrar-usuarios-supabase.js).
+ */
+async function resolverUsuarioSupabase(claims) {
+  const porUid = await grupo.query(
+    `SELECT ${COLUMNAS_USUARIO} FROM usuarios WHERE auth_uid = $1`,
+    [claims.sub],
+  );
+  return porUid.rows[0] || null;
+}
+
+/** Agrega rol_id, rol_nombre y roles a req.user (misma forma que antes). */
+async function completarRol(user) {
+  const resultado = await grupo.query(
+    `SELECT ur.rol_id, r.nombre AS rol_nombre
+     FROM usuario_rol ur
+     INNER JOIN roles r ON r.id = ur.rol_id
+     WHERE ur.usuario_id = $1
+     LIMIT 1`,
+    [user.usuario_id],
+  );
+  if (resultado.rows.length > 0) {
+    user.rol_id = resultado.rows[0].rol_id;
+    user.rol_nombre = resultado.rows[0].rol_nombre;
+  } else {
+    user.rol_id = null;
+    user.rol_nombre = null;
+  }
+  // Compatibilidad con código que usa req.user.roles (array)
+  user.roles = user.rol_nombre ? [user.rol_nombre] : [];
+}
 
 /**
  * Middleware para autenticar el token JWT.
@@ -27,95 +81,47 @@ async function authenticateJWT(req, res, next) {
 
   const token = partes[1];
 
-  try {
-    const decodificado = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decodificado;
-
-    const resultadoUsuario = await grupo.query(
-      `SELECT ur.rol_id, r.nombre AS rol_nombre
-       FROM usuario_rol ur
-       INNER JOIN roles r ON r.id = ur.rol_id
-       WHERE ur.usuario_id = $1
-       LIMIT 1`,
-      [req.user.usuario_id]
-    );
-
-    if (resultadoUsuario.rows.length > 0) {
-      req.user.rol_id = resultadoUsuario.rows[0].rol_id;
-      req.user.rol_nombre = resultadoUsuario.rows[0].rol_nombre;
-    } else {
-      req.user.rol_id = null;
-      req.user.rol_nombre = null;
-    }
-
-    // Mantener compatibilidad con código que usa req.user.roles (array)
-    req.user.roles = req.user.rol_nombre ? [req.user.rol_nombre] : [];
-
-    next();
-  } catch (error) {
-    return res.status(401).json({
-      exito: false,
-      mensaje: "Token inválido o expirado",
-    });
-  }
-}
-
-/**
- * Middleware para verificar que el usuario tenga los permisos requeridos.
- * Uso: autorizar(['portal.admin', 'rh.view'])
- */
-function autorizar(permisosRequeridos) {
-  return async (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({
-        exito: false,
-        mensaje: "Usuario no autenticado",
-      });
-    }
-
-    // Obtener roles del usuario
-    const consultaRoles = `
-      SELECT r.id as rol_id, r.nombre as rol_nombre
-      FROM usuario_rol ur
-      INNER JOIN roles r ON ur.rol_id = r.id
-      WHERE ur.usuario_id = $1
-    `;
-
-    const resultadoRoles = await grupo.query(consultaRoles, [
-      req.user.usuario_id,
-    ]);
-    const rolesUsuario = resultadoRoles.rows;
-
-    // Si el usuario tiene rol super_admin, tiene todos los permisos
-    const tieneSuperAdmin = rolesUsuario.some(
-      (r) => r.rol_nombre === "super_admin",
-    );
-    if (tieneSuperAdmin) {
+  // Único tipo de token aceptado: Supabase Auth (HS256, aud=authenticated)
+  const claims = verificarTokenSupabase(token);
+  if (claims) {
+    try {
+      const usuario = await resolverUsuarioSupabase(claims);
+      if (!usuario) {
+        return res.status(403).json({
+          exito: false,
+          mensaje: "Usuario no registrado en la intranet",
+        });
+      }
+      if (usuario.activo === false) {
+        return res.status(403).json({
+          exito: false,
+          mensaje: "Usuario desactivado",
+        });
+      }
+      req.user = {
+        usuario_id: usuario.id,
+        correo: usuario.correo,
+        nombre: usuario.nombre,
+        auth_uid: usuario.auth_uid,
+        iat: claims.iat,
+        exp: claims.exp,
+      };
+      await completarRol(req.user);
       return next();
-    }
-
-    // Obtener todos los permisos del usuario a través de sus roles
-    const permisosUsuario = new Set();
-    for (const rol of rolesUsuario) {
-      const permisos = await Rol.obtenerPermisos(rol.rol_id);
-      permisos.forEach((p) => permisosUsuario.add(p.nombre));
-    }
-
-    // Verificar si tiene al menos uno de los permisos requeridos
-    const tienePermiso = permisosRequeridos.some((permiso) =>
-      permisosUsuario.has(permiso),
-    );
-
-    if (!tienePermiso) {
-      return res.status(403).json({
+    } catch (error) {
+      console.error("Error al autenticar token Supabase:", error.message);
+      return res.status(500).json({
         exito: false,
-        mensaje: "No tienes permisos suficientes para realizar esta acción",
-        permisos_requeridos: permisosRequeridos,
+        mensaje: "Error interno de autenticación",
       });
     }
+  }
 
-    next();
-  };
+  // Cualquier otro token (firma ajena, expirado, malformado) se rechaza.
+  return res.status(401).json({
+    exito: false,
+    mensaje: "Token inválido o expirado",
+  });
 }
 
-module.exports = { authenticateJWT, autorizar };
+module.exports = { authenticateJWT };

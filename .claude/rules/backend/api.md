@@ -15,5 +15,7 @@ paths: modules/*/backend/**
 
 ## Autenticacion y permisos
 
-- **Auth middleware (nuevo, Fase 2+):** `verificarPermiso(modulo, opcion, tipo)` — un rol por usuario via `usuarios.rol_id`
-- **Auth middleware (legado):** `autorizar(['portal.admin'])` — multi-rol via tabla `usuario_rol` (solo en codigo no migrado)
+- **Identidad:** `authenticateJWT` verifica tokens de Supabase Auth (GoTrue, HS256 con `SUPABASE_JWT_SECRET`) y resuelve al usuario local por `usuarios.auth_uid`. No hay login/registro propios; las altas las hace un admin via `supabaseAdmin.service.js`.
+- **Archivos:** siempre via `storage.service.js` (Supabase Storage); nunca escribir en disco ni servir `/uploads`.
+- **Permisos:** `verificarPermiso(modulo, opcion, tipo)` — un rol por usuario via `usuarios.rol_id`; para decidir en código usar `tienePermiso(user, modulo, opcion, tipo)`
+- **Propiedad:** recibos, expedientes, permisos de ausencia, vacaciones y tickets además exigen ser el dueño del recurso o RH/administrador (`acceso-empleado.middleware.js`, `acceso-ticket.middleware.js`)
