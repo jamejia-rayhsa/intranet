@@ -61,7 +61,7 @@ bash scripts/supabase/generar-secretos.sh >> .env.staging   # imprime líneas li
 Genera `POSTGRES_PASSWORD` (hex, URL-safe: va dentro de URLs de GoTrue/Storage), `SUPABASE_JWT_SECRET`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` (JWT firmados con ese secreto, 10 años) y `PG_META_CRYPTO_KEY`.
 
 - **Nunca reutilices** los secretos de `.env.dev` en staging/prod. Los `.env.staging`/`.env.prod` están en `.gitignore`; guárdalos en un gestor de secretos y respáldalos aparte de los datos.
-- Solo la **anon key** se hornea en el frontend (`VITE_SUPABASE_ANON_KEY`, pública por diseño) junto con `VITE_MS365_LOGIN`. La service role key y el JWT secret solo los ven backend, GoTrue, PostgREST y Storage.
+- Solo la **anon key** llega al navegador (pública por diseño), junto con el flag de Microsoft: el contenedor del frontend la lee **al arrancar** de `SUPABASE_ANON_KEY` y `AZURE_AD_ENABLED` y genera `/config.js` (`config/nginx/40-config-js.sh`); en desarrollo se usan `VITE_SUPABASE_ANON_KEY`/`VITE_MS365_LOGIN`. La imagen es la misma para todos los entornos (también la del CI). La service role key y el JWT secret solo los ven backend, GoTrue, PostgREST y Storage.
 - En staging el frontend es una imagen publicada (`scripts/staging/publicar-ghcr.sh` lee `SUPABASE_ANON_KEY`): si cambia la anon key hay que **republicar la imagen del frontend**.
 - `SUPABASE_PUBLIC_URL` es el origen público (sin slash final) desde el que el navegador llega a `/auth/v1` y `/storage/v1`; en dev es `http://localhost:3000` (proxy de Vite).
 
@@ -115,7 +115,7 @@ Procedimiento ejecutado con éxito sobre el entorno de desarrollo (contenedor vi
 El botón de Microsoft está apagado por defecto. Para activarlo:
 
 1. En Azure Portal (Entra ID, single-tenant) registra el redirect URI **`https://<host>/auth/v1/callback`** (en desarrollo `http://localhost:3000/auth/v1/callback`).
-2. En el `.env.<entorno>` (en desarrollo, `.env.dev.local`: `.env.dev` está versionado, no pongas ahí el secreto): `AZURE_AD_ENABLED=true`, `AZURE_AD_TENANT_ID`, `AZURE_AD_CLIENT_ID`, `AZURE_AD_CLIENT_SECRET`. `AZURE_AD_ENABLED` alimenta también `VITE_MS365_LOGIN` (se hornea al construir el frontend: reconstruir/republicar). `GOTRUE_EXTERNAL_AZURE_URL` es solo `https://login.microsoftonline.com/<tenant>`, **sin `/v2.0`**.
+2. En el `.env.<entorno>` (en desarrollo, `.env.dev.local`: `.env.dev` está versionado, no pongas ahí el secreto): `AZURE_AD_ENABLED=true`, `AZURE_AD_TENANT_ID`, `AZURE_AD_CLIENT_ID`, `AZURE_AD_CLIENT_SECRET`. `AZURE_AD_ENABLED` decide también si el frontend muestra el botón (lo lee al arrancar el contenedor: basta recrearlo, sin reconstruir la imagen). `GOTRUE_EXTERNAL_AZURE_URL` es solo `https://login.microsoftonline.com/<tenant>`, **sin `/v2.0`**.
 3. Todo usuario debe existir antes en GoTrue **y vinculado** (`usuarios.auth_uid`): el registro público está apagado (`SUPABASE_DISABLE_SIGNUP=true`) y el backend autoriza solo por `auth_uid`. Lo crea un administrador (panel, alta de empleado) o `scripts/migrar-usuarios-supabase.js`.
 
 **Cómo se identifica a un usuario de Microsoft:** en el primer login, GoTrue asocia la identidad `azure` al usuario de GoTrue que ya tiene ese correo (ese es el único punto donde el correo importa; debe coincidir con el correo de Microsoft). A partir de ahí el backend resuelve la fila local por `auth_uid`, nunca por correo (ver ADR de la Fase 6 sobre por qué se eliminó la vinculación por correo del middleware).
@@ -193,7 +193,7 @@ Con un proyecto aislado (`-p ibk`): se creó un usuario en GoTrue con contraseñ
 
 ## 7. Rotación de claves
 
-- **`SUPABASE_JWT_SECRET`**: invalida todos los tokens. Hay que regenerar también `SUPABASE_ANON_KEY` y `SUPABASE_SERVICE_ROLE_KEY` (están firmadas con ese secreto), actualizar el `.env`, **reconstruir/republicar el frontend** (la anon key va horneada) y recrear `supabase-auth`, `supabase-rest`, `supabase-storage` y `backend`. **Todos los usuarios deben iniciar sesión de nuevo.**
+- **`SUPABASE_JWT_SECRET`**: invalida todos los tokens. Hay que regenerar también `SUPABASE_ANON_KEY` y `SUPABASE_SERVICE_ROLE_KEY` (están firmadas con ese secreto), actualizar el `.env`, y recrear `supabase-auth`, `supabase-rest`, `supabase-storage`, `backend` **y `frontend`** (la anon key se lee al arrancar el contenedor: no hace falta reconstruir ni republicar la imagen). **Todos los usuarios deben iniciar sesión de nuevo.**
 - **`POSTGRES_PASSWORD`**: cambia la contraseña de los roles internos (`supabase_auth_admin`, `supabase_storage_admin`, `authenticator`, ...) con `ALTER ROLE` como `supabase_admin`, y el `.env`; recrear los servicios. Es URL-safe obligatoria (hex).
 - **Secreto de Azure**: solo `AZURE_AD_CLIENT_SECRET` y recrear `supabase-auth`.
 - Registra la fecha de cada rotación y haz un respaldo antes.
@@ -223,7 +223,7 @@ Las versiones están fijadas en `docker-compose.supabase.yml`. Para actualizar: 
 | Archivos viejos no aparecen en staging/prod | El volumen `uploads_data` nace vacío y se monta `:ro`: copia ahí los archivos antes de `migrar-archivos-storage.js`. Las filas legadas (`/uploads/...`) responden 409 hasta migrarse. |
 | URL firmada responde 400/403 ("invalid signature") | Storage firma con la ruta original: nginx debe quitar `/storage/v1` **y** enviar `X-Forwarded-Prefix /storage/v1` (y Storage `REQUEST_ALLOW_X_FORWARDED_PATH=true`). Revisa `config/nginx/*.conf` si pones otro proxy delante. |
 | Usuario válido en GoTrue pero 403 en la API | Existe en GoTrue y no en `public.usuarios` (o está inactivo): el backend autoriza por la fila local. |
-| El login ya no funciona tras rotar claves | Esperado (ver sección 7): reiniciar sesión; si falla, la anon key horneada en el frontend no coincide con el nuevo secreto: reconstruir. |
+| El login ya no funciona tras rotar claves | Esperado (ver sección 7): reiniciar sesión; si falla, la anon key del frontend (variable `SUPABASE_ANON_KEY` del contenedor; recrearlo) no coincide con el nuevo secreto: reconstruir. |
 | Login con Microsoft: "No se ha encontrado ninguna página web" en `login.microsoftonline.com/<tenant>/v2.0/oauth2/v2.0/authorize` | `GOTRUE_EXTERNAL_AZURE_URL` terminaba en `/v2.0`: GoTrue ya añade `/oauth2/v2.0/...`, así que la ruta salía duplicada. La URL base debe ser solo `https://login.microsoftonline.com/<tenant>` (corregido en `docker-compose.supabase.yml`; recrear `supabase-auth`). |
 | Restauración: "falta la tabla auth.users" | El stack destino no ha arrancado completo: levanta db, db-init, auth y storage antes de restaurar. |
 

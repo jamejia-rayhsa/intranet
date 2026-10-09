@@ -220,7 +220,7 @@ uliweb/
 | `POSTGRES_USER`             | `postgres`             | Usuario de BD                                 |
 | `POSTGRES_PASSWORD`         | `dev_password_123`     | Contraseña de BD (URL-safe)                   |
 | `SUPABASE_JWT_SECRET`       | generado               | Secreto con que GoTrue firma los tokens       |
-| `SUPABASE_ANON_KEY`         | generado               | Clave pública (se hornea en el frontend)      |
+| `SUPABASE_ANON_KEY`         | generado               | Clave pública (el frontend la lee al arrancar) |
 | `SUPABASE_SERVICE_ROLE_KEY` | generado               | Clave privada del backend (Admin API/Storage) |
 | `SUPABASE_PUBLIC_URL`       | `http://localhost:3000`| Origen público de `/auth/v1` y `/storage/v1`  |
 | `AZURE_AD_ENABLED`          | `false`                | Login con Microsoft (proveedor de GoTrue)     |

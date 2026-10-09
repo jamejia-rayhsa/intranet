@@ -6,6 +6,16 @@ type: project
 
 # Decisiones de Arquitectura
 
+### [2026-10-09] orquestador — La imagen del frontend ya no lleva la anon key: configuración leída al arrancar el contenedor
+
+**Problema encontrado al preparar el despliegue a staging/prod:** (1) el workflow de CI (`.github/workflows/docker-build-deploy.yml`) construía la imagen del frontend **sin** `VITE_SUPABASE_ANON_KEY` (solo `publicar-ghcr.sh` la pasaba), y ambos publican con la misma etiqueta `ghcr.io/jamejia-rayhsa/intranet/frontend:<sha>`: un push a `main` podía sobrescribir la imagen buena con una que no puede iniciar sesión; (2) la anon key deriva del JWT secret de **cada entorno**, así que una imagen con la clave horneada no sirve para otro entorno; (3) rotar claves obligaba a reconstruir y republicar.
+
+**Decisión:** el contenedor genera `/config.js` al arrancar (`config/nginx/40-config-js.sh`, ejecutado por el entrypoint de nginx) a partir de `SUPABASE_ANON_KEY`, `SUPABASE_URL` (opcional) y `MS365_LOGIN` (= `AZURE_AD_ENABLED`). `modules/portal/frontend/lib/config.js` da prioridad a esa configuración y cae a `VITE_*` en desarrollo (donde `public/config.js` queda vacío). `index.html` carga `/config.js` antes del bundle; nginx lo sirve con `Cache-Control: no-store`. Los valores se filtran a `[A-Za-z0-9._:/-]` para impedir inyección de JS. `Dockerfile.frontend`, los compose de staging/prod y `publicar-ghcr.sh` ya no hornean nada. **Una sola imagen (la del CI) sirve para todos los entornos**, y rotar la anon key o activar Microsoft solo requiere cambiar el `.env` y recrear el contenedor.
+
+**Verificado:** imagen de producción construida sin ninguna clave (0 archivos con un JWT); tres arranques con variables distintas generan su propio `config.js`; un intento de inyección (`";alert(1);//<script>`) queda como `alert1//script`; sin clave el contenedor avisa en el arranque; Chromium: el navegador recibe la clave del arranque, el botón de Microsoft aparece solo con `MS365_LOGIN=true`, y las peticiones a `/auth/v1` llevan esa clave en `apikey` (8/8). Compose dev/staging/prod validan.
+
+**Consecuencia para el despliegue:** staging/prod exigen `SUPABASE_ANON_KEY` en su `.env` (el compose falla con mensaje claro si falta).
+
 ### [2026-10-09] orquestador — Se elimina la vinculación por correo del middleware (resuelve el pendiente de `email_verified`)
 
 **Contexto:** el pendiente de la Fase 3/4 era revalidar `email_verified` con un login real de Azure. El usuario ejecutó la consulta sobre `auth.identities`/`auth.users` (usuario migrado con login de Microsoft): identidad `email` -> `identity_data.email_verified = false` y `raw_user_meta_data.email_verified = true`; identidad `azure` -> ambos `true`. Con esos datos, endurecer a `=== true` habría funcionado, pero al releer el middleware el problema real era otro.

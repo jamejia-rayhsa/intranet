@@ -4,9 +4,10 @@ name: intranet-staging
 # Arquitectura: Cloudflare → Traefik (HTTP) → Frontend-nginx (sirve SPA + proxy /api/)
 #                                                             → Backend (Node.js :4000)
 #
-# NOTA: la anon key de Supabase (VITE_SUPABASE_ANON_KEY) se hornea en la imagen del
-# frontend al publicarla (scripts/staging/publicar-ghcr.sh la lee de SUPABASE_ANON_KEY).
-# Es pública por diseño; si rota el JWT secret hay que republicar la imagen.
+# NOTA: la imagen del frontend es la MISMA para todos los entornos (también la que construye el CI):
+# la anon key de Supabase, la URL y el flag de Microsoft se leen al ARRANCAR el contenedor
+# (SUPABASE_ANON_KEY y AZURE_AD_ENABLED del .env; config/nginx/40-config-js.sh genera /config.js).
+# Si rota el JWT secret basta con cambiar SUPABASE_ANON_KEY y recrear el contenedor del frontend.
 #
 # Uso:
 #   1. Login en ghcr.io (una sola vez):
@@ -74,6 +75,9 @@ services:
   frontend:
     image: ghcr.io/jamejia-rayhsa/intranet/frontend:${IMAGE_TAG:?Define IMAGE_TAG en .env.staging con el SHA del commit}
     container_name: intranet_frontend_staging
+    environment:
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:?Define SUPABASE_ANON_KEY en .env.staging}
+      MS365_LOGIN: ${AZURE_AD_ENABLED:-false}
     restart: unless-stopped
     depends_on:
       - backend

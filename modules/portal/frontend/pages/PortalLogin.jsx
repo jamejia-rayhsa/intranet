@@ -3,9 +3,10 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { usarAuth } from '../context/AuthContext';
 import CarruselNoticias from '../components/CarruselNoticias';
+import { config } from '../lib/config';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
-const LOGIN_MICROSOFT = import.meta.env.VITE_MS365_LOGIN === 'true';
+const LOGIN_MICROSOFT = config.ms365Login;
 const NOMBRE_EMPRESA = import.meta.env.VITE_NOMBRE_EMPRESA || 'Intranet Corporativa';
 
 export default function PortalLogin() {
