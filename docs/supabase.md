@@ -222,6 +222,7 @@ Las versiones están fijadas en `docker-compose.supabase.yml`. Para actualizar: 
 | URL firmada responde 400/403 ("invalid signature") | Storage firma con la ruta original: nginx debe quitar `/storage/v1` **y** enviar `X-Forwarded-Prefix /storage/v1` (y Storage `REQUEST_ALLOW_X_FORWARDED_PATH=true`). Revisa `config/nginx/*.conf` si pones otro proxy delante. |
 | Usuario válido en GoTrue pero 403 en la API | Existe en GoTrue y no en `public.usuarios` (o está inactivo): el backend autoriza por la fila local. |
 | El login ya no funciona tras rotar claves | Esperado (ver sección 7): reiniciar sesión; si falla, la anon key horneada en el frontend no coincide con el nuevo secreto: reconstruir. |
+| Login con Microsoft: "No se ha encontrado ninguna página web" en `login.microsoftonline.com/<tenant>/v2.0/oauth2/v2.0/authorize` | `GOTRUE_EXTERNAL_AZURE_URL` terminaba en `/v2.0`: GoTrue ya añade `/oauth2/v2.0/...`, así que la ruta salía duplicada. La URL base debe ser solo `https://login.microsoftonline.com/<tenant>` (corregido en `docker-compose.supabase.yml`; recrear `supabase-auth`). |
 | Restauración: "falta la tabla auth.users" | El stack destino no ha arrancado completo: levanta db, db-init, auth y storage antes de restaurar. |
 
 ### `npm test` se llevó mi volumen de datos de desarrollo
