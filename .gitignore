@@ -5,6 +5,7 @@
 !.env.test
 !.env.prod.example
 !.env.staging.example
+!.env.supabase.example
 
 # Dependencias
 node_modules/

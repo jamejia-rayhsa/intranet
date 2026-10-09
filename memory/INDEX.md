@@ -13,6 +13,7 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-08] orquestador → decisions.md — Migración a Supabase self-hosted: línea base del esquema, stack sin gateway, RLS, trampas de GoTrue/Storage
 - [2026-05-15] orquestador → code-notes.md — CSS: pagina-contenedor no existe globalmente; cada módulo debe definirla en su propio CSS
 - [2026-05-15] orquestador → code-notes.md — Gotcha Docker: volúmenes frontend son explícitos por módulo (agregar línea en docker-compose.dev.yml)
 - [2026-05-15] orquestador → SolicitudesListado.jsx — Fix: ruta /imprimir → /editar (bug bloqueante corregido)

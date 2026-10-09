@@ -6,6 +6,27 @@ type: project
 
 # Decisiones de Arquitectura
 
+### [2026-10-08] orquestador — Migración a Supabase self-hosted (DB + Auth + Storage): decisiones de Fase 0-1
+
+**Contexto:** Se migra Postgres, auth (JWT/Azure AD casero) y archivos (disco local) a Supabase self-hosted en contenedores propios. Plan completo: `.claude/plans/` (sesión) / rama `feat/supabase-selfhosted`.
+
+**Decisiones:**
+
+1. **Línea base del esquema = `config/database/init.sql`** (no las migraciones de módulo ni la BD de dev). El código coincide con `init.sql` (`tickets.solicitante_id/tecnico_id`, tabla `permisos_ausencia` en singular con `respondedor_id`). Las migraciones `tickets/001` y `rh/001` (`usuario_id`, `permisos_ausencias`) están **obsoletas**; la BD de dev también (no tiene `empleado_hijos`, `ticket_comentarios`).
+   - Se agregó a `init.sql` lo que faltaba: `tabla_calculo_vacaciones`, `solicitudes_vacaciones` (de `rh/002`) y `ticket_comentarios` (nueva `tickets/002`). Verificado: carga limpia con `ON_ERROR_STOP` y crea 28 tablas.
+   - Diferencia conocida: `init.sql` define `empleados.clabe/nss/infonavit/fonacot` más angostos que la BD de dev (18/11/20/20 vs 20/20/50/50). Si un dump de staging tiene datos más largos, la restauración fallará: revisar antes del corte.
+2. **Sin gateway (Kong/Envoy).** El compose oficial actual usa Envoy; aquí nginx enruta `/auth/v1/` → GoTrue y `/storage/v1/` → Storage (quita el prefijo y manda `X-Forwarded-Prefix`, requisito de las URLs firmadas). Menos piezas; PostgREST queda solo interno (dependencia de Storage). Studio+meta solo con perfil `admin` (sin gateway, solo Table/SQL editor).
+3. **Imagen `supabase/postgres:17.6.1.136`** (PG 17 ≥ 16 actual). La base debe llamarse `postgres`: el backend pasa a `POSTGRES_DB=postgres`. El rol `postgres` es superusuario en esa imagen (ignora RLS).
+4. **Secretos propios con prefijo `SUPABASE_*`** (`SUPABASE_JWT_SECRET`, etc.) para no chocar con el `JWT_SECRET` del auth actual durante la transición. `POSTGRES_PASSWORD` se comparte con el backend y debe ser URL-safe (va en URLs de GoTrue/Storage). Generador: `scripts/supabase/generar-secretos.sh`.
+5. **RLS deny-all** en todas las tablas de `public` + revocar `anon/authenticated` (incl. privilegios por defecto): migración `portal/004-rls-deny-all.sql`. Necesario porque PostgREST/anon key expondrían `hash_password`, CURP, NSS, etc.
+
+**Trampas encontradas al probar el stack (todas resueltas en `config/supabase/db/roles.sql` y el compose):**
+   - `roles.sql` oficial falla en `supabase_functions_admin` (lo crea `webhooks.sql`, que omitimos) y se detiene: `supabase_storage_admin` queda sin password.
+   - GoTrue falla con `must be owner of function uid`: la imagen crea `auth.uid/role/email` como `postgres`; se reasignan a `supabase_auth_admin`.
+   - Healthcheck de Storage con `localhost` falla (resuelve a `::1`, Storage escucha en IPv4): usar `127.0.0.1`.
+
+**Validado en pruebas (stack aislado, ya eliminado):** importar hash bcrypt con `password_hash` en `POST /admin/users` → login con la contraseña original OK, incorrecta rechazada; bucket privado → subida con service key OK, sin credenciales rechazado, URL firmada descarga OK, token alterado rechazado; `anon` sin acceso a `public` (tablas actuales y futuras).
+
 ### [2026-04-28] orquestador — Módulo Vacaciones RH: diseño e implementación
 
 **Contexto:** El usuario pidió eliminar la opción "Perfil" del módulo RH y crear una nueva sección "Vacaciones" con formulario de solicitud, control de saldo, flujo de aprobación y registro en auditoría.
