@@ -4,6 +4,7 @@
 !.env.dev
 !.env.test
 !.env.prod.example
+!.env.staging.example
 
 # Dependencias
 node_modules/

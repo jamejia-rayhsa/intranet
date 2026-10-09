@@ -1,0 +1,88 @@
+name: intranet-staging
+
+# Ambiente de pruebas — usa imágenes publicadas en ghcr.io
+# Arquitectura: Cloudflare → Traefik (HTTP) → Frontend-nginx (sirve SPA + proxy /api/)
+#                                                             → Backend (Node.js :4000)
+#
+# Uso:
+#   1. Login en ghcr.io (una sola vez):
+#        echo $GITHUB_TOKEN | docker login ghcr.io -u jamejia-rayhsa --password-stdin
+#   2. Definir IMAGE_TAG en .env.staging con el SHA del commit
+#   3. Levantar:
+#        docker compose -f docker-compose.staging.yml --env-file .env.staging up -d
+#   4. Actualizar a nueva versión:
+#        docker compose -f docker-compose.staging.yml --env-file .env.staging pull
+#        docker compose -f docker-compose.staging.yml --env-file .env.staging up -d
+#
+# Acceso: https://staging.rayhsa.net
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: intranet_postgres_staging
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-intranet_staging}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data_staging:/var/lib/postgresql/data
+      - ./config/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-postgres}']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - internal
+
+  backend:
+    image: ghcr.io/jamejia-rayhsa/intranet/backend:${IMAGE_TAG:?Define IMAGE_TAG en .env.staging con el SHA del commit}
+    container_name: intranet_backend_staging
+    environment:
+      NODE_ENV: production
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-intranet_staging}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+      AZURE_AD_CLIENT_ID: ${AZURE_AD_CLIENT_ID:-}
+      AZURE_AD_TENANT_ID: ${AZURE_AD_TENANT_ID:-}
+      AZURE_AD_REDIRECT_URI: ${AZURE_AD_REDIRECT_URI:-https://staging.rayhsa.net/auth/ms365/callback}
+      MSSQL_HOST: ${MSSQL_HOST:-}
+      MSSQL_PORT: ${MSSQL_PORT:-1433}
+      MSSQL_USER: ${MSSQL_USER:-}
+      MSSQL_PASSWORD: ${MSSQL_PASSWORD:-}
+      MSSQL_DB: ${MSSQL_DB:-}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
+  frontend:
+    image: ghcr.io/jamejia-rayhsa/intranet/frontend:${IMAGE_TAG:?Define IMAGE_TAG en .env.staging con el SHA del commit}
+    container_name: intranet_frontend_staging
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - internal
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.intranet-staging.rule=Host(`staging.rayhsa.net`)"
+      - "traefik.http.routers.intranet-staging.entrypoints=web"
+      - "traefik.http.services.intranet-staging.loadbalancer.server.port=80"
+      - "traefik.docker.network=proxy"
+
+networks:
+  internal:
+  proxy:
+    external: true
+
+volumes:
+  postgres_data_staging:

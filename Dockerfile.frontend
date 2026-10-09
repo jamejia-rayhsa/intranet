@@ -1,11 +1,10 @@
 # ============================================
 # Etapa de desarrollo
 # ============================================
-FROM node:20-alpine AS development
+FROM node:24-alpine AS development
 
 WORKDIR /app
 
-# Copiar package.json root y de todos los workspaces
 COPY package.json package-lock.json* ./
 COPY modules/portal/backend/package.json ./modules/portal/backend/package.json
 COPY modules/portal/frontend/package.json ./modules/portal/frontend/package.json
@@ -13,7 +12,6 @@ COPY modules/auditoria/backend/package.json ./modules/auditoria/backend/package.
 COPY modules/rh/backend/package.json ./modules/rh/backend/package.json
 COPY modules/tickets/backend/package.json ./modules/tickets/backend/package.json
 
-# Instalar dependencias root y workspaces
 RUN npm install
 
 COPY modules/ ./modules/
@@ -24,13 +22,12 @@ EXPOSE 5173
 CMD ["npm", "run", "dev:frontend"]
 
 # ============================================
-# Etapa de producción
+# Etapa de build (intermedia)
 # ============================================
-FROM node:20-alpine AS production
+FROM node:24-alpine AS builder
 
 WORKDIR /app
 
-# Copiar package.json root y de todos los workspaces
 COPY package.json package-lock.json* ./
 COPY modules/portal/backend/package.json ./modules/portal/backend/package.json
 COPY modules/portal/frontend/package.json ./modules/portal/frontend/package.json
@@ -48,8 +45,14 @@ ENV VITE_API_URL=${VITE_API_URL}
 
 RUN npm run build:frontend
 
-RUN npm prune --omit=dev
+# ============================================
+# Etapa de producción — nginx sirve el dist/
+# ============================================
+FROM nginx:alpine AS production
 
-EXPOSE 5173
+COPY --from=builder /app/modules/portal/frontend/dist /usr/share/nginx/html
+COPY config/nginx/nginx.spa.conf /etc/nginx/conf.d/default.conf
 
-CMD ["npm", "run", "start:frontend"]
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
