@@ -1,17 +1,8 @@
 const multer = require("multer");
-const path = require("path");
 const ServicioArchivo = require("../services/archivo.service");
 
-const almacenamiento = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const ruta = ServicioArchivo.obtenerRutaAlmacenamiento();
-    cb(null, ruta);
-  },
-  filename: (req, file, cb) => {
-    const nombre = ServicioArchivo.generarNombreArchivo(file.originalname);
-    cb(null, nombre);
-  },
-});
+// Memoria: el buffer se sube a Supabase Storage desde el controlador (tope 10 MB).
+const almacenamiento = multer.memoryStorage();
 
 const filtroArchivos = (req, file, cb) => {
   if (ServicioArchivo.validarTipoArchivo(file.mimetype)) {

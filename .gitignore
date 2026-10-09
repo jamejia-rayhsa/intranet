@@ -35,3 +35,6 @@ config/nginx/ssl/
 # Cobertura de pruebas
 coverage/
 .superpowers/
+
+# Archivos subidos (legado: ahora viven en Supabase Storage)
+/uploads/

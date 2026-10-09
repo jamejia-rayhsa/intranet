@@ -1,3 +1,15 @@
+import { obtenerUrlRecibo } from "../services/recibos.service";
+
+async function descargarRecibo(id) {
+  try {
+    const respuesta = await obtenerUrlRecibo(id);
+    window.location.assign(respuesta.datos.url); // descarga forzada: no navega fuera de la página
+  } catch (error) {
+    console.error("Error al descargar recibo:", error);
+    alert(error.message || "No se pudo descargar el recibo");
+  }
+}
+
 export default function RecibosNominaList({ recibos }) {
   if (!recibos || recibos.length === 0) {
     return (
@@ -38,13 +50,20 @@ export default function RecibosNominaList({ recibos }) {
               </td>
               <td>
                 {recibo.ruta_archivo ? (
-                  <a
-                    href={recibo.ruta_archivo}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => descargarRecibo(recibo.id)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      padding: 0,
+                      cursor: "pointer",
+                      color: "var(--color-primario)",
+                      textDecoration: "underline",
+                    }}
                   >
                     Descargar PDF
-                  </a>
+                  </button>
                 ) : (
                   "Sin archivo"
                 )}

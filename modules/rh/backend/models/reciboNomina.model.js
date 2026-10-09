@@ -49,11 +49,11 @@ const ReciboNomina = {
 
   async listarPorPeriodo(periodo) {
     const consulta = `
-      SELECT r.*, e.nombre as empleado_nombre, e.apellido as empleado_apellido
+      SELECT r.*, e.nombre as empleado_nombre, e.apellido_paterno as empleado_apellido
       FROM recibos_nomina r
       INNER JOIN empleados e ON r.empleado_id = e.id
       WHERE r.periodo = $1
-      ORDER BY e.nombre, e.apellido
+      ORDER BY e.nombre, e.apellido_paterno
     `;
     const resultado = await grupo.query(consulta, [periodo]);
     return resultado.rows;

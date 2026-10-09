@@ -1,8 +1,18 @@
-const path = require("path");
-const fs = require("fs");
 const Noticia = require("../models/noticia.model");
+const Storage = require("../services/storage.service");
 
 const MAX_IMAGENES = 5;
+
+// Borra el objeto de Storage; un fallo de limpieza no debe impedir borrar la fila.
+// Las rutas legadas (/uploads/...) aún no migradas no están en Storage.
+async function limpiarObjeto(ruta) {
+  if (!ruta || ruta.startsWith("/uploads/")) return;
+  try {
+    await Storage.eliminar(Storage.BUCKETS.NOTICIAS, ruta);
+  } catch (err) {
+    console.warn(`No se pudo borrar el objeto de Storage ${ruta}: ${err.message}`);
+  }
+}
 
 const ControladorNoticia = {
   async listarPublicadas(req, res) {
@@ -97,9 +107,13 @@ const ControladorNoticia = {
 
   async eliminar(req, res) {
     try {
+      const previa = await Noticia.obtenerPorId(req.params.id);
       const noticia = await Noticia.eliminar(req.params.id);
       if (!noticia) {
         return res.status(404).json({ exito: false, mensaje: "Noticia no encontrada" });
+      }
+      for (const img of (previa && previa.imagenes) || []) {
+        await limpiarObjeto(img.ruta_archivo);
       }
       res.json({ exito: true, mensaje: "Noticia eliminada exitosamente" });
     } catch (error) {
@@ -119,16 +133,22 @@ const ControladorNoticia = {
 
       const total = await Noticia.contarImagenes(id);
       if (total >= MAX_IMAGENES) {
-        // Eliminar el archivo que acabó de subirse
-        fs.promises.unlink(req.file.path).catch(() => {});
         return res.status(400).json({
           exito: false,
           mensaje: `Límite de imágenes alcanzado. Máximo permitido: ${MAX_IMAGENES}`,
         });
       }
 
-      const rutaRelativa = `/uploads/noticias/${req.file.filename}`;
-      const imagen = await Noticia.agregarImagen(id, rutaRelativa, req.file.originalname);
+      const clave = Storage.claveSegura(req.file.originalname);
+      await Storage.subir(Storage.BUCKETS.NOTICIAS, clave, req.file.buffer, req.file.mimetype);
+      let imagen;
+      try {
+        imagen = await Noticia.agregarImagen(id, clave, req.file.originalname);
+      } catch (errorBd) {
+        await Storage.eliminar(Storage.BUCKETS.NOTICIAS, clave).catch(() => {});
+        throw errorBd;
+      }
+      imagen = { ...imagen, url: Storage.urlPublica(Storage.BUCKETS.NOTICIAS, clave) };
 
       res.status(201).json({ exito: true, datos: imagen, mensaje: "Imagen subida exitosamente" });
     } catch (error) {
@@ -143,9 +163,7 @@ const ControladorNoticia = {
         return res.status(404).json({ exito: false, mensaje: "Imagen no encontrada" });
       }
 
-      // Eliminar archivo físico
-      const rutaFisica = path.join(process.cwd(), imagen.ruta_archivo);
-      await fs.promises.unlink(rutaFisica).catch(() => {});
+      await limpiarObjeto(imagen.ruta_archivo);
 
       await Noticia.eliminarImagen(imagen.id);
       res.json({ exito: true, mensaje: "Imagen eliminada" });

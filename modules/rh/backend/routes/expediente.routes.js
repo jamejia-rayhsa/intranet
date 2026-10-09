@@ -13,6 +13,11 @@ router.get(
   verificarPermiso("rh", "Expedientes", "consulta"),
   ControladorExpediente.listar,
 );
+router.get(
+  "/:id/url",
+  verificarPermiso("rh", "Expedientes", "consulta"),
+  ControladorExpediente.obtenerUrl,
+);
 router.post(
   "/:empleadoId",
   verificarPermiso("rh", "Expedientes", "edicion"),

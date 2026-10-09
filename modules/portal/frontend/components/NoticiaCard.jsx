@@ -1,4 +1,4 @@
-const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:4000/api").replace("/api", "");
+import { urlImagenNoticia } from "../utils/storage";
 
 const iconosPorTipo = {
   noticia: "📰",
@@ -26,7 +26,7 @@ export default function NoticiaCard({ noticia }) {
       {primeraImagen && (
         <div className="noticia-imagen-preview">
           <img
-            src={`${API_BASE}${primeraImagen.ruta_archivo}`}
+            src={`${urlImagenNoticia(primeraImagen)}`}
             alt={noticia.titulo}
           />
         </div>

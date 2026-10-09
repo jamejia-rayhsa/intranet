@@ -286,7 +286,12 @@ CREATE TABLE IF NOT EXISTS recibos_nomina (
   id SERIAL PRIMARY KEY,
   empleado_id INT REFERENCES empleados(id),
   periodo VARCHAR(20) NOT NULL,
-  ruta_archivo VARCHAR(255) NOT NULL,
+  fecha_pago DATE,
+  importe_total DECIMAL(10,2),
+  ruta_archivo VARCHAR(500),
+  descripcion TEXT,
+  fecha_creacion TIMESTAMP DEFAULT NOW(),
+  creado_por_id INT REFERENCES usuarios(id),
   nombre_archivo VARCHAR(255),
   fecha_generacion TIMESTAMP DEFAULT NOW()
 );

@@ -8,6 +8,19 @@ const IMAGENES_AGG = `
   ), '[]'::json) AS imagenes
 `;
 
+const { urlPublica, BUCKETS } = require("../services/storage.service");
+
+// Agrega imagenes[].url a las filas con clave de Storage (las legadas /uploads/ la conservan)
+function conUrls(noticia) {
+  if (!noticia || !Array.isArray(noticia.imagenes)) return noticia;
+  noticia.imagenes = noticia.imagenes.map((img) =>
+    img && img.ruta_archivo && !img.ruta_archivo.startsWith("/uploads/")
+      ? { ...img, url: urlPublica(BUCKETS.NOTICIAS, img.ruta_archivo) }
+      : img,
+  );
+  return noticia;
+}
+
 const Noticia = {
   async crear(datos) {
     const {
@@ -49,7 +62,7 @@ const Noticia = {
       LIMIT $1 OFFSET $2
     `;
     const resultado = await grupo.query(consulta, [limite, desplazamiento]);
-    return resultado.rows;
+    return resultado.rows.map(conUrls);
   },
 
   async obtenerTodas(pagina = 1, limite = 20) {
@@ -63,7 +76,7 @@ const Noticia = {
       LIMIT $1 OFFSET $2
     `;
     const resultado = await grupo.query(consulta, [limite, desplazamiento]);
-    return resultado.rows;
+    return resultado.rows.map(conUrls);
   },
 
   async obtenerPorId(id) {
@@ -75,7 +88,7 @@ const Noticia = {
       WHERE n.id = $1
     `;
     const resultado = await grupo.query(consulta, [id]);
-    return resultado.rows[0];
+    return conUrls(resultado.rows[0]);
   },
 
   async actualizar(id, datos) {

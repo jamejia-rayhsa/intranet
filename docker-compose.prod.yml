@@ -8,6 +8,14 @@
 # del primer `up` completo (levantar solo supabase-db) o con psql contra supabase-db
 # (usuario/base `postgres`); el init se salta la carga si `usuarios` ya existe.
 # Secretos Supabase: scripts/supabase/generar-secretos.sh (ver .env.supabase.example).
+#
+# Archivos (Supabase Storage): el backend monta `uploads_data` en /app/uploads SOLO LECTURA
+# para migrar adjuntos/expedientes/recibos/imagenes legados a Storage. El volumen nace vacio:
+# copia antes los archivos viejos (p. ej. `docker cp <contenedor_viejo>:/app/uploads/. <dir>` y de ahi
+# a un contenedor que monte el volumen). Luego, en ese orden:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm --no-deps \
+#     -v $PWD/scripts:/app/scripts:ro backend node scripts/migrar-archivos-storage.js --dry-run
+# y sin --dry-run para migrar. El script nunca borra los archivos de origen.
 
 include:
   - docker-compose.supabase.yml
@@ -30,6 +38,7 @@ services:
       SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
       SUPABASE_AUTH_URL: http://supabase-auth:9999
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_STORAGE_URL: http://supabase-storage:5000
       AUTH_LEGACY_ENABLED: ${AUTH_LEGACY_ENABLED:-true}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-24h}
       AZURE_AD_CLIENT_ID: ${AZURE_AD_CLIENT_ID}
@@ -46,6 +55,11 @@ services:
         condition: service_completed_successfully
       supabase-auth:
         condition: service_healthy
+      supabase-storage:
+        condition: service_healthy
+    volumes:
+      # Solo lectura: archivos legados que migra scripts/migrar-archivos-storage.js
+      - uploads_data:/app/uploads:ro
     networks:
       - internal
 
@@ -82,6 +96,9 @@ services:
     restart: always
     networks:
       - internal
+
+volumes:
+  uploads_data:
 
 networks:
   internal:

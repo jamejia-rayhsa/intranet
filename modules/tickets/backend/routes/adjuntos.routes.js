@@ -15,6 +15,7 @@ router.post(
   subirArchivo.single("archivo"),
   ControladorAdjunto.subir,
 );
+router.get("/:id/url", verificarPermiso("tickets", "Adjuntos", "consulta"), ControladorAdjunto.obtenerUrl);
 router.delete(
   "/:id",
   verificarPermiso("tickets", "Adjuntos", "edicion"),

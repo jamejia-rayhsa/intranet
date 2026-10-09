@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
-const path = require("path");
 const { probarConexion } = require("./config/database");
+const Storage = require("./services/storage.service");
 
 const app = express();
 const PUERTO = process.env.PORT || 4000;
@@ -9,13 +9,19 @@ const PUERTO = process.env.PORT || 4000;
 // Probar conexión a la base de datos al iniciar
 probarConexion();
 
+// Crear buckets de Storage si faltan (no fatal; reintenta una vez)
+function prepararBuckets(reintentar) {
+  Storage.asegurarBuckets().catch((err) => {
+    console.warn(`No se pudieron asegurar los buckets de Storage: ${err.message}`);
+    if (reintentar) setTimeout(() => prepararBuckets(false), 10000);
+  });
+}
+prepararBuckets(true);
+
 // Middleware global
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Servir archivos subidos
-app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 // Registro de solicitudes (desarrollo)
 if (process.env.NODE_ENV === "development") {

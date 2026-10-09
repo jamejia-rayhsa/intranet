@@ -1,9 +1,9 @@
+import { urlImagenNoticia } from "../utils/storage";
 // modules/portal/frontend/components/ArticleModal.jsx
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Icons from './Icons';
 
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:4000/api').replace('/api', '');
 
 /**
  * ArticleModal — modal de lectura para una noticia o comunicado.
@@ -56,7 +56,7 @@ export default function ArticleModal({ item, onClose }) {
         {isNews ? (
           <>
             <div className="rayhsa-modal__media" style={primeraImagen ? {
-              backgroundImage: `url(${API_BASE}${primeraImagen.ruta_archivo}), linear-gradient(135deg, #002E6D 0%, #001e47 100%)`,
+              backgroundImage: `url(${urlImagenNoticia(primeraImagen)}), linear-gradient(135deg, #002E6D 0%, #001e47 100%)`,
               backgroundSize: 'cover, cover',
               backgroundPosition: 'center, center',
             } : undefined}>

@@ -1,3 +1,4 @@
+import { urlImagenNoticia } from "../utils/storage";
 import { useState, useRef } from "react";
 import {
   crearNoticia,
@@ -6,7 +7,6 @@ import {
   eliminarImagenNoticia,
 } from "../services/noticias.service";
 
-const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:4000/api").replace("/api", "");
 const MAX_IMAGENES = 5;
 
 export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) {
@@ -181,7 +181,7 @@ export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) 
                   {imagenes.map((img) => (
                     <div key={img.id} className="noticia-imagen-miniatura">
                       <img
-                        src={`${API_BASE}${img.ruta_archivo}`}
+                        src={`${urlImagenNoticia(img)}`}
                         alt={img.nombre_archivo || "Imagen"}
                       />
                       <button

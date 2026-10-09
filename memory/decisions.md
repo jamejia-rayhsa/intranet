@@ -6,6 +6,29 @@ type: project
 
 # Decisiones de Arquitectura
 
+### [2026-10-08] orquestador — Fase 5 completa: archivos en Supabase Storage
+
+**Delegación:** coder A (storage.service, noticias, app.js), coder B (RH expedientes y recibos), coder C (tickets, script de migración, compose), revisor (APROBADO), y coder B de nuevo para los hallazgos de la prueba en vivo. Verificación propia contra Storage real, API y Chromium.
+
+**Decisiones:**
+1. **`storage.service.js`** (fetch nativo, mismo patrón que `supabaseAdmin`): `subir`, `urlFirmada`, `urlPublica`, `eliminar`, `existe`, `asegurarBuckets`, `claveSegura` (ASCII, único). Los 4 buckets se crean solos al arrancar el backend (no fatal, 1 reintento) con visibilidad, límite y mimes alineados con los filtros de multer. Verificado en vivo, incluido `existe`.
+2. **Buckets privados** (`tickets-adjuntos`, `rh-expedientes`, `rh-recibos`) con URL firmada de 300 s emitida por `GET .../:id/url` con el mismo `verificarPermiso` que el listado; **`noticias` público de solo lectura** (esas imágenes ya se mostraban sin login). `ruta_archivo` guarda la clave del objeto (`<id>/<archivo>` o plano en noticias); las filas legadas (`/uploads/...`) responden 409 hasta migrarse.
+3. **Descarga forzada** (`Content-Disposition: attachment` vía `&download=`) y `window.location.assign` en vez de `window.open` tras un `await`: `/storage/v1` comparte origen con la app, así que servir contenido en línea sería riesgoso, y `window.open` tras una petición asíncrona puede bloquearse como popup. Se acepta que los PDFs ya no se vean en pestaña nueva.
+4. **Se eliminó `express.static("/uploads")`** (los recibos y expedientes eran públicos por URL). Probado: `/uploads/...` da 404. `/uploads/` queda en `.gitignore`. El proxy `/uploads` de `vite.config.js` es candidato a limpiar en la Fase 6.
+5. **Compensaciones:** si el INSERT falla tras subir, se elimina el objeto (noticias, tickets, expedientes, recibos; probado: 0 huérfanos). Al borrar fila y objeto: BD primero, Storage best-effort con aviso.
+6. **`scripts/migrar-archivos-storage.js`** (`npm run db:migrar-archivos-storage`): `--dry-run` (no crea buckets ni escribe), `--limit`, `--tabla`; `UPDATE ... AND ruta_archivo=$vieja` (idempotente y a prueba de carreras); no borra el origen; rutas con `..` cuentan como faltantes; claves ASCII (`Mi Factura Ñandú.pdf` -> `Mi_Factura_Nandu.pdf`; el nombre original se conserva en `nombre_archivo`). Exit 1 si hay faltantes o errores. En staging/prod el volumen `uploads_data` se monta `:ro` y **nace vacío**: hay que copiar ahí los archivos viejos antes de migrar.
+
+**Hallazgo de la prueba en vivo (deriva de esquema, mi línea base de Fase 0 se quedó corta):** `init.sql` definía `recibos_nomina` sin `fecha_pago`, `importe_total`, `descripcion`, `creado_por_id` ni `fecha_creacion` (la migración rh/001 sí los tenía), así que **crear y listar recibos daba 500 antes de esta fase**. La comparación de Fase 0 (dev vs init.sql) no podía verlo porque ambos estaban igual de desactualizados. Corregido con `rh/007-recibos-nomina-columnas.sql` (idempotente, también en `init.sql` y aplicada siempre por `supabase-db-init`, de modo que bases restauradas de un dump también se corrigen). Además `listarPorPeriodo` usaba `e.apellido` (SELECT y ORDER BY) y el perfil mostraba `doc.fecha_carga`: corregidos. Se comparó el resto de tablas RH contra sus modelos: coinciden. Se recorrieron todos los GET de la API: solo recibos fallaba. **Los caminos de escritura de otros módulos no se auditaron exhaustivamente.**
+
+**Verificado en vivo (stack real):** buckets con config correcta; noticias (subida, URL pública idéntica, tipo no permitido rechazado, sin token 401, borrar elimina el objeto); tickets, expedientes y recibos (clave con prefijo, URL firmada idéntica, firma y payload alterados 400, acceso directo y `/public/` a bucket privado rechazados, `/url` sin token 401, empleadoId no numérico rechazado, borrar elimina el objeto); migración con 4 tablas (dry-run no escribe, real migra, faltante y traversal intactos, segunda ejecución idempotente, origen conservado); Chromium: home carga imágenes de noticias desde Storage (200) y el clic en un adjunto descarga el archivo con su nombre original sin popup. 119 tests jest pasan; 2 fallan y son preexistentes (`empleado.controller.test.js`, validación de nombre/apellido: el commit 63fc4f3 cambió el formulario a `apellido_paterno` sin actualizar el test).
+
+**Pendientes / decisiones del usuario:**
+- **Autorización por propietario ausente (preexistente):** cualquier usuario con permiso de *consulta* puede obtener el adjunto de cualquier ticket y el expediente o recibo de cualquier empleado (solo se aplica `verificarPermiso`). Las URLs firmadas no lo empeoran, pero conviene decidir una política (solicitante/técnico/administrador en tickets; propio empleado o RH en recibos).
+- Validaciones menores sugeridas por el revisor: `empleadoId` numérico en `GET /recibos/empleado/:id`, `GET /recibos/:id` con id no numérico da 500, formato `YYYY-MM` en `periodo`.
+- Los PDFs ya no se visualizan en pestaña nueva (descarga forzada); si se quiere visor, requeriría servirlos desde otro origen.
+- `permisos_ausencia` (nombre real) vs. índices de la migración rh/001 que mencionan `permisos_ausencias`: preexistente, sin tocar.
+- Los 2 tests fallidos de `empleado.controller.test.js` siguen sin arreglar.
+
 ### [2026-10-08] orquestador — Fase 4 completa: el frontend usa Supabase Auth
 
 **Delegación:** coder A (código React), coder B (infra: Vite, Dockerfile, compose, publicar-ghcr), revisor (APROBADO sin bloqueantes). Pruebas en vivo del orquestador con Chromium real (Playwright).

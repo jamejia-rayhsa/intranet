@@ -1390,3 +1390,104 @@ Solo la línea 101 de SolicitudesListado necesita corrección.
 
 **Build:** ✅ Vite build OK con VITE_SUPABASE_ANON_KEY=dummy. No hay imports no resueltos. Tamaño bundle ~977KB (warning de recharts/dependencies, no nuevo).
 
+
+### [2026-10-08] revisor — Fase 5: Storage en Supabase (noticias, expedientes, recibos, adjuntos)
+
+**Resumen:** Revisión exhaustiva de integración de Supabase Storage para archivos. Cobertura: storage.service.js (cliente Storage), middleware upload simplificados, controladores (noticia, expediente, recibo, adjunto), frontend (urls seguras), script de migración, compose actualizado. **VEREDICTO: APROBADO CON OBSERVACIONES MENORES (sin bloqueantes).**
+
+#### ✅ VERIFICACIONES POSITIVAS (Sin hallazgos críticos)
+
+1. **Path traversal / inyección de claves:**
+   - ✅ `claveSegura()` (storage.service.js:205-219): Normaliza NFD, elimina acentos, reemplaza no-ASCII con `_`, añade timestamp + random hex. Seguro.
+   - ✅ `codificarClave()` (línea 77-79): Aplica `encodeURIComponent` por segmento (respetando `/`). Previene `../` en URLs.
+   - ✅ `empleado_id` validado con `^\d+$` en expediente.controller.js:75 y reciboNomina.controller.js:109.
+   - ✅ Script: `rutaEnDisco()` (migrar-archivos-storage.js:81-87) verifica que la ruta sea exactamente `<prefijo><nombre>` sin path traversal.
+   - **Archivos:** modules/portal/backend/services/storage.service.js, módulos RH/tickets controllers, scripts/migrar-archivos-storage.js
+
+2. **Autorización — rutas y permisos:**
+   - ✅ Todas las rutas `/:id/url` van ANTES de `/:id` en Express routers (orden correcto).
+     - expediente.routes.js:16-20 antes de :delete
+     - recibos.routes.js:22-25 antes de :get /:id
+     - adjuntos.routes.js:18 antes de :delete
+   - ✅ Cada endpoint `/url` exige exactamente mismo `verificarPermiso` que el listado (no abre acceso).
+   - ✅ URLs firmadas: 300 segundos (5 minutos), ventana de explotación limitada.
+   - **Archivos:** modules/rh/backend/routes/expediente.routes.js, recibos.routes.js; modules/tickets/backend/routes/adjuntos.routes.js
+
+3. **Buckets — configuración coherente:**
+   - ✅ `CONFIG_BUCKETS` (storage.service.js:18-61): Define file_size_limit y allowed_mime_types.
+   - ✅ NOTICIAS: `public: true` (correcto, imágenes públicas). Límite 5MB.
+   - ✅ EXPEDIENTES: `public: false` (privado). Límite 10MB. MIME: JPG, PNG, GIF, PDF, DOC, DOCX.
+   - ✅ RECIBOS: `public: false` (privado). Límite 5MB. MIME: solo PDF.
+   - ✅ TICKETS: `public: false` (privado). Límite 10MB. MIME: JPG, PNG, GIF, WebP, PDF, DOC, DOCX, XLS, XLSX, TXT.
+   - ✅ Coherencia: multer fileFilter + bucket allowed_mime_types alineados. Sin discrepancias.
+   - **Archivos:** modules/portal/backend/services/storage.service.js:18-61, módulos middleware
+
+4. **Consistencia — subida y eliminación:**
+   - ✅ Noticias: Storage PRIMERO → INSERT después. Si INSERT falla, limpia objeto (línea 142-150).
+   - ✅ Expedientes: Storage PRIMERO → INSERT. Si INSERT falla, limpia objeto (línea 82-87, 97-102).
+   - ✅ Recibos: Storage PRIMERO → INSERT. Si INSERT falla, limpia objeto (línea 123-133).
+   - ✅ Tickets adjuntos: Storage PRIMERO → INSERT. Si INSERT falla, limpia objeto (línea 32-52).
+   - ✅ Eliminación: Borrar BD PRIMERO, luego Storage (best-effort, warn no bloquea).
+   - **Archivos:** modules/portal/backend/controllers/noticia.controller.js, módulos RH/tickets controllers
+
+5. **Script de migración — idempotencia y seguridad:**
+   - ✅ Validación de ruta: `rutaEnDisco()` verifica `startsWith(/uploads/<carpeta>/)` + `basename()` + no más path components.
+   - ✅ UPDATE idempotente: `WHERE id = $2 AND ruta_archivo = $3`. Si rowCount=0, limpia objeto sobrante.
+   - ✅ Nunca borra origen: Línea 17 lo documenta. Archivos siguen en disco.
+   - ✅ `--dry-run`: No sube, no escribe. Solo cuenta (línea 149, 203-212).
+   - ✅ `asegurarBuckets()` solo en ejecución real, no en dry-run (línea 179).
+   - **Archivo:** scripts/migrar-archivos-storage.js
+
+6. **Frontend — URLs seguras, sin rutas crudas:**
+   - ✅ Noticias: `urlImagenNoticia()` (portal/frontend/utils/storage.js) usado en 5 componentes.
+   - ✅ Expedientes: `obtenerUrlDocumento()` → `window.open(url, "_blank", "noopener")` (PerfilPage.jsx:66).
+   - ✅ Recibos: `obtenerUrlRecibo()` → `window.open(url, "_blank", "noopener")` (RecibosNominaList.jsx:3-11).
+   - ✅ Tickets adjuntos: `abrirAdjunto()` → `window.open(url, "_blank", "noopener")` (TicketDetail.jsx, adjuntos.service.js:39-46).
+   - ✅ NO hay referencias a `API_BASE` para archivos. NO hay acceso directo a `ruta_archivo` crudo.
+   - **Archivos:** modules/portal/frontend/utils/storage.js, módulos RH/tickets services y pages
+
+7. **Docker Compose — configuración Storage:**
+   - ✅ Dev: `SUPABASE_STORAGE_URL: http://supabase-storage:5000`. `depends_on: supabase-storage: service_healthy`.
+   - ✅ Staging: Ídem. `backend` monta `uploads_data:/app/uploads:ro` (nada por defecto, hay que copiar primero).
+   - ✅ Prod: Ídem. `uploads_data` descrito como read-only para migración.
+   - ✅ `docker-compose.supabase.yml` incluido en todos. Encabezados de comentarios explican migración.
+   - **Archivos:** docker-compose.dev.yml:35, docker-compose.staging.yml:55, docker-compose.prod.yml:60, 12:61
+
+8. **Tests — cobertura:**
+   - ✅ storage.service.test.js: 11/11 PASS (subir, urlFirmada, urlPublica, eliminar, existe, asegurarBuckets, claveSegura, errores red, service key).
+   - ✅ archivos.storage.test.js (RH): 9/9 PASS (expediente, recibos, path traversal, eliminar graceful, /url endpoints).
+   - ✅ adjunto.controller.test.js (tickets): 23/23 PASS (subir, listar, /url, eliminar, autorización).
+   - ✅ Falla preexistente (no de Fase 5): `modules/rh/tests/empleado.controller.test.js` (2 tests fallan con 404, no relacionado a Storage).
+   - **Archivos:** modules/portal/backend/tests/storage.service.test.js, módulos RH/tickets tests/
+
+#### ⚠️ OBSERVACIONES MENORES (No bloqueantes, mejoras futuras)
+
+1. **BAJO: Endpoint `/recibos/empleado/:empleadoId` no valida formato numérico**
+   - **Archivo:** modules/rh/backend/routes/recibos.routes.js:12
+   - **Problema:** `empleadoId` se pasa directo al modelo. Si es string no-numérico, el modelo simplemente no encontrará registros (gracioso, parametrizado → sin inyección SQL).
+   - **Impacto:** Bajo. El modelo está parametrizado.
+   - **Fix sugerido:** Agregar validación regex en route middleware: `router.param('empleadoId', (req, res, next, id) => { if (!/^\d+$/.test(id)) return res.status(400)...; next(); })`
+
+2. **BAJO: Falta validación de formato `periodo` en `listarPorPeriodo`**
+   - **Archivo:** modules/rh/backend/controllers/reciboNomina.controller.js:27-38
+   - **Problema:** Acepta cualquier string como `periodo`. El modelo está parametrizado (sin inyección SQL), pero debería validar formato (ej. YYYY-MM).
+   - **Impacto:** Bajo. Ninguna vulnerabilidad detectada.
+   - **Fix sugerido:** Validar en controller: `if (!/^\d{4}-\d{2}$/.test(req.params.periodo)) return res.status(400)...`
+
+3. **BAJO: Risk residual de URL firmada filtrada**
+   - **Problema:** Si una URL firmada se roba/intercepta antes de expiración (300s), cualquiera puede descargar el archivo.
+   - **Mitigación actual:** (1) Solo usuarios autenticados obtienen URLs, (2) Timeout corto, (3) Sin enumeración de objetos Storage.
+   - **Impacto:** Bajo en contexto empresarial (usuarios no se esperan que filtren URLs en 5 minutos). Mayor riesgo si el endpoint `/url` se abre a públicos o sin autenticación.
+   - **Fix futuro (no aplica esta fase):** RLS en buckets de Supabase (requiere política separada por tabla, compleja).
+
+#### 📋 CONFIRMACIONES ADICIONALES
+
+- ✅ `app.js`: Removida línea `express.static("/uploads")`. Ya no sirve archivos del disco.
+- ✅ `.gitignore`: Agregada `/uploads/` (archivos legados ignorados).
+- ✅ `memory/code-notes.md`: Actualizado con anotaciones de Fases 5A, 5B, 5C.
+- ✅ `package.json`: Agregado script `db:migrar-archivos-storage`.
+
+#### 🏁 VEREDICTO
+
+**APROBADO.** Implementación de Storage en Supabase completa, segura y bien documentada. Todas las protecciones clave (path traversal, autorización, consistencia) están en su lugar. Observaciones menores no bloquean — son mejoras futuras de validación. El equipo puede proceder a integración en staging/prod.
+

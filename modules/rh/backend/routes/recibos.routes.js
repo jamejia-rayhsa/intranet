@@ -18,6 +18,11 @@ router.get(
   verificarPermiso("rh", "Recibos", "consulta"),
   ControladorReciboNomina.listarPorPeriodo,
 );
+router.get(
+  "/:id/url",
+  verificarPermiso("rh", "Recibos", "consulta"),
+  ControladorReciboNomina.obtenerUrl,
+);
 router.get("/:id", verificarPermiso("rh", "Recibos", "consulta"), ControladorReciboNomina.obtener);
 router.post(
   "/",

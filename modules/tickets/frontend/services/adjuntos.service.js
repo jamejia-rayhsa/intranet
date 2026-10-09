@@ -34,3 +34,13 @@ export async function eliminarAdjunto(id) {
     method: "DELETE",
   });
 }
+
+// Pide una URL firmada de corta duración y abre el archivo en otra pestaña
+export async function abrirAdjunto(id) {
+  const respuesta = await solicitar(`/adjuntos/${id}/url`);
+  const url = respuesta.datos?.url;
+  if (!url) {
+    throw new Error("No se pudo obtener el enlace del archivo");
+  }
+  window.location.assign(url); // descarga forzada: no navega fuera de la página
+}

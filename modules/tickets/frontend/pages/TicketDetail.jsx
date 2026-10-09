@@ -9,6 +9,7 @@ import {
   obtenerAdjuntos,
   subirAdjunto,
   eliminarAdjunto,
+  abrirAdjunto,
 } from "../services/adjuntos.service";
 import { enviarEncuesta, obtenerEncuesta } from "../services/encuestas.service";
 import {
@@ -173,6 +174,15 @@ export default function TicketDetail({ ticketId, alVolver, onEstadoCambiado }) {
     }
   }
 
+  async function manejarAbrirAdjunto(adjuntoId) {
+    try {
+      await abrirAdjunto(adjuntoId);
+    } catch (error) {
+      console.error("Error al abrir adjunto:", error);
+      alert(error.message || "No se pudo abrir el archivo");
+    }
+  }
+
   async function manejarEliminarAdjunto(adjuntoId) {
     try {
       await eliminarAdjunto(adjuntoId);
@@ -323,9 +333,11 @@ export default function TicketDetail({ ticketId, alVolver, onEstadoCambiado }) {
             {adjuntos.map((adjunto) => (
               <li key={adjunto.id} className="adjunto-item">
                 <a
-                  href={adjunto.ruta_archivo}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    manejarAbrirAdjunto(adjunto.id);
+                  }}
                 >
                   {adjunto.nombre_archivo}
                 </a>

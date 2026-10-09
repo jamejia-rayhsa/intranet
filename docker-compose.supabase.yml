@@ -76,6 +76,7 @@ services:
       - ./config/database/init.sql:/sql/init.sql:ro
       - ./modules/portal/backend/migrations/004-rls-deny-all.sql:/sql/004-rls-deny-all.sql:ro
       - ./modules/portal/backend/migrations/005-auth-uid.sql:/sql/005-auth-uid.sql:ro
+      - ./modules/rh/backend/migrations/007-recibos-nomina-columnas.sql:/sql/007-recibos-nomina-columnas.sql:ro
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
@@ -90,6 +91,8 @@ services:
         psql -v ON_ERROR_STOP=1 -f /sql/004-rls-deny-all.sql
         echo "[db-init] aplicando 005-auth-uid.sql"
         psql -v ON_ERROR_STOP=1 -f /sql/005-auth-uid.sql
+        echo "[db-init] aplicando 007-recibos-nomina-columnas.sql"
+        psql -v ON_ERROR_STOP=1 -f /sql/007-recibos-nomina-columnas.sql
         echo "[db-init] listo"
     networks:
       - internal

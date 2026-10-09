@@ -39,3 +39,7 @@ export async function eliminarDocumento(id) {
     method: "DELETE",
   });
 }
+
+export async function obtenerUrlDocumento(id) {
+  return solicitar(`/expediente/${id}/url`);
+}
