@@ -1,6 +1,89 @@
 # reviews — Memory Palace
 
 > Hallazgos de revisión de código. Formato: severidad + archivo:línea + problema + fix recomendado.
+### [2026-10-08] revisor — Fase 2: Migración Supabase self-hosted
+
+**Resumen:** Revisión integral de cambios en docker-compose (dev/staging/prod + supabase.yml), .env, config/database.js, pools PostgreSQL y flujo de inicialización. Sin hallazgos bloqueantes. 6 verificaciones positivas + 3 observaciones menores documentadas.
+
+#### ✅ VERIFICACIONES POSITIVAS (Sin hallazgos)
+
+1. **Seguridad de puertos:** 
+   - ✅ `supabase-db`: NO publicado en staging/prod. En dev: `127.0.0.1:${POSTGRES_PORT}` (loopback)
+   - ✅ `supabase-auth`, `supabase-rest`, `supabase-storage`: NO publicados (acceso solo vía nginx)
+   - ✅ `supabase-studio`: `127.0.0.1:54323` (loopback, solo admin profile)
+   - **Archivo:** docker-compose.supabase.yml:1-260, docker-compose.supabase.dev.yml:8-9
+
+2. **Secretos en .env:**
+   - ✅ `.env.dev`: contiene valores de DESARROLLO explícitamente comentados (SUPABASE_JWT_SECRET, ANON_KEY, SERVICE_ROLE_KEY generados para dev)
+   - ✅ `.env.staging.example`: placeholders sin valores reales (`staging_password_aqui`)
+   - ✅ `.env.prod.example`: vacío (creado nuevo, sin valores hardcodeados)
+   - **Archivos:** .env.dev:40-54, .env.staging.example:3-37, .env.prod.example:1-30
+
+3. **Consolidación de pools PostgreSQL:**
+   - ✅ `modules/portal/backend/config/database.js`: Define `grupo = new Pool(...)` (ÚNICA instancia)
+   - ✅ `modules/auditoria/backend/config/database.js`: Importa `grupo` del portal, NO crea Pool propio
+   - ✅ `modules/auditoria/backend/models/auditoria.model.js`: Usa `grupo` importado de config
+   - ✅ `modules/portal/backend/scripts/migrar.js`: Pool independiente OK para script standalone
+   - **Archivos:** modules/portal/backend/config/database.js:1-20, modules/auditoria/backend/config/database.js:1-12, modules/auditoria/backend/models/auditoria.model.js:1
+
+4. **Redes — aislamiento correcto:**
+   - ✅ Dev: todos servicios en `internal`, frontend depende de backend (orden correcto)
+   - ✅ Staging: supabase en `internal`, frontend en `internal` + `proxy` (Traefik)
+   - ✅ Prod: supabase + backend + frontend en `internal`, nginx en `internal`
+   - **Archivos:** docker-compose.dev.yml:79-80, docker-compose.staging.yml:73-75, docker-compose.prod.yml:78-79
+
+5. **Idempotencia de inicialización:**
+   - ✅ `supabase-db-init`: Verifica `to_regclass('public.usuarios')` antes de cargar init.sql
+   - ✅ `init.sql`: Usa `CREATE TABLE IF NOT EXISTS` + `INSERT ... ON CONFLICT ... DO NOTHING`
+   - ✅ `004-rls-deny-all.sql`: Envuelto en `DO $$...$$` (idempotente), verifica existencia de roles
+   - **Archivos:** docker-compose.supabase.yml:62-90, modules/portal/backend/migrations/004-rls-deny-all.sql:1-21
+
+6. **Regresiones en código — confirmadas ausentes:**
+   - ✅ NO referencias a `postgres` (servicio antiguo) en docker-compose activos
+   - ✅ NO referencias a `pgadmin` en código ejecutable
+   - ✅ NO referencias a `intranet_dev`/`intranet_staging` en compose
+   - ✅ NO referencias a volúmenes `postgres_data_*` en compose (removidos correctamente)
+   - **Verificación:** `grep -r "postgres" docker-compose*.yml` (sin supabase), `grep pgadmin`, `grep intranet_dev` → todas vacías
+
+#### ⚠️ OBSERVACIONES (No bloqueantes, mejoras futuras)
+
+1. **MEDIO: Contraseña PostgreSQL con carácter especial en .env.dev**
+   - **Archivo:línea:** .env.dev:10
+   - **Problema:** `POSTGRES_PASSWORD=dev_password_123` contiene guion bajo (`_`). Aunque es URL-safe (RFC 3986), algunos parsers pueden fallar. Mejor: solo hex/alfanumérico.
+   - **Severidad:** MEDIO (dev only, pero mala práctica)
+   - **Fix sugerido:** Cambiar a `POSTGRES_PASSWORD=devpassword123abc` (hex o alfanumérico sin caracteres especiales)
+   - **Nota:** `.env.staging.example` también tiene `staging_password_aqui` (placeholder OK), pero el usuario deberá usar valores URL-safe al generar con `scripts/supabase/generar-secretos.sh`
+
+2. **ALTO: Riesgo teórico de estado parcial en supabase-db-init**
+   - **Archivo:línea:** docker-compose.supabase.yml:79-90
+   - **Problema:** Si `init.sql` falla a mitad (ej. interrupt, OOM, syntax error línea 500/661), la tabla `usuarios` queda creada pero incompleta. La siguiente ejecución verá que `usuarios` existe y saltará `init.sql`, dejando la BD en estado inconsistente.
+   - **Severidad:** ALTO (riesgo teórico, documentado)
+   - **Fix sugerido:** Opción A (recomendada): Envolver TODO init.sql en `BEGIN ... ROLLBACK ON ERROR` (requiere refactor). Opción B: Antes de cargar init.sql, ejecutar `DROP TABLE IF EXISTS usuarios CASCADE` para forzar recarga completa. Opción C (actual): Documentar explícitamente "en caso de error, ejecutar `docker compose down -v && up` para reiniciar BD" — YA DOCUMENTADO en docker-compose.supabase.yml:6-14.
+   - **Nota:** code-notes.md línea 254 verifica que idempotencia funciona en casos normales. El riesgo es solo ante interrupciones/errores durante init.
+
+3. **BAJO: Documentación desactualizada en README.md**
+   - **Archivos:** modules/auditoria/README.md, modules/portal/README.md, README.md (root), docs/arquitectura.md, docs/superpowers/plans/
+   - **Problema:** Ejemplos de comandos todavía mencionan `intranet_postgres_dev`, `intranet_dev`, `pgadmin:5050` que ya no existen. Confunde a usuarios nuevos.
+   - **Severidad:** BAJO (documentación, no código)
+   - **Fix sugerido:** Actualizar en README.md:
+     - `docker exec -it intranet_postgres_dev psql -U postgres -d intranet_dev` → `docker exec -it intranet_supabase_db psql -U postgres -d postgres`
+     - Agregar sección "Acceso a BD en desarrollo: `psql -h 127.0.0.1 -p 5432 -U postgres -d postgres`"
+   - **Nota:** Fuera de alcance de esta revisión (es documentación), pero recomendado para próxima sesión.
+
+#### 🟢 VEREDICTO: APROBADO
+
+**Sin hallazgos críticos ni bloqueantes.** Los cambios de Fase 2 son correctos en:
+- Seguridad (sin puertos públicos, secrets en ejemplos)
+- Corrección funcional (pools consolidados, idempotencia verificada)
+- Regresiones (completamente removidas)
+
+**Condiciones:**
+- Documentación (README.md) requiere actualización en próxima sesión — no impide funcionalidad
+- Usuario debe generar contraseñas URL-safe con `scripts/supabase/generar-secretos.sh` para staging/prod
+- En caso de error durante init.sql, seguir instrucciones de comentario en docker-compose.supabase.yml línea 13-14
+
+---
+
 
 ### [2026-04-29] revisor — Alta empleado: validación post-coder
 

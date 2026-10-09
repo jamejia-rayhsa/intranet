@@ -6,6 +6,25 @@ type: project
 
 # Decisiones de Arquitectura
 
+### [2026-10-08] orquestador — Fase 2 completa: la app corre sobre el Postgres de Supabase
+
+**Delegación:** coder A (compose/env), coder B (pools), revisor (APROBADO sin bloqueantes, ver reviews.md). Verificación propia del orquestador con el flujo real de dev.
+
+**Decisiones:**
+1. **`include:` en dev/staging/prod** para incorporar `docker-compose.supabase.yml`; dev suma `docker-compose.supabase.dev.yml` (DB publicada solo en `127.0.0.1`). El `name:` del compose raíz gana: los volúmenes de Supabase quedan con el prefijo del entorno (`intranet_supabase_db_data` en dev, `intranet-staging_...` en staging).
+2. **`supabase-db-init`** (one-shot): carga `init.sql` con `--single-transaction` solo si no existe `public.usuarios`, y siempre aplica `004-rls-deny-all.sql`. El backend espera `service_completed_successfully`. `--single-transaction` se añadió tras la revisión: sin él, un fallo a mitad dejaba `usuarios` creada y el siguiente arranque saltaba el init (probado: fallo provocado → 0 tablas).
+3. Backend: `POSTGRES_HOST=supabase-db`, `POSTGRES_DB=postgres`. Un solo pool (`grupo` de portal); auditoría ya no crea pools propios.
+4. Observación del revisor descartada: `dev_password_123` NO es problema de URL (`_` es carácter seguro).
+
+**Verificado (dev real, sin `down -v`):** init crea 28 tablas con RLS; backend conecta; registro, login, perfil y 401 sin token OK; como super_admin responden 200 usuarios, roles, módulos, noticias, empleados, tickets, auditoría, rh/dashboard y vacaciones; crear ticket escribe `solicitante_id` y deja un registro de auditoría (pool consolidado OK). Volúmenes de prueba eliminados; `intranet_postgres_data_dev` y `intranet_uploads_data` intactos.
+
+**Pendientes detectados (no resueltos en esta fase):**
+- **Seguridad, preexistente:** `GET /api/auth/perfil` devuelve `hash_password` al cliente. Corregir en Fase 3 al reescribir el perfil (excluir el campo en el modelo, no solo en el controlador, y revisar `/usuarios`).
+- Los datos de la BD anterior (volumen `intranet_postgres_data_dev`) no se migran solos: la BD nueva arranca con las semillas de `init.sql`. Para conservar datos, `pg_dump` del contenedor viejo y restaurar en `supabase-db` ANTES del primer `up` completo.
+- Contenedores huérfanos `intranet_postgres_dev` e `intranet_pgadmin_dev` siguen en el host (detenidos); retirar tras confirmar.
+- README.md (portal/auditoría) aún cita `intranet_postgres_dev`, `intranet_dev`, `pgadmin:5050`: actualizar en Fase 6.
+- Los mensajes de las rutas de comentarios de tickets no se probaron por API (la tabla sí existe); verificar en Fase 3.
+
 ### [2026-10-08] orquestador — Migración a Supabase self-hosted (DB + Auth + Storage): decisiones de Fase 0-1
 
 **Contexto:** Se migra Postgres, auth (JWT/Azure AD casero) y archivos (disco local) a Supabase self-hosted en contenedores propios. Plan completo: `.claude/plans/` (sesión) / rama `feat/supabase-selfhosted`.

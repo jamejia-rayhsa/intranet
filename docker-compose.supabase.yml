@@ -1,10 +1,17 @@
 # Stack Supabase self-hosted (mínimo): Postgres + Auth (GoTrue) + Storage.
-# Se combina con el compose de cada entorno (comparten la red `internal`):
+# No se levanta solo: lo incluyen docker-compose.{dev,staging,prod}.yml con `include:`
+# (comparten la red `internal`). Por ejemplo:
 #
-#   docker compose -f docker-compose.staging.yml -f docker-compose.supabase.yml --env-file .env.staging up -d
+#   docker compose -f docker-compose.staging.yml --env-file .env.staging up -d
 #
 # Variables: ver .env.supabase.example (se agregan al .env del entorno).
 # Secretos nuevos: scripts/supabase/generar-secretos.sh
+#
+# Base de datos: supabase-db es el ÚNICO Postgres de la app (base `postgres`, usuario `postgres`).
+# `supabase-db-init` (one-shot) carga config/database/init.sql si no existe public.usuarios y
+# luego aplica siempre 004-rls-deny-all.sql (idempotente). Para restaurar un dump: hacerlo
+# ANTES del primer `up` completo (levantar solo supabase-db y restaurar con psql) o con psql
+# contra supabase-db; el init se salta la carga si `usuarios` ya existe.
 #
 # Basado en https://github.com/supabase/supabase/tree/master/docker (versiones fijadas).
 # Diferencias deliberadas respecto al compose oficial:
@@ -48,6 +55,39 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - internal
+
+  # One-shot: esquema base + RLS. Seguro de re-ejecutar; siempre sale con código 0 si todo va bien.
+  supabase-db-init:
+    image: supabase/postgres:17.6.1.136
+    container_name: intranet_supabase_db_init
+    restart: "no"
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    environment:
+      PGHOST: supabase-db
+      PGPORT: 5432
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD}
+    volumes:
+      - ./config/database/init.sql:/sql/init.sql:ro
+      - ./modules/portal/backend/migrations/004-rls-deny-all.sql:/sql/004-rls-deny-all.sql:ro
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        existe=$$(psql -tAc "SELECT to_regclass('public.usuarios') IS NOT NULL")
+        if [ "$$existe" = "t" ]; then
+          echo "[db-init] public.usuarios ya existe: se omite init.sql"
+        else
+          echo "[db-init] cargando init.sql"
+          psql --single-transaction -v ON_ERROR_STOP=1 -f /sql/init.sql
+        fi
+        echo "[db-init] aplicando 004-rls-deny-all.sql"
+        psql -v ON_ERROR_STOP=1 -f /sql/004-rls-deny-all.sql
+        echo "[db-init] listo"
     networks:
       - internal
 

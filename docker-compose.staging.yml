@@ -8,43 +8,33 @@ name: intranet-staging
 #   1. Login en ghcr.io (una sola vez):
 #        echo $GITHUB_TOKEN | docker login ghcr.io -u jamejia-rayhsa --password-stdin
 #   2. Definir IMAGE_TAG en .env.staging con el SHA del commit
-#   3. Levantar:
+#   3. Levantar (incluye el stack Supabase vía `include:`; supabase-db es el único Postgres):
 #        docker compose -f docker-compose.staging.yml --env-file .env.staging up -d
 #   4. Actualizar a nueva versión:
 #        docker compose -f docker-compose.staging.yml --env-file .env.staging pull
 #        docker compose -f docker-compose.staging.yml --env-file .env.staging up -d
 #
+# Base de datos: supabase-db-init (one-shot) carga config/database/init.sql si no existe
+# public.usuarios y siempre aplica 004-rls-deny-all.sql. Para restaurar un dump: hacerlo ANTES
+# del primer `up` completo (levantar solo supabase-db) o con psql contra supabase-db
+# (usuario/base `postgres`); el init se salta la carga si `usuarios` ya existe.
+# Secretos Supabase: scripts/supabase/generar-secretos.sh (ver .env.supabase.example).
+#
 # Acceso: https://staging.rayhsa.net
 
-services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: intranet_postgres_staging
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-intranet_staging}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - postgres_data_staging:/var/lib/postgresql/data
-      - ./config/database/init.sql:/docker-entrypoint-initdb.d/init.sql
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-postgres}']
-      interval: 15s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-    networks:
-      - internal
+include:
+  - docker-compose.supabase.yml
 
+services:
   backend:
     image: ghcr.io/jamejia-rayhsa/intranet/backend:${IMAGE_TAG:?Define IMAGE_TAG en .env.staging con el SHA del commit}
     container_name: intranet_backend_staging
     environment:
       NODE_ENV: production
-      POSTGRES_HOST: postgres
+      POSTGRES_HOST: supabase-db
       POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-intranet_staging}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
@@ -58,8 +48,8 @@ services:
       MSSQL_DB: ${MSSQL_DB:-}
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      supabase-db-init:
+        condition: service_completed_successfully
     networks:
       - internal
 
@@ -83,6 +73,3 @@ networks:
   internal:
   proxy:
     external: true
-
-volumes:
-  postgres_data_staging:

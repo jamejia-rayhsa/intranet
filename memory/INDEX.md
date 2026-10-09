@@ -13,6 +13,9 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-08] orquestador → decisions.md — Fase 2 completa: app sobre Postgres de Supabase; init en una transacción; pendientes (hash en /auth/perfil)
+- [2026-10-08] coder → code-notes.md — Fase 2: compose dev/staging/prod incluyen Supabase (include:), supabase-db-init one-shot, envs actualizados
+- [2026-10-08] revisor → reviews.md — Fase 2: Migración Supabase self-hosted (APROBADO, 3 observaciones)
 - [2026-10-08] orquestador → decisions.md — Migración a Supabase self-hosted: línea base del esquema, stack sin gateway, RLS, trampas de GoTrue/Storage
 - [2026-05-15] orquestador → code-notes.md — CSS: pagina-contenedor no existe globalmente; cada módulo debe definirla en su propio CSS
 - [2026-05-15] orquestador → code-notes.md — Gotcha Docker: volúmenes frontend son explícitos por módulo (agregar línea en docker-compose.dev.yml)

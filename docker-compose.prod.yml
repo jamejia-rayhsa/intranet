@@ -1,23 +1,18 @@
-version: '3.8'
+# Producción. Postgres es supabase-db (docker-compose.supabase.yml, vía include).
+#
+# Uso:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#
+# Base de datos: supabase-db-init (one-shot) carga config/database/init.sql si no existe
+# public.usuarios y siempre aplica 004-rls-deny-all.sql. Para restaurar un dump: hacerlo ANTES
+# del primer `up` completo (levantar solo supabase-db) o con psql contra supabase-db
+# (usuario/base `postgres`); el init se salta la carga si `usuarios` ya existe.
+# Secretos Supabase: scripts/supabase/generar-secretos.sh (ver .env.supabase.example).
+
+include:
+  - docker-compose.supabase.yml
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: intranet_postgres_prod
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - postgres_data_prod:/var/lib/postgresql/data
-      - ./config/database/init.sql:/docker-entrypoint-initdb.d/init.sql
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER}']
-      interval: 30s
-      timeout: 10s
-      retries: 5
-    restart: always
-
   backend:
     build:
       context: .
@@ -26,10 +21,10 @@ services:
     container_name: intranet_backend_prod
     environment:
       NODE_ENV: production
-      POSTGRES_HOST: postgres
+      POSTGRES_HOST: supabase-db
       POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-24h}
@@ -43,8 +38,10 @@ services:
       MSSQL_DB: ${MSSQL_DB}
     restart: always
     depends_on:
-      postgres:
-        condition: service_healthy
+      supabase-db-init:
+        condition: service_completed_successfully
+    networks:
+      - internal
 
   frontend:
     build:
@@ -59,6 +56,8 @@ services:
     restart: always
     depends_on:
       - backend
+    networks:
+      - internal
 
   nginx:
     image: nginx:alpine
@@ -73,6 +72,8 @@ services:
       - frontend
       - backend
     restart: always
+    networks:
+      - internal
 
-volumes:
-  postgres_data_prod:
+networks:
+  internal:
