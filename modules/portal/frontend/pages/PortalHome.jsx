@@ -2,18 +2,18 @@
 //
 // Home responsive con sistema visual Rayhsa.
 // Consume `obtenerNoticiasPublicadas` y particiona el resultado en:
-//   - noticias (tipo === 'noticia' u otros)
-//   - comunicados (tipo === 'comunicado')
-//   - vacantes (tipo === 'oferta_empleo')
+//   - publicaciones: noticias y comunicados -> carrusel a pantalla completa (las 10 más recientes)
+//   - vacantes (tipo === 'oferta_empleo') -> cinta inferior
 
 import { useState, useEffect, useMemo } from 'react';
 import { usarAuth } from '../context/AuthContext';
 import { obtenerNoticiasPublicadas } from '../services/noticias.service';
 
 import NewsCarousel from '../components/NewsCarousel';
-import ComunicadosGrid from '../components/ComunicadosGrid';
 import JobsTicker from '../components/JobsTicker';
 import ArticleModal from '../components/ArticleModal';
+
+const MAX_PUBLICACIONES = 10;
 
 function Hero({ usuario, stats }) {
   const nombre = usuario?.nombre || 'colaborador';
@@ -56,11 +56,11 @@ export default function PortalHome() {
       .finally(() => setCargando(false));
   }, []);
 
-  const { noticias, comunicados, vacantes } = useMemo(() => {
-    const noticias = todas.filter(n => !n.tipo || n.tipo === 'noticia');
-    const comunicados = todas.filter(n => n.tipo === 'comunicado');
+  const { publicaciones, vacantes } = useMemo(() => {
     const vacantes = todas.filter(n => n.tipo === 'oferta_empleo');
-    return { noticias, comunicados, vacantes };
+    // Noticias y comunicados comparten el carrusel; se limita para que las barras de progreso sigan siendo legibles
+    const publicaciones = todas.filter(n => n.tipo !== 'oferta_empleo').slice(0, MAX_PUBLICACIONES);
+    return { publicaciones, vacantes };
   }, [todas]);
 
   if (cargando) {
@@ -70,20 +70,12 @@ export default function PortalHome() {
   return (
     <>
       {/* Hero opcional — descoméntalo si quieres bienvenida personalizada */}
-      {/* <Hero usuario={usuario} stats={{ noticias: noticias.length, comunicados: comunicados.length, vacantes: vacantes.length }} /> */}
+      {/* <Hero usuario={usuario} stats={{ noticias: publicaciones.length, comunicados: 0, vacantes: vacantes.length }} /> */}
 
-      {noticias.length > 0 && (
+      {publicaciones.length > 0 && (
         <NewsCarousel
-          noticias={noticias}
-          onOpen={(n) => setModalItem({ kind: 'news', noticia: n })}
-        />
-      )}
-
-      {comunicados.length > 0 && (
-        <ComunicadosGrid
-          comunicados={comunicados}
-          onOpen={(c) => setModalItem({ kind: 'comunicado', noticia: c })}
-          verArchivoTo="/noticias?tipo=comunicado"
+          noticias={publicaciones}
+          onOpen={(n) => setModalItem({ kind: n.tipo === 'comunicado' ? 'comunicado' : 'news', noticia: n })}
         />
       )}
 
