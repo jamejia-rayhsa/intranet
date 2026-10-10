@@ -23,6 +23,11 @@ router.get(
   verificarPermiso("tickets", "Encuestas", "consulta"),
   ControladorEncuesta.obtenerEstadisticas,
 );
+router.get(
+  "/encuestas/pendientes",
+  verificarPermiso("tickets", "Tickets", "consulta"),
+  ControladorEncuesta.pendientes,
+);
 router.get("/:id", verificarPermiso("tickets", "Tickets", "consulta"), validarNumerico("id"), ControladorTicket.obtener);
 router.post("/", verificarPermiso("tickets", "Tickets", "edicion"), ControladorTicket.crear);
 router.put(

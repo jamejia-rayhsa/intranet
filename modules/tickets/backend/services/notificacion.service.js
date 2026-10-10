@@ -61,7 +61,7 @@ Título: ${ticket.titulo}
 Estado anterior: ${estadoAnterior}
 Nuevo estado: ${estadoNuevo}
 
-${estadoNuevo === "resuelto" ? "Tu ticket ha sido resuelto. Por favor confirma si estás satisfecho con la atención." : ""}`;
+${estadoNuevo === "resuelto" ? `Tu ticket ha sido resuelto. Por favor califica la atención recibida (toma un minuto):\n${process.env.FRONTEND_URL || ""}/tickets/lista?ticket=${ticket.id}` : ""}`;
 
     return this.enviarCorreoTicket(correoUsuario, asunto, cuerpo);
   },
