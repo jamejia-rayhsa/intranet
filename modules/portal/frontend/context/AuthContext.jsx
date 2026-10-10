@@ -98,7 +98,8 @@ export function ProveedorAuth({ children }) {
       provider: "azure",
       options: {
         redirectTo: window.location.origin + "/auth/callback",
-        scopes: "email",
+        // `profile` es necesario para que Microsoft envíe el nombre completo
+        scopes: "email profile",
       },
     });
     if (error) throw new Error("No se pudo iniciar sesión con Microsoft");

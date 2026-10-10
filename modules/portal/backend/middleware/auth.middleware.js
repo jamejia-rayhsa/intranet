@@ -1,6 +1,7 @@
 const jwt = require("jsonwebtoken");
 const Usuario = require("../models/usuario.model");
 const { grupo } = require("../config/database");
+const { nombreDesdeClaims } = require("../utils/nombreDesdeIdP");
 
 /** Devuelve los claims si el token es un JWT de Supabase válido; si no, null. */
 function verificarTokenSupabase(token) {
@@ -34,6 +35,32 @@ async function resolverUsuarioSupabase(claims) {
     [claims.sub],
   );
   return porUid.rows[0] || null;
+}
+
+/**
+ * Completa el nombre del usuario con el que entrega el proveedor (Microsoft) SOLO cuando el nombre
+ * local está incompleto (apellido vacío): típico de una cuenta dada de alta solo con el correo.
+ * Un nombre que un administrador ya escribió completo nunca se pisa. Es solo informativo (no afecta
+ * a permisos) y un fallo no debe impedir el acceso.
+ */
+async function completarNombreDesdeProveedor(usuario, claims) {
+  if (usuario.apellido && String(usuario.apellido).trim()) return;
+  const propuesto = nombreDesdeClaims(claims);
+  if (!propuesto) return;
+  try {
+    const r = await grupo.query(
+      `UPDATE usuarios SET nombre = $1, apellido = $2
+       WHERE id = $3 AND (apellido IS NULL OR btrim(apellido) = '')
+       RETURNING nombre, apellido`,
+      [propuesto.nombre, propuesto.apellido, usuario.id],
+    );
+    if (r.rows[0]) {
+      usuario.nombre = r.rows[0].nombre;
+      usuario.apellido = r.rows[0].apellido;
+    }
+  } catch (error) {
+    console.warn("No se pudo completar el nombre desde el proveedor:", error.message);
+  }
 }
 
 /** Agrega rol_id, rol_nombre y roles a req.user (misma forma que antes). */
@@ -98,6 +125,7 @@ async function authenticateJWT(req, res, next) {
           mensaje: "Usuario desactivado",
         });
       }
+      await completarNombreDesdeProveedor(usuario, claims);
       req.user = {
         usuario_id: usuario.id,
         correo: usuario.correo,
