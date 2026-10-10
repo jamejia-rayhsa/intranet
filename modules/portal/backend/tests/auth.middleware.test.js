@@ -75,6 +75,61 @@ describe('authenticateJWT', () => {
     grupo.query.mock.calls.forEach(([sql]) => expect(sql).not.toMatch(/UPDATE/i));
   });
 
+  describe('nombre desde el proveedor (Microsoft)', () => {
+    const meta = { user_metadata: { full_name: 'Juan Carlos Perez Lopez' } };
+    // Fábrica: el middleware actualiza el objeto de la fila, no debe compartirse entre tests
+    const crearSinApellido = () => ({ ...usuarioFila, nombre: 'usuario.nuevo', apellido: null });
+
+    it('completa el nombre cuando el apellido local esta vacio', async () => {
+      grupo.query
+        .mockResolvedValueOnce({ rows: [crearSinApellido()] })
+        .mockResolvedValueOnce({ rows: [{ nombre: 'Juan Carlos', apellido: 'Perez Lopez' }] })
+        .mockResolvedValueOnce({ rows: [{ rol_id: 1, rol_nombre: 'super_admin' }] });
+      const { req, res, next } = crearMocks(tokenSupabase(meta));
+      await authenticateJWT(req, res, next);
+      expect(next).toHaveBeenCalled();
+      const [sql, params] = grupo.query.mock.calls[1];
+      expect(sql).toMatch(/UPDATE usuarios SET nombre = \$1, apellido = \$2/);
+      expect(sql).toMatch(/apellido IS NULL OR btrim\(apellido\) = ''/);
+      expect(params).toEqual(['Juan Carlos', 'Perez Lopez', 7]);
+      expect(req.user.nombre).toBe('Juan Carlos');
+    });
+
+    it('NO pisa un nombre que un administrador ya escribio completo', async () => {
+      grupo.query
+        .mockResolvedValueOnce({ rows: [{ ...usuarioFila, nombre: 'Ana', apellido: 'Perez' }] })
+        .mockResolvedValueOnce({ rows: [] });
+      const { req, res, next } = crearMocks(tokenSupabase(meta));
+      await authenticateJWT(req, res, next);
+      expect(next).toHaveBeenCalled();
+      expect(grupo.query).toHaveBeenCalledTimes(2); // SELECT usuario + rol, ningun UPDATE
+      grupo.query.mock.calls.forEach(([sql]) => expect(sql).not.toMatch(/UPDATE/i));
+      expect(req.user.nombre).toBe('Ana');
+    });
+
+    it('no intenta nada si el token no trae nombre del proveedor', async () => {
+      grupo.query.mockResolvedValueOnce({ rows: [crearSinApellido()] }).mockResolvedValueOnce({ rows: [] });
+      const { req, res, next } = crearMocks(tokenSupabase());
+      await authenticateJWT(req, res, next);
+      expect(next).toHaveBeenCalled();
+      grupo.query.mock.calls.forEach(([sql]) => expect(sql).not.toMatch(/UPDATE/i));
+      expect(req.user.nombre).toBe('usuario.nuevo');
+    });
+
+    it('un fallo al guardar el nombre no impide el acceso', async () => {
+      jest.spyOn(console, 'warn').mockImplementation(() => {});
+      grupo.query
+        .mockResolvedValueOnce({ rows: [crearSinApellido()] })
+        .mockRejectedValueOnce(new Error('db caida'))
+        .mockResolvedValueOnce({ rows: [] });
+      const { req, res, next } = crearMocks(tokenSupabase(meta));
+      await authenticateJWT(req, res, next);
+      expect(next).toHaveBeenCalled();
+      expect(res.status).not.toHaveBeenCalled();
+      expect(req.user.nombre).toBe('usuario.nuevo');
+    });
+  });
+
   it('responde 403 si el usuario no esta registrado en la intranet', async () => {
     grupo.query.mockResolvedValue({ rows: [] });
     const { req, res, next } = crearMocks(tokenSupabase());

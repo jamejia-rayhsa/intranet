@@ -13,6 +13,8 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-09] orquestador → decisions.md — Nombre de usuarios de Microsoft completado desde el proveedor (scope profile + sincronización solo con apellido vacío)
+- [2026-10-09] orquestador → decisions.md — Staging migrado a Supabase (ejecución real, verificado por dominio público y Chromium); reversa disponible
 - [2026-10-09] orquestador → decisions.md — CI reparado antes del despliegue: lint 0 errores, scripts en la imagen del backend, npm test 78/78
 - [2026-10-09] orquestador → decisions.md — Frontend: anon key y flag de Microsoft leídos al arrancar el contenedor (una imagen para todos los entornos; arregla trampa del CI)
 - [2026-10-09] orquestador → decisions.md — Middleware sin vinculación por correo (user_metadata/correo editables por el usuario); Azure probado en dev
