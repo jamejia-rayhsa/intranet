@@ -1,11 +1,9 @@
 // modules/portal/frontend/pages/PortalLogin.jsx
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { usarAuth } from '../context/AuthContext';
-import CarruselNoticias from '../components/CarruselNoticias';
 import { config } from '../lib/config';
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
 const LOGIN_MICROSOFT = config.ms365Login;
 const NOMBRE_EMPRESA = import.meta.env.VITE_NOMBRE_EMPRESA || 'Intranet Corporativa';
 
@@ -14,19 +12,10 @@ export default function PortalLogin() {
   const [contraseña, setContraseña] = useState('');
   const [error, setError] = useState('');
   const [cargando, setCargando] = useState(false);
-  const [noticias, setNoticias] = useState([]);
   const { iniciarSesion, iniciarSesionMicrosoft, errorAuth } = usarAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const errorMostrado = error || location.state?.error || errorAuth;
-
-  // Cargar noticias públicas para el carrusel
-  useEffect(() => {
-    fetch(`${API}/noticias/publicas`)
-      .then(r => r.json())
-      .then(j => { if (j.exito) setNoticias(j.datos?.noticias || []); })
-      .catch(() => {});
-  }, []);
 
   async function manejarMicrosoft() {
     setError('');
@@ -52,9 +41,9 @@ export default function PortalLogin() {
   }
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh' }}>
-      {/* Panel izquierdo: Logo + Formulario */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', background: 'var(--color-fondo)', minWidth: 0 }}>
+    <div style={{ display: 'flex', minHeight: '100vh', alignItems: 'center', justifyContent: 'center', background: 'var(--color-fondo)' }}>
+      {/* Logo + Formulario */}
+      <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', minWidth: 0 }}>
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
           <img
@@ -105,13 +94,6 @@ export default function PortalLogin() {
             </button>
           )}
         </form>
-      </div>
-
-      {/* Panel derecho: Carrusel de noticias (oculto en móvil) */}
-      <div style={{ flex: 1, display: 'none', minWidth: 0 }} className="login-panel-carrusel">
-        <div style={{ width: '100%', height: '100%', minHeight: '100vh' }}>
-          <CarruselNoticias noticias={noticias} modo="fondo" />
-        </div>
       </div>
     </div>
   );

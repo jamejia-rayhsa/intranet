@@ -1,119 +1,146 @@
-import { urlImagenNoticia } from "../utils/storage";
 // modules/portal/frontend/components/NewsCarousel.jsx
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import Icons from './Icons';
-
+import { urlImagenNoticia } from '../utils/storage';
 
 /**
- * NewsCarousel — rail horizontal con scroll-snap + chips de filtro.
+ * NewsCarousel — carrusel de publicaciones (noticias y comunicados) a pantalla completa.
  *
- * Reemplaza al antiguo CarruselNoticias.jsx con un layout editorial-friendly.
+ * Cada publicación ocupa todo el alto del área de contenido: la imagen de fondo y, al pie,
+ * sobre un degradado, la etiqueta, la fecha, el título, el resumen y "Leer artículo".
+ * La pista usa scroll-snap horizontal: en móvil se desliza con el dedo; en escritorio hay
+ * flechas, barras de progreso clicables y las teclas ← →. Sin imagen se usa un fondo institucional.
  *
- * @param {Array} noticias — entidades crudas del backend (cada una con titulo, tipo, fecha_publicacion, imagenes, etc.)
- * @param {(noticia) => void} onOpen — callback al hacer clic en una tarjeta
- * @param {string[]} [categorias] — chips de filtro. Default = ['Todas', ...los `tipo` únicos de noticias]
+ * @param {Array} noticias — entidades crudas del backend (titulo, subtitulo, contenido, tipo, fecha_publicacion, imagenes)
+ * @param {(noticia) => void} onOpen — se llama al hacer clic en una publicación
+ * @param {string} [verTodasTo] — ruta del archivo completo (default /noticias)
  */
-export default function NewsCarousel({ noticias = [], onOpen, categorias }) {
-  const [active, setActive] = useState('Todas');
-  const railRef = useRef(null);
-  const [s, setS] = useState({ atStart: true, atEnd: false });
+const ETIQUETAS = { comunicado: 'Comunicado', oferta_empleo: 'Oferta' };
 
-  const cats = useMemo(() => {
-    if (categorias) return categorias;
-    const tipos = Array.from(new Set(noticias.map(n => n.tipo).filter(Boolean)));
-    return ['Todas', ...tipos];
-  }, [noticias, categorias]);
+function textoPlano(valor) {
+  return String(valor || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
 
-  const filtered = useMemo(
-    () => active === 'Todas' ? noticias : noticias.filter(n => n.tipo === active),
-    [active, noticias]
-  );
+function resumenDe(n) {
+  if (n.subtitulo) return textoPlano(n.subtitulo);
+  const texto = textoPlano(n.contenido);
+  return texto.length > 180 ? texto.slice(0, 180).trimEnd() + '…' : texto;
+}
 
-  const update = () => {
-    const el = railRef.current; if (!el) return;
-    const max = el.scrollWidth - el.clientWidth;
-    setS({ atStart: el.scrollLeft <= 4, atEnd: el.scrollLeft >= max - 4 });
-  };
+export default function NewsCarousel({ noticias = [], onOpen, verTodasTo = '/noticias' }) {
+  const pistaRef = useRef(null);
+  const [activo, setActivo] = useState(0);
+  const total = noticias.length;
+
+  // El índice activo sale de la posición real del scroll (sirve para flechas, barras y deslizar)
+  const actualizar = useCallback(() => {
+    const el = pistaRef.current;
+    if (!el || !el.clientWidth) return;
+    setActivo(Math.min(total - 1, Math.max(0, Math.round(el.scrollLeft / el.clientWidth))));
+  }, [total]);
+
   useEffect(() => {
-    update();
-    const el = railRef.current; if (!el) return;
-    el.addEventListener('scroll', update, { passive: true });
-    return () => el.removeEventListener('scroll', update);
-  }, [filtered.length]);
+    const el = pistaRef.current;
+    if (!el) return undefined;
+    el.addEventListener('scroll', actualizar, { passive: true });
+    window.addEventListener('resize', actualizar);
+    actualizar();
+    return () => {
+      el.removeEventListener('scroll', actualizar);
+      window.removeEventListener('resize', actualizar);
+    };
+  }, [actualizar]);
 
-  const scrollBy = (dir) => {
-    const el = railRef.current; if (!el) return;
-    el.scrollBy({ left: dir * (340 + 16), behavior: 'smooth' });
+  const irA = (indice) => {
+    const el = pistaRef.current;
+    if (!el || total === 0) return;
+    const destino = (indice + total) % total;
+    el.scrollTo({ left: destino * el.clientWidth, behavior: 'smooth' });
   };
+
+  const alPulsarTecla = (e) => {
+    if (e.key === 'ArrowLeft') { e.preventDefault(); irA(activo - 1); }
+    if (e.key === 'ArrowRight') { e.preventDefault(); irA(activo + 1); }
+  };
+
+  if (total === 0) return null;
 
   return (
-    <section className="seccion">
-      <div className="seccion-head">
-        <h2 className="seccion-titulo">{Icons.news} Noticias</h2>
-        <div className="news-controls">
-          <span className="seccion-meta">{filtered.length} publicaciones</span>
-          <div className="news-nav">
-            <button onClick={() => scrollBy(-1)} disabled={s.atStart} aria-label="Anterior">{Icons.arrL}</button>
-            <button onClick={() => scrollBy(1)} disabled={s.atEnd} aria-label="Siguiente">{Icons.arrR}</button>
-          </div>
-        </div>
+    <section
+      className="news-hero"
+      role="region"
+      aria-roledescription="carrusel"
+      aria-label="Noticias y comunicados"
+      tabIndex={0}
+      onKeyDown={alPulsarTecla}
+    >
+      <div className="news-hero__pista" ref={pistaRef}>
+        {noticias.map((n, i) => {
+          const imagen = n.imagenes?.[0];
+          const fecha = n.fecha_publicacion
+            ? new Date(n.fecha_publicacion).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })
+            : null;
+          const resumen = resumenDe(n);
+          const tipo = n.tipo === 'comunicado' ? 'comunicado' : n.tipo === 'oferta_empleo' ? 'oferta' : 'noticia';
+          return (
+            <article
+              className="news-hero__slide"
+              key={n.id}
+              onClick={() => onOpen?.(n)}
+              aria-roledescription="diapositiva"
+              aria-label={`${i + 1} de ${total}`}
+            >
+              {imagen ? (
+                <img
+                  className="news-hero__imagen"
+                  src={urlImagenNoticia(imagen)}
+                  alt=""
+                  loading={i === 0 ? 'eager' : 'lazy'}
+                  decoding="async"
+                  draggable={false}
+                />
+              ) : (
+                <div className="news-hero__sin-imagen" aria-hidden="true" />
+              )}
+              <div className="news-hero__velo" aria-hidden="true" />
+              <div className="news-hero__info">
+                <div className="news-hero__meta">
+                  <span className={`badge badge-${tipo}`}>{ETIQUETAS[n.tipo] || n.tipo || 'Noticia'}</span>
+                  {fecha && <span>{fecha}</span>}
+                  {n.tiempo_lectura && <span>{n.tiempo_lectura} min de lectura</span>}
+                </div>
+                <h3 className="news-hero__titulo">{n.titulo}</h3>
+                {resumen && <p className="news-hero__resumen">{resumen}</p>}
+                <span className="news-hero__cta">Leer artículo {Icons.arrUR}</span>
+              </div>
+            </article>
+          );
+        })}
       </div>
 
-      {cats.length > 1 && (
-        <div className="chips">
-          {cats.map(c => (
+      {total > 1 && (
+        <div className="news-hero__barras">
+          {noticias.map((n, i) => (
             <button
-              key={c}
-              className={`chip ${active === c ? 'is-active' : ''}`}
-              onClick={() => setActive(c)}
-            >{c}</button>
+              key={n.id}
+              type="button"
+              className={`news-hero__barra ${i === activo ? 'is-activa' : ''}`}
+              onClick={() => irA(i)}
+              aria-label={`Ir a la publicación ${i + 1}`}
+              aria-current={i === activo}
+            />
           ))}
         </div>
       )}
+      <Link to={verTodasTo} className="news-hero__todas">Ver todas {Icons.arrUR}</Link>
 
-      <div className="news-rail-wrap">
-        <div className="news-rail" ref={railRef}>
-          {filtered.map(n => {
-            const primera = n.imagenes?.[0];
-            const fecha = n.fecha_publicacion ? new Date(n.fecha_publicacion).toLocaleDateString('es-MX') : null;
-            return (
-              <article
-                className="news-card"
-                key={n.id}
-                onClick={() => onOpen?.(n)}
-              >
-                <div
-                  className="news-card__media"
-                  style={primera ? {
-                    backgroundImage: `url(${urlImagenNoticia(primera)})`,
-                    backgroundSize: 'cover',
-                    backgroundPosition: 'center',
-                  } : undefined}
-                >
-                  <span className="news-card__badge">
-                    <span className={`badge badge-${n.tipo === 'comunicado' ? 'comunicado' : n.tipo === 'oferta_empleo' ? 'oferta' : 'noticia'}`}>
-                      {n.tipo === 'comunicado' ? 'Comunicado'
-                        : n.tipo === 'oferta_empleo' ? 'Oferta'
-                        : (n.tipo || 'Noticia')}
-                    </span>
-                  </span>
-                  {!primera && <span className="ph">Sin imagen</span>}
-                </div>
-                <div className="news-card__body">
-                  <div className="news-card__meta">
-                    {fecha && <><span>{fecha}</span><span className="sep" /></>}
-                    {n.tiempo_lectura && <span>{n.tiempo_lectura} min de lectura</span>}
-                  </div>
-                  <h3 className="news-card__titulo">{n.titulo}</h3>
-                  <span className="news-card__cta">
-                    Leer artículo <span className="arrow">{Icons.arrUR}</span>
-                  </span>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      </div>
+      {total > 1 && (
+        <>
+          <button type="button" className="news-hero__flecha news-hero__flecha--izq" onClick={() => irA(activo - 1)} aria-label="Anterior">{Icons.arrL}</button>
+          <button type="button" className="news-hero__flecha news-hero__flecha--der" onClick={() => irA(activo + 1)} aria-label="Siguiente">{Icons.arrR}</button>
+        </>
+      )}
     </section>
   );
 }
