@@ -120,6 +120,8 @@ El botón de Microsoft está apagado por defecto. Para activarlo:
 
 **Cómo se identifica a un usuario de Microsoft:** en el primer login, GoTrue asocia la identidad `azure` al usuario de GoTrue que ya tiene ese correo (ese es el único punto donde el correo importa; debe coincidir con el correo de Microsoft). A partir de ahí el backend resuelve la fila local por `auth_uid`, nunca por correo (ver ADR de la Fase 6 sobre por qué se eliminó la vinculación por correo del middleware).
 
+**Nombre del usuario:** el botón pide los permisos `email profile` (sin `profile` Microsoft no envía el nombre). Si una cuenta dada de alta solo con el correo tiene el **apellido vacío**, en su primer acceso con Microsoft el backend completa `nombre` y `apellido` con los datos del proveedor (`middleware/auth.middleware.js`, `utils/nombreDesdeIdP.js`). Microsoft entrega el nombre completo en un solo campo, así que se separa por la convención mexicana (los dos últimos elementos son los apellidos; las partículas "de", "del", "la"… se pegan al apellido): `Juan Carlos Perez Lopez` -> `Juan Carlos` / `Perez Lopez`. Si un administrador ya escribió el apellido, **nunca se pisa**; si la separación no es la deseada, se corrige desde el panel y ya no cambia.
+
 **Estado:** probado en desarrollo con un usuario real (2026-10-09): GoTrue creó la identidad `azure` y la asoció al usuario existente. Observado en `auth.identities`/`auth.users`: la identidad `email` del usuario migrado tiene `identity_data.email_verified = false` aunque `raw_user_meta_data.email_verified = true`, y la identidad `azure` tiene ambos en `true`. Como el backend ya no depende de `email_verified`, no hace falta hacer nada con esa diferencia. Pendiente de probar: staging/prod con sus propias URIs.
 
 ## 6. Respaldos y restauración
@@ -229,4 +231,7 @@ Las versiones están fijadas en `docker-compose.supabase.yml`. Para actualizar: 
 
 ### `npm test` se llevó mi volumen de datos de desarrollo
 `docker-compose.test.yml` compartía nombre de proyecto (`intranet`) y servicio (`postgres`) con el compose de desarrollo, y Compose "recrea" el contenedor viejo `intranet_postgres_dev` como `intranet_postgres_test` **heredando su volumen de datos**. Ya no ocurre porque el compose de tests declara `name: intranet-test`. Si una instalación antigua ve un contenedor `intranet_postgres_test` con el volumen `intranet_postgres_data_dev`, verifique los datos sobre una copia (nunca arrancando el contenedor) antes de borrarlo.
+
+### `docker compose run` en un script remoto descarta los comandos siguientes
+Si ejecutas varios comandos con `ssh servidor 'bash -s' <<EOF ... EOF`, un `docker compose run` **consume la entrada estándar** y los comandos que le siguen no se ejecutan (el script parece terminar bien). Añade `</dev/null` a cada `docker compose run`/`docker exec -i` que no deba leer la entrada.
 

@@ -6,6 +6,31 @@ type: project
 
 # Decisiones de Arquitectura
 
+### [2026-10-09] orquestador — El nombre de los usuarios de Microsoft se completa desde el proveedor
+
+**Síntoma:** tras dar de alta una cuenta de administrador en staging solo con el correo (con un marcador como nombre), la aplicación mostraba solo el marcador. Causa doble: (1) la aplicación muestra el nombre de la **base local**, no el de Microsoft; (2) el botón pedía solo `openid email`, sin `profile`, y Microsoft no envió el nombre (la identidad de Azure en GoTrue solo traía `email`, `tid`, `sub`…).
+**Decisión:** el botón pide `email profile`; el middleware (`completarNombreDesdeProveedor`) rellena `nombre`/`apellido` desde `user_metadata` del token (`given_name`+`family_name`, o `full_name`/`name`) **solo cuando el apellido local está vacío**, con `UPDATE ... WHERE apellido IS NULL OR btrim(apellido)=''` (idempotente y a prueba de carreras). Un nombre ya escrito por un administrador nunca se pisa; un fallo del UPDATE no bloquea el acceso. Separación del nombre completo (`utils/nombreDesdeIdP.js`): los dos últimos elementos son apellidos, las partículas se pegan al apellido; si hay un solo elemento o parece un correo, no se toca nada. Los datos vienen de `user_metadata`, que el usuario puede editar: solo afecta a lo que se **muestra**, no a permisos ni a la identidad (que sigue resolviéndose por `auth_uid`).
+**Pruebas:** 12 casos de separación de nombres y 4 del middleware (rellena con apellido vacío; no pisa un nombre completo; no actúa sin datos del proveedor; un fallo de la BD no impide el acceso); 216 tests y lint 0 errores. Un test detectó un fallo real (con "de la Cruz" el nombre quedaba vacío) y otro un defecto del propio test (fixture compartido y mutable).
+**Despliegue:** requiere nueva imagen (cambia backend y frontend): PR -> CI -> `IMAGE_TAG` en staging. El nombre de esa cuenta se corrigió a mano en la base de staging.
+
+### [2026-10-09] orquestador — Staging migrado a Supabase (ejecución real)
+
+**Qué se hizo** (servidor de staging, clon del repositorio fijado en el commit de fusión `ea66bd1`, imágenes `ghcr.io/jamejia-rayhsa/intranet/{backend,frontend}` con esa etiqueta):
+1. Pre-chequeos de solo lectura; descarga de imágenes en segundo plano; **se levantó primero solo `supabase-db`+`db-init`** (sin tocar el backend/frontend viejos) y se comparó el esquema: 0 columnas solo en la base vieja, 1 cambio de ancho (`recibos_nomina.ruta_archivo` 255->500).
+2. Mantenimiento (parada del backend/frontend viejos 23:42:46 UTC; carga completada en 14 s; primer usuario operativo en GoTrue 23:43:47 UTC: **≈1 minuto** sin poder iniciar sesión): `pg_dump -Fc` (plan B) y `--data-only --column-inserts --disable-triggers`, carga como `supabase_admin` en una transacción (guardia: si fallaba, reiniciaba lo viejo), conteos idénticos, `up -d` completo, `scripts/migrar-usuarios-supabase.js` (todos vinculados). El contenedor viejo no tenía `/app/uploads` (nunca se subieron archivos) y la base no tenía filas de archivos.
+3. Verificado por el dominio público: web, `config.js` (no-store, anon key y Microsoft=true), GoTrue health/settings, API 401 sin token, Storage; un usuario temporal de prueba (creado y **borrado**): login real, `perfil` sin hash, API autenticada 200, imagen pública, URL firmada y bucket privado sin firma rechazado; Chromium: login, error por credenciales falsas, y el botón de Microsoft llega a la pantalla de Microsoft sin `AADSTS` (la URI de Entra es válida). Primer respaldo hecho en el servidor (sin cifrar).
+4. Consumo real del stack Supabase: db ≈ 81 MB, storage ≈ 147 MB, auth ≈ 41 MB, rest ≈ 26 MB (≈ 295 MB), menos que la estimación (370 MB).
+
+**Decisiones:**
+- Las cuentas semilla de `init.sql` se migraron tal cual; **pendiente decidir** si se rotan o se desactivan tras validar (no se tocaron por no dejar sin acceso a quien validaba).
+- Orden mejorado respecto al runbook: levantar la base nueva y comparar esquemas **antes** de congelar staging.
+
+**Trampas nuevas:** (a) `docker compose run` dentro de un script remoto (`ssh ... bash -s <<EOF`) **se traga la entrada estándar** y descarta los comandos siguientes: usar `</dev/null`; (b) un `IMAGE_TAG` con una mayúscula por error o una credencial de ghcr caducada dan ambos `denied` sin distinguirse: probar `docker manifest inspect` con la etiqueta vieja y la nueva; (c) las etiquetas de ghcr distinguen mayúsculas; (d) GoTrue rechaza con "Signups not allowed" a quien entra con Microsoft sin tener cuenta previa: hay que darla de alta antes.
+
+**Reversa disponible (no se ha usado):** el contenedor y el volumen del Postgres viejo siguen intactos y la configuración anterior está respaldada. Conservar al menos dos semanas.
+
+**Pendientes:** login con Microsoft de extremo a extremo con una cuenta dada de alta; decidir qué hacer con las cuentas semilla; programar los respaldos (cron/systemd) y definir `BACKUP_PASSPHRASE`; retirar el Postgres viejo pasado el plazo; producción sin migrar.
+
 ### [2026-10-09] orquestador — Pasos del CI reparados antes del despliegue (lint, pruebas en contenedor, scripts en la imagen)
 
 Al preparar la guía de staging/prod se reprodujeron en local los tres pasos del workflow (`lint`, `db:migrate`, `npm test`), de los que depende la publicación de imágenes (`build` necesita `test`):
