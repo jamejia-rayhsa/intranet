@@ -166,7 +166,7 @@ describe("escrituras: adjuntos, estado, asignar, eliminar, encuesta", () => {
     });
     jest.doMock("../controllers/encuesta.controller", () => {
       const ok = (_q, res) => res.json({ exito: true });
-      return { crear: ok, obtener: ok, obtenerEstadisticas: ok };
+      return { crear: ok, obtener: ok, obtenerEstadisticas: ok, pendientes: ok };
     });
     jest.isolateModules(() => {
       appT = express();

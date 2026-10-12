@@ -38,8 +38,14 @@ function PiramideNivel({ nivel }) {
   );
 }
 
-export default function TicketList({ tickets, onCambioEstado, onRefresh }) {
-  const [ticketSeleccionado, setTicketSeleccionado] = useState(null);
+export default function TicketList({
+  tickets,
+  onCambioEstado,
+  onRefresh,
+  ticketInicial = null,
+  onTicketCerrado,
+}) {
+  const [ticketSeleccionado, setTicketSeleccionado] = useState(ticketInicial);
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
 
   if (ticketSeleccionado) {
@@ -48,6 +54,7 @@ export default function TicketList({ tickets, onCambioEstado, onRefresh }) {
         ticketId={ticketSeleccionado}
         alVolver={() => {
           setTicketSeleccionado(null);
+          if (onTicketCerrado) onTicketCerrado();
           if (onRefresh) onRefresh();
         }}
         onEstadoCambiado={onRefresh}

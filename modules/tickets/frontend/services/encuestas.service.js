@@ -11,6 +11,14 @@ export async function obtenerEncuesta(ticketId) {
   return solicitar(`/tickets/${ticketId}/encuesta`);
 }
 
-export async function obtenerEstadisticasEncuestas() {
-  return solicitar("/tickets/encuestas/estadisticas");
+export async function obtenerEstadisticasEncuestas({ desde, hasta } = {}) {
+  const parametros = new URLSearchParams();
+  if (desde) parametros.set("desde", desde);
+  if (hasta) parametros.set("hasta", hasta);
+  const consulta = parametros.toString();
+  return solicitar(`/tickets/encuestas/estadisticas${consulta ? `?${consulta}` : ""}`);
+}
+
+export async function obtenerEncuestasPendientes() {
+  return solicitar("/tickets/encuestas/pendientes");
 }

@@ -3137,3 +3137,123 @@ button:disabled {
   object-fit: cover;
   display: block;
 }
+
+/* Encuestas de satisfacción */
+.encuestas-encabezado {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.encuestas-nota {
+  color: var(--color-texto-claro);
+}
+
+.encuestas-actualizando {
+  opacity: 0.6;
+}
+
+.encuestas-bloque {
+  background: var(--color-superficie);
+  border: 1px solid var(--color-borde);
+  border-radius: var(--radio-borde);
+  padding: 1rem 1.25rem;
+  margin-top: 1.25rem;
+}
+
+.encuestas-bloque h2 {
+  font-size: 1.1rem;
+  margin-bottom: 0.75rem;
+}
+
+.encuestas-barra {
+  display: grid;
+  grid-template-columns: 3rem 1fr 2.5rem;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.encuestas-barra-pista {
+  background: var(--color-fondo);
+  border-radius: 4px;
+  height: 0.9rem;
+  overflow: hidden;
+}
+
+.encuestas-barra-relleno {
+  display: block;
+  height: 100%;
+  background: var(--color-primario);
+}
+
+.encuestas-barra-valor {
+  text-align: right;
+}
+
+.encuestas-tabla {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.encuestas-tabla th,
+.encuestas-tabla td {
+  text-align: left;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--color-borde);
+}
+
+.encuesta-estrellas {
+  color: var(--color-advertencia);
+  letter-spacing: 1px;
+}
+
+.encuestas-comentarios {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.encuestas-comentarios li {
+  padding: 0.75rem;
+  border-left: 3px solid var(--color-borde);
+  margin-bottom: 0.6rem;
+}
+
+.encuestas-comentarios li.baja {
+  border-left-color: var(--color-error);
+  background: var(--color-fondo);
+}
+
+.encuestas-comentarios p {
+  margin: 0.25rem 0;
+}
+
+.encuestas-pendientes {
+  background: var(--color-fondo);
+  border: 1px solid var(--color-advertencia);
+  border-radius: var(--radio-borde);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.encuestas-pendientes ul {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
+.encuestas-pendientes button {
+  background: none;
+  border: none;
+  padding: 0.15rem 0;
+  color: var(--color-secundario);
+  cursor: pointer;
+  text-align: left;
+}
+
+.encuestas-pendientes button:hover {
+  text-decoration: underline;
+}

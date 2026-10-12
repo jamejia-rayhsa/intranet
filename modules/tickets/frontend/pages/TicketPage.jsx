@@ -6,6 +6,7 @@ import {
 import TicketList from "../components/TicketList";
 import TicketFiltros from "../components/TicketFiltros";
 import TicketForm from "../components/TicketForm";
+import { obtenerEncuestasPendientes } from "../services/encuestas.service";
 
 export default function TicketPage() {
   const [tickets, setTickets] = useState([]);
@@ -18,13 +19,27 @@ export default function TicketPage() {
     categoria: "",
   });
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
+  const [pendientes, setPendientes] = useState([]);
+  const [ticketAbierto, setTicketAbierto] = useState(
+    () => new URLSearchParams(window.location.search).get("ticket"),
+  );
 
   useEffect(() => {
     cargarTickets();
   }, [pagina, filtros]);
 
+  async function cargarPendientes() {
+    try {
+      const respuesta = await obtenerEncuestasPendientes();
+      setPendientes(respuesta.exito ? respuesta.datos : []);
+    } catch {
+      setPendientes([]);
+    }
+  }
+
   async function cargarTickets() {
     setCargando(true);
+    cargarPendientes();
     try {
       const respuesta = await obtenerTickets({
         pagina,
@@ -88,7 +103,27 @@ export default function TicketPage() {
 
       <TicketFiltros filtros={filtros} onFiltrar={manejarFiltros} />
 
+      {pendientes.length > 0 && !ticketAbierto && (
+        <div className="encuestas-pendientes" role="status">
+          <strong>
+            Tienes {pendientes.length}{" "}
+            {pendientes.length === 1 ? "ticket por calificar" : "tickets por calificar"}
+          </strong>
+          <ul>
+            {pendientes.slice(0, 5).map((p) => (
+              <li key={p.id}>
+                <button type="button" onClick={() => setTicketAbierto(String(p.id))}>
+                  #{p.id} · {p.titulo}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <TicketList
+        ticketInicial={ticketAbierto}
+        onTicketCerrado={() => setTicketAbierto(null)}
         tickets={tickets}
         onCambioEstado={manejarCambioEstado}
         onRefresh={cargarTickets}

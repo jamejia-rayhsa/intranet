@@ -66,3 +66,4 @@
 - [2026-04-28] coder → code-notes.md — Listado separado vacaciones + seed (bug req.user.usuario_id; correos @empresa.com corregidos)
 
 - [2026-10-08] revisor → reviews.md — Fase 4A+4B: Frontend Supabase Auth + proxies Vite (APROBADO CON OBSERVACIÓN, 1 IMPORTANTE bajo riesgo)
+- [2026-10-09] orquestador → decisions.md — ADR: Encuestas de satisfacción de tickets (UNIQUE por ticket, estados, invitación, estadísticas por rol)

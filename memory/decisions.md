@@ -651,3 +651,19 @@ Nota operativa: `npm test` reutiliza imágenes ya construidas; para probar cambi
 - `modules/portal/backend/app.js` — registrar rutas `/api/comercial`
 - `modules/portal/frontend/main.jsx` — imports + rutas React para /comercial/*
 - `modules/portal/frontend/components/MenuDinamico.jsx` — agregar SUB_RUTAS.comercial
+
+### [2026-10-09] orquestador — ADR: Encuestas de satisfacción de tickets (cierre del módulo)
+
+**Contexto:** PLAN.md (Etapa 2) pedía tabla, modelo, controlador y `SatisfactionSurvey`; existían pero con fallos: la página de estadísticas leía `promedio_calificacion` (el backend envía `promedio`), el correo de cambio de estado nunca salía (`ticket.usuario_id` no existe; la columna es `solicitante_id`), `init.sql` creaba `ticket_encuestas` sin UNIQUE ni `ON DELETE CASCADE`, el backend aceptaba encuestas en cualquier estado mientras la UI solo las mostraba en «resuelto», y no había tests.
+
+**Decisiones:**
+1. **Una encuesta por ticket garantizada por la BD** (`UNIQUE(ticket_id)`, migración `tickets/003-encuestas-unicas.sql`, también en `init.sql` y en `supabase-db-init`). `crear` usa `ON CONFLICT DO NOTHING` y responde 409 si ya existía. La migración deduplica (conserva la más antigua) y pone `ON DELETE CASCADE` (antes un ticket con encuesta no se podía borrar).
+2. **Cuándo se responde:** ticket en `resuelto` o `cerrado` (el backend lo exige; antes cualquier estado) y solo el solicitante (los admins no responden por otros). Calificación entera 1-5; comentarios ≤ 1000 caracteres.
+3. **Invitación:** correo de cambio de estado corregido (incluye enlace `/tickets/lista?ticket=ID`; requiere SMTP configurado, hoy no lo está en staging) + aviso en la lista de tickets vía `GET /tickets/encuestas/pendientes` (permiso `Tickets: consulta`, solo los del propio usuario).
+4. **Estadísticas (`GET /tickets/encuestas/estadisticas?desde&hasta`):** resumen, distribución 1-5, % satisfechos (4-5), por categoría, comentarios recientes (≤2★ primero). **Visibilidad:** super_admin / `tickets_admin` / `tickets.admin` ven todo y el ranking por técnico; un técnico ve solo sus tickets (sin ranking); cualquier otro rol con `Encuestas: consulta` recibe únicamente el resumen global.
+5. Auditoría del estado/asignación usaba `tecnico_asignado_id` (inexistente); ahora `tecnico_id`.
+
+**Trampas / pendientes:**
+- Ningún rol sembrado salvo `tickets_admin` tiene `Encuestas: edicion`: para que un solicitante responda, su rol necesita `Tickets: consulta` y `Encuestas: edicion` (se asigna desde el portal; no se tocó el seed).
+- `SMTP_DE_DEFAECTO` (typo) se usa igual en los `.env` y en dos servicios; no se renombró para no romper despliegues existentes.
+- `docker-compose.supabase.yml` aplica 003 en cada `up` (idempotente); bases ya desplegadas la reciben al recrear `supabase-db-init`.

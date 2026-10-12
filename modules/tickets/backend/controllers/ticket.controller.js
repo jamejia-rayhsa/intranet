@@ -183,9 +183,10 @@ const ControladorTicket = {
         esAdminTickets(req.user) ? tecnico_id || null : null,
       );
 
-      const usuario = await Usuario.buscarPorId(ticketAnterior.usuario_id);
+      const usuario = await Usuario.buscarPorId(ticketAnterior.solicitante_id);
 
       try {
+        if (!usuario?.correo) throw new Error("El solicitante no tiene correo");
         await ServicioNotificacion.notificarCambioEstado(
           ticket,
           usuario.correo,
@@ -209,7 +210,7 @@ const ControladorTicket = {
           { estado: ticketAnterior.estado },
           {
             estado: ticket.estado,
-            tecnico_asignado_id: ticket.tecnico_asignado_id,
+            tecnico_id: ticket.tecnico_id,
           },
         );
       } catch (error) {
@@ -269,8 +270,8 @@ const ControladorTicket = {
           "tickets",
           ticket.id.toString(),
           "UPDATE",
-          { tecnico_asignado_id: null },
-          { tecnico_asignado_id: tecnico_id },
+          { tecnico_id: null },
+          { tecnico_id },
         );
       } catch (error) {
         console.error("Error al registrar auditoría:", error.message);

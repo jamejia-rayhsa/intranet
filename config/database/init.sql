@@ -331,8 +331,8 @@ CREATE TABLE IF NOT EXISTS ticket_adjuntos (
 
 CREATE TABLE IF NOT EXISTS ticket_encuestas (
   id SERIAL PRIMARY KEY,
-  ticket_id INT REFERENCES tickets(id),
-  calificacion INT CHECK (calificacion >= 1 AND calificacion <= 5),
+  ticket_id INT NOT NULL UNIQUE REFERENCES tickets(id) ON DELETE CASCADE,
+  calificacion INT NOT NULL CHECK (calificacion >= 1 AND calificacion <= 5),
   comentarios TEXT,
   fecha_respuesta TIMESTAMP DEFAULT NOW()
 );

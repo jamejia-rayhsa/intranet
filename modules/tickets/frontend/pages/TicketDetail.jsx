@@ -193,15 +193,13 @@ export default function TicketDetail({ ticketId, alVolver, onEstadoCambiado }) {
   }
 
   async function manejarEnviarEncuesta(calificacion, comentarios) {
-    try {
-      await enviarEncuesta(ticketId, calificacion, comentarios);
-      const respuesta = await obtenerEncuesta(ticketId);
-      if (respuesta.exito) {
-        setEncuesta(respuesta.datos);
-      }
-    } catch (error) {
-      console.error("Error al enviar encuesta:", error);
+    // Si falla, el error llega a SatisfactionSurvey, que lo muestra sin marcar la encuesta como enviada
+    await enviarEncuesta(ticketId, calificacion, comentarios);
+    const respuesta = await obtenerEncuesta(ticketId);
+    if (respuesta.exito) {
+      setEncuesta(respuesta.datos);
     }
+    if (onEstadoCambiado) onEstadoCambiado();
   }
 
   async function manejarEnviarComentario(evento) {
@@ -394,7 +392,9 @@ export default function TicketDetail({ ticketId, alVolver, onEstadoCambiado }) {
         </div>
       )}
 
-      {ticket.estado === "resuelto" && !encuesta && (
+      {["resuelto", "cerrado"].includes(ticket.estado) &&
+        !encuesta &&
+        String(ticket.solicitante_id) === String(usuario?.usuario_id ?? usuario?.id) && (
         <SatisfactionSurvey
           ticketId={ticketId}
           onEnviar={manejarEnviarEncuesta}
