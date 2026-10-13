@@ -667,3 +667,9 @@ Nota operativa: `npm test` reutiliza imágenes ya construidas; para probar cambi
 - Ningún rol sembrado salvo `tickets_admin` tiene `Encuestas: edicion`: para que un solicitante responda, su rol necesita `Tickets: consulta` y `Encuestas: edicion` (se asigna desde el portal; no se tocó el seed).
 - `SMTP_DE_DEFAECTO` (typo) se usa igual en los `.env` y en dos servicios; no se renombró para no romper despliegues existentes.
 - `docker-compose.supabase.yml` aplica 003 en cada `up` (idempotente); bases ya desplegadas la reciben al recrear `supabase-db-init`.
+
+### [2026-10-13] orquestador — ADR: Notificaciones de la intranet vía event-proxy (webhook n8n WF-INTRA-01)
+
+**Decisión:** correo y DM de Teams de la intranet salen por un webhook nuevo de n8n (WF-INTRA-01, event-proxy), reutilizando Graph (correo desde `intranet@rayhsa.com.mx`; DM de Teams con la cuenta delegada `rayhsa@`, D14/D35 del event-proxy). **No** se usa su cola `event_queue`: el despachador entrega cada evento a todos los destinos habilitados y las plantillas son fijas de MBA3, y los WF piloto están bajo puertas GO/NO-GO.
+**Lado intranet (hecho):** `portal/backend/services/notificador.service.js` (POST con `X-Intranet-Secret`, timeout 5 s, nunca lanza); `tickets/notificacion.service.js` lo usa si `N8N_NOTIFICAR_URL`/`N8N_NOTIFICAR_SECRETO` existen y cae a SMTP si no (en `development` sigue simulando). Resolver pide canal `ambos` (correo + Teams); asignación también.
+**Decisiones del usuario (2026-10-13):** WF autorizado; remitente `intranet@rayhsa.com.mx`; la cuenta de Teams puede abrir DM con cualquier empleado; backend conectado a la red `proxy` (staging); secreto en `.env.staging`; volumen ≤ 50/día. Los workflows de la intranet usan el prefijo `WF-INTRA-NN` (los `WF-NN` ya son del MBA3). WF-INTRA-01 está importado en n8n **inactivo** (activarlo en la UI). **Pendiente:** activar, probar y fijar `FRONTEND_URL` (los enlaces del correo dependen de ella; el backend no la recibía).
