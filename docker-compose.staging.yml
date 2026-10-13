@@ -54,7 +54,7 @@ services:
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
       SUPABASE_STORAGE_URL: http://supabase-storage:5000
       FRONTEND_URL: ${FRONTEND_URL:-}
-      # Notificaciones por n8n (event-proxy WF-10); vacías = se usa SMTP
+      # Notificaciones por n8n (event-proxy WF-INTRA-01); vacías = se usa SMTP
       N8N_NOTIFICAR_URL: ${N8N_NOTIFICAR_URL:-}
       N8N_NOTIFICAR_SECRETO: ${N8N_NOTIFICAR_SECRETO:-}
       MSSQL_HOST: ${MSSQL_HOST:-}
@@ -75,6 +75,8 @@ services:
       - uploads_data:/app/uploads:ro
     networks:
       - internal
+      # Para llamar al webhook de n8n (event-proxy) sin salir a internet
+      - proxy
 
   frontend:
     image: ghcr.io/jamejia-rayhsa/intranet/frontend:${IMAGE_TAG:?Define IMAGE_TAG en .env.staging con el SHA del commit}

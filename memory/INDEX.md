@@ -67,4 +67,4 @@
 
 - [2026-10-08] revisor → reviews.md — Fase 4A+4B: Frontend Supabase Auth + proxies Vite (APROBADO CON OBSERVACIÓN, 1 IMPORTANTE bajo riesgo)
 - [2026-10-09] orquestador → decisions.md — ADR: Encuestas de satisfacción de tickets (UNIQUE por ticket, estados, invitación, estadísticas por rol)
-- [2026-10-13] orquestador → decisions.md — ADR: Notificaciones vía event-proxy (webhook n8n WF-10); lado intranet listo, falta WF-10
+- [2026-10-13] orquestador → decisions.md — ADR: Notificaciones vía event-proxy (webhook n8n WF-INTRA-01); lado intranet listo, activar y probar

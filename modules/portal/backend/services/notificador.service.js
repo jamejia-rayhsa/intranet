@@ -1,4 +1,4 @@
-// Envío de correo y mensajes directos de Teams a través del webhook de n8n (event-proxy, WF-10).
+// Envío de correo y mensajes directos de Teams a través del webhook de n8n (event-proxy, WF-INTRA-01).
 // Sin N8N_NOTIFICAR_URL el servicio queda desactivado y quien lo llama usa su respaldo (SMTP).
 const TIMEOUT_MS = 5000;
 
