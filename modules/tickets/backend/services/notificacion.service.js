@@ -1,5 +1,19 @@
+const Notificador = require("../../../portal/backend/services/notificador.service");
+
 const ServicioNotificacion = {
-  async enviarCorreoTicket(destinatario, asunto, cuerpo) {
+  async enviarCorreoTicket(destinatario, asunto, cuerpo, opciones = {}) {
+    // Primero el event-proxy (n8n → Graph); sin él, SMTP como antes
+    if (process.env.NODE_ENV !== "development" && Notificador.configurado()) {
+      return Notificador.notificar({
+        canal: opciones.canal || "email",
+        correo: destinatario,
+        asunto,
+        cuerpo,
+        origen: "tickets",
+        referencia: opciones.referencia,
+      });
+    }
+
     if (process.env.NODE_ENV === "development") {
       console.log(
         `[Correo Simulado - Tickets] Para: ${destinatario} | Asunto: ${asunto}`,
@@ -45,7 +59,7 @@ Categoría: ${ticket.categoria || "Sin categoría"}
 
 El ticket será atendido a la brevedad.`;
 
-    return this.enviarCorreoTicket(correoUsuario, asunto, cuerpo);
+    return this.enviarCorreoTicket(correoUsuario, asunto, cuerpo, { referencia: ticket.id });
   },
 
   async notificarCambioEstado(
@@ -63,7 +77,10 @@ Nuevo estado: ${estadoNuevo}
 
 ${estadoNuevo === "resuelto" ? `Tu ticket ha sido resuelto. Por favor califica la atención recibida (toma un minuto):\n${process.env.FRONTEND_URL || ""}/tickets/lista?ticket=${ticket.id}` : ""}`;
 
-    return this.enviarCorreoTicket(correoUsuario, asunto, cuerpo);
+    return this.enviarCorreoTicket(correoUsuario, asunto, cuerpo, {
+      referencia: ticket.id,
+      canal: estadoNuevo === "resuelto" ? "ambos" : "email",
+    });
   },
 
   async notificarAsignacionTecnico(ticket, correoTecnico) {
@@ -77,7 +94,10 @@ Categoría: ${ticket.categoria || "Sin categoría"}
 
 Por favor atiéndelo a la brevedad.`;
 
-    return this.enviarCorreoTicket(correoTecnico, asunto, cuerpo);
+    return this.enviarCorreoTicket(correoTecnico, asunto, cuerpo, {
+      referencia: ticket.id,
+      canal: "ambos",
+    });
   },
 };
 
