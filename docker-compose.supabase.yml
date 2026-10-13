@@ -27,7 +27,7 @@ services:
   supabase-db:
     image: supabase/postgres:17.6.1.136
     container_name: intranet_supabase_db
-    restart: unless-stopped
+    restart: always
     volumes:
       - supabase_db_data:/var/lib/postgresql/data
       # Passwords de roles internos y JWT exp (scripts oficiales; requieren superusuario)
@@ -106,7 +106,7 @@ services:
   supabase-auth:
     image: supabase/gotrue:v2.196.0
     container_name: intranet_supabase_auth
-    restart: unless-stopped
+    restart: always
     depends_on:
       supabase-db:
         condition: service_healthy
@@ -164,7 +164,7 @@ services:
   supabase-rest:
     image: postgrest/postgrest:v14.17
     container_name: intranet_supabase_rest
-    restart: unless-stopped
+    restart: always
     depends_on:
       supabase-db:
         condition: service_healthy
@@ -189,7 +189,7 @@ services:
   supabase-storage:
     image: supabase/storage-api:v1.74.0
     container_name: intranet_supabase_storage
-    restart: unless-stopped
+    restart: always
     depends_on:
       supabase-db:
         condition: service_healthy
@@ -227,7 +227,7 @@ services:
     image: supabase/postgres-meta:v0.99.0
     container_name: intranet_supabase_meta
     profiles: [admin]
-    restart: unless-stopped
+    restart: always
     depends_on:
       supabase-db:
         condition: service_healthy
@@ -246,7 +246,7 @@ services:
     image: supabase/studio:2026.09.07-sha-7996410
     container_name: intranet_supabase_studio
     profiles: [admin]
-    restart: unless-stopped
+    restart: always
     depends_on:
       - supabase-meta
     ports:
