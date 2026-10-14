@@ -1,0 +1,15 @@
+# Override opcional de producción: une el backend a la red docker `proxy` para llamar al webhook de
+# n8n (event-proxy, WF-INTRA-01) sin salir a internet. Solo si el host de producción comparte
+# Docker con n8n (red externa `proxy`, que debe existir); si no, no se usa y las notificaciones
+# caen a SMTP. Uso:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.prod.n8n.yml --env-file .env.prod up -d
+# y en .env.prod: N8N_NOTIFICAR_URL=http://n8n_app:5678/webhook/intranet-notificar
+services:
+  backend:
+    networks:
+      - internal
+      - proxy
+
+networks:
+  proxy:
+    external: true
