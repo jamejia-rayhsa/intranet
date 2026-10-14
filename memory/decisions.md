@@ -678,3 +678,21 @@ Nota operativa: `npm test` reutiliza imágenes ya construidas; para probar cambi
 **Hecho:** RH usa también el webhook de n8n (`origen: rh`; permiso aprobado/rechazado = correo + Teams, aviso al jefe = correo) con respaldo SMTP; `docker-compose.prod.n8n.yml` (override opcional que une el backend a la red `proxy`, para hosts que comparten Docker con n8n; sin él prod sigue funcionando con SMTP); `.env.prod.example` con la URL de n8n y `FRONTEND_URL`; `docs/notificaciones.md` con variables, qué manda cada módulo y checklist de producción.
 **Por qué un override y no `proxy` en el compose base:** una red `external` que no existe hace fallar `up`; el host de producción puede no tener esa red.
 **Al migrar:** seguir el checklist de `docs/notificaciones.md` (secreto en el `.env.prod`, red `proxy`, probar 403 sin secreto y un aviso real).
+
+### [2026-10-14] orquestador — Noticias/eventos: 2:3, boletín y carrusel — hallazgos y plan PROPUESTO (pendiente de aprobación)
+**Estado:** NO es una decisión tomada; el humano debe aprobar las fases y responder las preguntas de producto antes de implementar.
+**Contexto:** el objetivo pide imagen vertical 500x750 centrada, categoría "boletín" (solo imagen) y eventos con carrusel de varias imágenes. Apoyo previo: Fase 5 del 2026-10-08 (imágenes de noticias en el bucket público `noticias`, helper `urlImagenNoticia`) y el carrusel a pantalla completa de Inicio (PR #3).
+**Hallazgos clave (research.md, entrada del 2026-10-14):** "evento" no existe; tipos hoy noticia/comunicado/oferta_empleo sin CHECK en BD; la BD ya es 1:N con `orden` y la API limita a 5 imágenes, pero carrusel, tarjeta y modal solo muestran `imagenes[0]`; no hay procesado de imagen ni dimensiones guardadas, así que forzar 2:3 recorta; nginx de prod limita `/api/` a 1 MB; hay 0 tests de noticias.
+**Plan propuesto:** ver memory/roadmap.md (Fase 1 presentación 2:3; Fase 2 boletín; Fase 3 eventos con carrusel; Fase 4 nginx, tests, revisión, pruebas y staging).
+**Alternativas descartadas por ahora:** procesar/redimensionar imágenes en el servidor (añade dependencia y no es necesario si basta CSS) — se reevalúa según la respuesta sobre recorte.
+
+### [2026-10-14] orquestador — Noticias/eventos: decisiones de producto del humano (aprobadas)
+**Contexto:** respuestas del usuario a las preguntas abiertas de research.md (entrada del 2026-10-14) para el plan propuesto arriba. El plan por fases sigue pendiente de GO fase por fase.
+**Decisión (del humano):**
+1. **Ajuste de imagen:** completa dentro del marco 2:3 sobre **fondo desenfocado** (la imagen no se recorta; el marco se rellena con la misma imagen difuminada).
+2. **Evento:** **tipo nuevo de noticia con fecha y lugar** (`tipo = 'evento'` + campos propios de fecha del evento y lugar; migración de BD sencilla). Varias imágenes por evento en un carrusel 2:3.
+3. **Boletín:** tipo `boletin`; aparece en el carrusel de Inicio y en `/noticias`; al hacer clic **amplía la imagen**. Se guarda un título interno (la BD exige `titulo NOT NULL`) solo para identificarlo en el panel; **nunca se muestra** ni título ni descripción. Una imagen por boletín.
+4. **Alcance del 2:3:** **todas las vistas, incluidas las tarjetas de `/noticias`** (la cuadrícula pasa a formato vertical).
+**Por qué:** elegidas por el usuario entre las alternativas presentadas; la recomendada del orquestador era "cover/recorte", "tipo nuevo sin campos" y "solo carrusel y modal", y el usuario decidió distinto en esos tres puntos.
+**Alternativas descartadas:** recorte (cover) y franjas (contain); módulo de eventos aparte; limitar el formato al carrusel/modal.
+**Consecuencias para el plan:** Fase 1 incluye tarjetas y la cuadrícula; Fase 3 incluye migración (`fecha_evento`, `lugar`) y su validación; el fondo desenfocado se resuelve con CSS (sin dependencia de imagen en servidor). Quedan abiertas para sus fases: límites de subida/nginx, permisos de creación, borradores visibles por id, orden y autoavance del carrusel de imágenes.

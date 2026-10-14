@@ -69,3 +69,8 @@
 - [2026-10-09] orquestador → decisions.md — ADR: Encuestas de satisfacción de tickets (UNIQUE por ticket, estados, invitación, estadísticas por rol)
 - [2026-10-13] orquestador → decisions.md — ADR: Notificaciones vía event-proxy (webhook n8n WF-INTRA-01); lado intranet listo, activar y probar
 - [2026-10-14] orquestador → decisions.md — ADR: notificaciones listas para producción (RH por n8n, override prod.n8n, docs/notificaciones.md)
+- [2026-10-14] investigador → research.md — Noticias, eventos e imágenes: estado actual para 500x750, boletín y carrusel
+- [2026-10-14] orquestador → roadmap.md — Plan PROPUESTO por fases para noticias 2:3, boletín y eventos con carrusel (pendiente de GO)
+- [2026-10-14] orquestador → decisions.md — Noticias/eventos 2:3, boletín y carrusel: hallazgos y plan propuesto (pendiente de aprobación)
+- [2026-10-14] orquestador → tests.md/roadmap.md — Paso 0: agregados tester.md, tests.md y roadmap.md (CLAUDE.md sin cambios)
+- [2026-10-14] orquestador → decisions.md — Noticias/eventos: decisiones de producto del humano (fondo desenfocado, evento con fecha y lugar, boletín, 2:3 en todas las vistas)
