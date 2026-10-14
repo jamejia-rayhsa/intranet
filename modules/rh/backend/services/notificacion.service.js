@@ -1,5 +1,18 @@
+const Notificador = require("../../../portal/backend/services/notificador.service");
+
 const ServicioNotificacionRH = {
-  async enviarCorreo(destinatario, asunto, cuerpo) {
+  async enviarCorreo(destinatario, asunto, cuerpo, opciones = {}) {
+    // Primero el event-proxy (n8n → Graph); sin él, SMTP como antes
+    if (process.env.NODE_ENV !== "development" && Notificador.configurado()) {
+      return Notificador.notificar({
+        canal: opciones.canal || "email",
+        correo: destinatario,
+        asunto,
+        cuerpo,
+        origen: "rh",
+      });
+    }
+
     if (process.env.NODE_ENV === "development") {
       console.log(
         `[Correo Simulado - RH] Para: ${destinatario} | Asunto: ${asunto}`,
@@ -44,7 +57,7 @@ Fecha fin: ${fechaFin}
 
 Recuerda coordinarte con tu equipo antes de tu ausencia.`;
 
-    return this.enviarCorreo(correoEmpleado, asunto, cuerpo);
+    return this.enviarCorreo(correoEmpleado, asunto, cuerpo, { canal: "ambos" });
   },
 
   async notificarPermisoRechazado(correoEmpleado, tipo, motivo) {
@@ -56,7 +69,7 @@ Motivo: ${motivo || "No especificado"}
 
 Si tienes dudas, comunícate con tu jefe inmediato o con RH.`;
 
-    return this.enviarCorreo(correoEmpleado, asunto, cuerpo);
+    return this.enviarCorreo(correoEmpleado, asunto, cuerpo, { canal: "ambos" });
   },
 
   async notificarNuevoPermiso(
