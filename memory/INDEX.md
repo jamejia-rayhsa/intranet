@@ -126,3 +126,4 @@
 - [2026-10-15] coder → code-notes.md — Foco con ←/→ en el carrusel de Inicio y hallazgos de axe
 - [2026-10-15] tester → tests.md — Confirmación del foco con ←/→ y de los hallazgos de axe (foco RESUELTO en Chromium + Firefox; CarruselImagenes y trampa de Tab en los 4 modales OK; axe: corregido lo pedido, quedan 3 hallazgos menores de contraste/nombre; jest 387/387, eslint 0 errores; repo sin axe-core)
 - [2026-10-15] orquestador → decisions.md/roadmap.md — eslint-plugin-react instalado y carrusel de Inicio accesible por teclado; axe restante como deuda (paleta previa)
+- [2026-10-15] orquestador → decisions.md/roadmap.md — Despliegue a staging del plan de noticias (PR #9, d278a9a): pasos, verificación, trampas y pendientes
