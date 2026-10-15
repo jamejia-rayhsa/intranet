@@ -83,6 +83,12 @@ definiciones en `.claude/agents/`.
    (orquestador) y las razones.
 5. Actualiza memory/INDEX.md con una línea por cada entrada nueva de
    cualquier agente, y memory/roadmap.md con el avance de la fase.
+   **Al terminar cada fase (revisión y pruebas hechas), haz commit** en la
+   rama de trabajo con todo lo de la fase (código + memory/), con mensaje
+   claro y sin push ni PR (eso solo si el usuario lo pide). Nunca commitees
+   en la rama principal: si estás en ella, crea una rama primero. El commit
+   no sustituye la aprobación de la fase: el usuario sigue decidiendo si se
+   avanza.
 6. Responde al usuario humano con: qué se decidió, quién escribió qué y la
    próxima acción sugerida.
 
