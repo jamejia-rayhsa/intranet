@@ -3,8 +3,10 @@ import { obtenerToken } from "../utils/token";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000/api";
 
-export async function obtenerNoticiasPublicadas(pagina = 1, limite = 10) {
-  return solicitar(`/noticias/publicadas?pagina=${pagina}&limite=${limite}`);
+// tipo (opcional): el servidor filtra antes de paginar, así que total y páginas son los del filtro
+export async function obtenerNoticiasPublicadas(pagina = 1, limite = 10, tipo = "") {
+  const filtro = tipo ? `&tipo=${encodeURIComponent(tipo)}` : "";
+  return solicitar(`/noticias/publicadas?pagina=${pagina}&limite=${limite}${filtro}`);
 }
 
 export async function obtenerNoticiasTodas(pagina = 1, limite = 20) {

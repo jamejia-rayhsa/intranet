@@ -16,12 +16,10 @@ export default function PortalNoticias() {
     async function cargarNoticias() {
       setCargando(true);
       try {
-        const respuesta = await obtenerNoticiasPublicadas(pagina, 12);
+        const respuesta = await obtenerNoticiasPublicadas(pagina, 12, filtroTipo);
         if (respuesta.exito) {
-          let filtradas = respuesta.datos.noticias.filter(esMostrable); // boletín sin imagen no se muestra
-          if (filtroTipo) {
-            filtradas = filtradas.filter((n) => n.tipo === filtroTipo);
-          }
+          // El tipo lo filtra el servidor antes de paginar; aquí solo se descarta lo no mostrable (boletín sin imagen)
+          const filtradas = respuesta.datos.noticias.filter(esMostrable);
           setNoticias(filtradas);
           setPaginasTotales(respuesta.datos.paginas_totales);
         }

@@ -1084,6 +1084,7 @@
   to   { opacity: 1; }
 }
 
+.rayhsa-modal:focus { outline: none; } /* el foco programático entra al diálogo sin anillo; los controles internos sí lo muestran */
 .rayhsa-modal {
   background: #fff;
   border-radius: 10px;
@@ -1310,6 +1311,7 @@
   margin-left: auto;
 }
 
+.rayhsa-modal__body:focus-visible { outline: 3px solid var(--color-acento); outline-offset: -3px; }
 .rayhsa-modal__body {
   padding: 1.75rem 2rem 2rem;
   flex: 1 1 auto;

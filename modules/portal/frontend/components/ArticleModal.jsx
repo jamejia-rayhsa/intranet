@@ -3,6 +3,7 @@ import { urlImagenNoticia } from "../utils/storage";
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Icons from './Icons';
+import useFocoModal from '../hooks/useFocoModal';
 import ImagenVertical from './ImagenVertical';
 import CarruselImagenes from './CarruselImagenes';
 import { eventoFinalizado, textoFechaLugar } from '../utils/tiposNoticia';
@@ -20,6 +21,8 @@ import { eventoFinalizado, textoFechaLugar } from '../utils/tiposNoticia';
  * Donde `noticia` es la entidad cruda de la API (`/api/noticias/:id`).
  */
 export default function ArticleModal({ item, onClose }) {
+  // Foco: entra al diálogo, Tab atrapado y devuelto a quien lo abrió al cerrar
+  const dialogoRef = useFocoModal(Boolean(item?.noticia));
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -54,7 +57,7 @@ export default function ArticleModal({ item, onClose }) {
 
   const content = isBoletin ? (
     <div className="rayhsa-modal-overlay rayhsa-modal-overlay--boletin" onClick={onOverlay}>
-      <div className="rayhsa-modal rayhsa-modal--boletin" role="dialog" aria-modal="true" aria-label="Boletín" style={{ position: 'relative' }}>
+      <div className="rayhsa-modal rayhsa-modal--boletin" ref={dialogoRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Boletín" style={{ position: 'relative' }}>
         <button className="rayhsa-modal__close" onClick={onClose} aria-label="Cerrar">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
             <path d="M6 6l12 12M18 6 6 18" />
@@ -70,7 +73,7 @@ export default function ArticleModal({ item, onClose }) {
     </div>
   ) : (
     <div className="rayhsa-modal-overlay" onClick={onOverlay}>
-      <div className="rayhsa-modal" role="dialog" aria-modal="true" style={{ position: 'relative' }}>
+      <div className="rayhsa-modal" ref={dialogoRef} tabIndex={-1} role="dialog" aria-modal="true" style={{ position: 'relative' }}>
         <button className="rayhsa-modal__close" onClick={onClose} aria-label="Cerrar">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
             <path d="M6 6l12 12M18 6 6 18" />
@@ -96,7 +99,11 @@ export default function ArticleModal({ item, onClose }) {
                 {finalizado && <span className="badge badge-finalizado">Finalizado</span>}
               </div>
             </div>
-            <div className="rayhsa-modal__body">
+            {/* Evento: el cuerpo desplazable es enfocable para alcanzarlo con Tab y desplazarlo con el teclado */}
+            <div
+              className="rayhsa-modal__body"
+              {...(isEvento ? { tabIndex: 0, role: 'region', 'aria-label': 'Descripción del evento' } : {})}
+            >
               <div className="rayhsa-modal__meta">
                 {meta.map((m, i) => (
                   <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>

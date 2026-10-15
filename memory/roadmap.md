@@ -6,7 +6,7 @@
 > y no arrancan sin el GO del humano. Cada fase se cierra solo con una puerta GO/NO-GO suya.
 
 ## Estado global
-- **Fase actual:** 3 CERRADA y commiteada; esperando GO del humano a la Fase 4 (y OK para publicar/desplegar)
+- **Fase actual:** 4 CERRADA y commiteada; plan completo. Falta el OK del humano para publicar (push, PR, merge) y desplegar a staging
 - **Situación:** Fase 1 CERRADA por el humano (GO a la Fase 2); Fases 3-4 esperan su GO
 - **Actualizado:** 2026-10-14
 
@@ -38,8 +38,9 @@
 - **Puerta:** GO del humano.
 
 ## Fase 4 — Endurecimiento, revisión y pruebas
-- **Situación:** NO INICIADA (propuesta)
-- **Tareas:** [ ] límite de cuerpo de nginx en `/api/` de producción (hoy 1 MB) · [ ] revisor · [ ] tester · [ ] despliegue a staging con prueba de subida real a Storage.
+- **Situación:** CERRADA (coder + 3 rondas; revisor APROBADO CON OBSERVACIONES, 0 críticos/altos; tester sin fallos con Postgres real, nginx real y componentes reales). Publicar/desplegar solo con OK del humano.
+- **Tareas:** [x] `client_max_body_size 50m` en `/api/` (prod, staging, spa; probado con nginx real: 6 MB y 50 MB pasan, 51 MB da 413) · [x] filtro `?tipo=` en servidor con paginación estable (desempate por id) y topes de `limite` (100) y `pagina` · [x] ids validados, errores públicos genéricos · [x] auditoría en crear/editar/eliminar/imágenes/reordenar · [x] transacciones atómicas (FOR UPDATE) para límite de imágenes, orden y reordenar · [x] `fecha_evento` exige zona · [x] foco del modal (hook `useFocoModal`) y cuerpo enfocable del evento · [x] eliminar imagen verifica propiedad · [x] revisor · [x] tester · [ ] despliegue a staging con prueba de subida real a Storage (necesita OK del humano).
+- **Fuera / deuda aceptada:** `eslint-plugin-react` no instalado (decisión del humano: instalar como devDependency para quitar ~100 avisos falsos de `no-unused-vars` en JSX) · slides del carrusel de Inicio no enfocables por teclado (decisión de diseño) · `error.message` en endpoints autenticados · `portal.permissions.js` sin uso (lo cita docs/AGENT.portal.md) · tests de modelo por regex (la prueba con Postgres real fue manual del tester, sin test permanente) · asegurarBuckets no actualiza buckets existentes.
 - **Candidatos diferidos de la Fase 3 (bajos):** atomicidad del límite de imágenes y `MAX(orden)+1` bajo concurrencia · validación del reorden dentro de la transacción y auditoría de las rutas de imágenes · fechas sin zona en la API · slides de Inicio no enfocables por teclado · aplicar la migración 006 en staging con el `db-init` y probar subida real a Storage.
 - **Candidatos diferidos de las Fases 1-2 (bajos salvo H5):** H3 coste del blur con 50 tarjetas (medir en staging) · H4 warnings falsos de ESLint (`react/jsx-uses-vars`) · H5 filtro de `/noticias` aplicado tras paginar en servidor (medio) · `GET /api/noticias/admin` sin id cae en `/:id` y devuelve 500 con `error.message` de Postgres · `paraPublico` debería listar en blanco también los campos de `imagenes[]` (`nombre_archivo`, `ruta_archivo`, `noticia_id`) · PUT sin `auditoriaMiddleware` · foco del visor/modales · carrera del límite de 1 imagen · `obtenerNoticiaAdmin` sin consumidor y `portal.permissions.js` sin uso · tests de ruta frágiles (`router.stack`).
 - **Puerta:** GO del humano antes de mergear/desplegar.

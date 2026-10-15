@@ -3,10 +3,15 @@ const { Router } = require("express");
 const ControladorNoticia = require("../controllers/noticia.controller");
 const { authenticateJWT } = require("../middleware/auth.middleware");
 const { verificarPermiso } = require("../middleware/permisos.middleware");
-const { auditoriaMiddleware } = require("../../../auditoria/backend/middleware/auditoria.middleware");
 const { subirImagenNoticia } = require("../middleware/upload.noticia.middleware");
 
+const { validarIdNumerico } = require("../middleware/validar-id.middleware");
+
 const router = Router();
+
+// Todos los ids de ruta (:id, :imagenId) deben ser enteros positivos: 400 limpio, sin tocar la BD
+router.param("id", validarIdNumerico);
+router.param("imagenId", validarIdNumerico);
 
 // Rutas públicas: noticias publicadas (sin auth — usadas en login y home)
 router.get("/publicas", ControladorNoticia.listarPublicadas);
@@ -18,7 +23,7 @@ router.use(authenticateJWT);
 router.get("/", verificarPermiso("portal", "Noticias", "consulta"), ControladorNoticia.listarTodas);
 // Detalle para el panel (borradores incluidos); dos segmentos, no choca con "/:id" público
 router.get("/admin/:id", verificarPermiso("portal", "Noticias", "consulta"), ControladorNoticia.obtener);
-router.post("/", verificarPermiso("portal", "Noticias", "edicion"), auditoriaMiddleware("portal", "noticias", "INSERT"), ControladorNoticia.crear);
+router.post("/", verificarPermiso("portal", "Noticias", "edicion"), ControladorNoticia.crear); // auditoría desde el controlador
 router.put("/:id", verificarPermiso("portal", "Noticias", "edicion"), ControladorNoticia.actualizar);
 router.delete("/:id", verificarPermiso("portal", "Noticias", "edicion"), ControladorNoticia.eliminar);
 

@@ -112,3 +112,12 @@
 - [2026-10-15] coder → code-notes.md — Fase 3 noticias: decisiones del humano y correcciones de la revisión
 - [2026-10-15] tester → tests.md — Fase 3 noticias: re-verificación de decisiones y correcciones (6/6 PASS en Chromium 156 + Firefox 157 + Postgres 16 desechable 71/71; jest 323/323, eslint 0 errores; PARA RESOLVER del reorden RESUELTO, sin fallos)
 - [2026-10-15] orquestador → roadmap.md/decisions.md — Fase 3 noticias (eventos) CERRADA y commiteada; esperando GO a la Fase 4
+- [2026-10-15] orquestador → docs/supabase.md — Anotado el paso de re-ejecutar supabase-db-init con migraciones nuevas; GO a la Fase 4 (endurecimiento)
+- [2026-10-15] coder → code-notes.md — Fase 4 noticias: endurecimiento
+- [2026-10-15] coder → code-notes.md — Fase 4 noticias: propiedad de imagen al eliminar y limpieza del modelo
+- [2026-10-15] revisor → reviews.md — Fase 4 noticias: revisión del endurecimiento y repaso transversal (APROBADO CON OBSERVACIONES; sin críticos ni altos; 2 medios F1 auditoría POST y F2 paginación; 15 bajos)
+- [2026-10-15] tester → tests.md — Fase 4 noticias: concurrencia (Postgres real, 130 comprobaciones), filtro, nginx 50 MiB x3 (antes 413 desde 6 MiB), foco/fugas y rendimiento del blur (50 tarjetas: 60 FPS, 0 tareas largas, raster 2,2x; headless); jest 373/373, eslint 0 errores; 2 PARA RESOLVER menores
+- [2026-10-15] tester → decisions.md — PARA RESOLVER: cuerpo desplazable del detalle de evento inalcanzable por teclado; `limite` sin tope en el listado público (ambos menores)
+- [2026-10-15] coder → code-notes.md — Fase 4 noticias: correcciones de la revisión final
+- [2026-10-15] tester → tests.md — Fase 4 noticias: confirmación de las correcciones finales (6/6 PASS: orden estable, tope de limite/pagina, auditoría del POST, cuerpo enfocable, fecha_evento; Postgres real 49/49, Chromium + Firefox; jest 387/387, eslint 0 errores; los 2 PARA RESOLVER RESUELTOS, sin fallos)
+- [2026-10-15] orquestador → roadmap.md/decisions.md — Fase 4 noticias CERRADA y commiteada; plan completo, pendiente OK para publicar y desplegar

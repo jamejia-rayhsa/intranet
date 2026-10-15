@@ -1,5 +1,6 @@
 const Noticia = require("../models/noticia.model");
 const Storage = require("../services/storage.service");
+const { registrarAccion } = require("../../../auditoria/backend/services/auditoria.service");
 
 const { esTipoValido, limiteImagenes, mensajeTipoInvalido, paraPublico, validarCamposEvento, validarFechaEvento, validarLugarEvento } = require("../utils/tiposNoticia");
 
@@ -14,27 +15,64 @@ async function limpiarObjeto(ruta) {
   }
 }
 
+// Auditoría desde el controlador, tras el éxito: ids y campos cambiados, nunca contenido ni archivos.
+// Un fallo de auditoría no interrumpe la operación.
+async function auditar(req, tabla, registroId, accion, previos, nuevos) {
+  try {
+    await registrarAccion(req, "portal", tabla, registroId, accion, previos || null, nuevos || null);
+  } catch (error) {
+    console.error("Error al registrar auditoría de noticias:", error.message);
+  }
+}
+
+// Endpoints públicos: el detalle técnico va al log del servidor, no al cliente
+function errorPublico(res, contexto, error) {
+  console.error(`${contexto}:`, error);
+  return res.status(500).json({ exito: false, mensaje: contexto });
+}
+
+// Listado público: tope de registros por página y OFFSET que cabe en INT4 (si no, Postgres responde 500)
+const LIMITE_MAXIMO_PUBLICO = 100;
+const MAX_INT4 = 2147483647;
+
 const tipoVacio = (tipo) => tipo === undefined || tipo === null || tipo === "";
 
 const ControladorNoticia = {
   async listarPublicadas(req, res) {
     try {
-      const { pagina = 1, limite = 10 } = req.query;
-      const noticias = (await Noticia.obtenerPublicadas(pagina, limite)).map(paraPublico);
-      const total = await Noticia.contarPublicadas();
+      const pagina = req.query.pagina === undefined ? 1 : Number(req.query.pagina);
+      const limite = req.query.limite === undefined ? 10 : Number(req.query.limite);
+      if (!Number.isInteger(pagina) || pagina < 1 || !Number.isInteger(limite) || limite < 1) {
+        return res.status(400).json({ exito: false, mensaje: "pagina y limite deben ser enteros positivos" });
+      }
+      if (limite > LIMITE_MAXIMO_PUBLICO) {
+        return res.status(400).json({ exito: false, mensaje: `limite no puede superar ${LIMITE_MAXIMO_PUBLICO}` });
+      }
+      if ((pagina - 1) * limite > MAX_INT4) {
+        return res.status(400).json({ exito: false, mensaje: "pagina fuera de rango" });
+      }
+      // Filtro opcional por tipo, validado contra la lista única; se aplica en SQL antes de paginar
+      const { tipo } = req.query;
+      const filtroTipo = tipoVacio(tipo) ? null : tipo;
+      if (filtroTipo && !esTipoValido(filtroTipo)) {
+        return res.status(400).json({ exito: false, mensaje: mensajeTipoInvalido() });
+      }
+
+      const noticias = (await Noticia.obtenerPublicadas(pagina, limite, filtroTipo)).map(paraPublico);
+      const total = await Noticia.contarPublicadas(filtroTipo);
 
       res.json({
         exito: true,
         datos: {
           noticias,
           total,
-          pagina: parseInt(pagina),
-          limite: parseInt(limite),
+          pagina,
+          limite,
           paginas_totales: Math.ceil(total / limite),
         },
       });
     } catch (error) {
-      res.status(500).json({ exito: false, mensaje: "Error al listar noticias", error: error.message });
+      errorPublico(res, "Error al listar noticias", error);
     }
   },
 
@@ -68,7 +106,7 @@ const ControladorNoticia = {
       }
       res.json({ exito: true, datos: paraPublico(noticia) });
     } catch (error) {
-      res.status(500).json({ exito: false, mensaje: "Error al obtener noticia", error: error.message });
+      errorPublico(res, "Error al obtener noticia", error);
     }
   },
 
@@ -119,6 +157,8 @@ const ControladorNoticia = {
         lugar: datosEvento.lugar,
       });
 
+      // Auditoría tras el éxito, sin contenido: solo id y datos de clasificación
+      await auditar(req, "noticias", noticia.id, "INSERT", null, { tipo: noticia.tipo, publicada: noticia.publicada });
       res.status(201).json({ exito: true, datos: noticia, mensaje: "Noticia creada exitosamente" });
     } catch (error) {
       res.status(400).json({ exito: false, mensaje: "Error al crear noticia", error: error.message });
@@ -188,6 +228,11 @@ const ControladorNoticia = {
       if (!noticia) {
         return res.status(404).json({ exito: false, mensaje: "Noticia no encontrada" });
       }
+      await auditar(req, "noticias", req.params.id, "UPDATE", null, {
+        campos: Object.keys(datos),
+        ...(datos.tipo !== undefined && { tipo: datos.tipo }),
+        ...(datos.publicada !== undefined && { publicada: datos.publicada }),
+      });
       res.json({ exito: true, datos: noticia, mensaje: "Noticia actualizada exitosamente" });
     } catch (error) {
       res.status(400).json({ exito: false, mensaje: "Error al actualizar noticia", error: error.message });
@@ -204,6 +249,11 @@ const ControladorNoticia = {
       for (const img of (previa && previa.imagenes) || []) {
         await limpiarObjeto(img.ruta_archivo);
       }
+      await auditar(req, "noticias", req.params.id, "DELETE", {
+        titulo: noticia.titulo,
+        tipo: noticia.tipo,
+        imagenes: ((previa && previa.imagenes) || []).length,
+      }, null);
       res.json({ exito: true, mensaje: "Noticia eliminada exitosamente" });
     } catch (error) {
       res.status(500).json({ exito: false, mensaje: "Error al eliminar noticia", error: error.message });
@@ -225,6 +275,7 @@ const ControladorNoticia = {
         return res.status(404).json({ exito: false, mensaje: "Noticia no encontrada" });
       }
 
+      // Rechazo rápido sin subir nada (no autoritativo: el límite definitivo se comprueba bajo bloqueo)
       const maximo = limiteImagenes(publicacion.tipo);
       const total = await Noticia.contarImagenes(id);
       if (total >= maximo) {
@@ -236,14 +287,26 @@ const ControladorNoticia = {
 
       const clave = Storage.claveSegura(req.file.originalname);
       await Storage.subir(Storage.BUCKETS.NOTICIAS, clave, req.file.buffer, req.file.mimetype);
-      let imagen;
+      let resultado;
       try {
-        imagen = await Noticia.agregarImagen(id, clave, req.file.originalname);
+        // Transacción con la noticia bloqueada: límite + orden + INSERT atómicos
+        resultado = await Noticia.agregarImagenConLimite(id, clave, req.file.originalname);
       } catch (errorBd) {
         await Storage.eliminar(Storage.BUCKETS.NOTICIAS, clave).catch(() => {});
         throw errorBd;
       }
-      imagen = { ...imagen, url: Storage.urlPublica(Storage.BUCKETS.NOTICIAS, clave) };
+      if (resultado.noExiste || resultado.limiteAlcanzado) {
+        await Storage.eliminar(Storage.BUCKETS.NOTICIAS, clave).catch(() => {});
+        if (resultado.noExiste) {
+          return res.status(404).json({ exito: false, mensaje: "Noticia no encontrada" });
+        }
+        return res.status(400).json({
+          exito: false,
+          mensaje: `Límite de imágenes alcanzado. Máximo permitido: ${resultado.limiteAlcanzado}`,
+        });
+      }
+      const imagen = { ...resultado.imagen, url: Storage.urlPublica(Storage.BUCKETS.NOTICIAS, clave) };
+      await auditar(req, "noticia_imagenes", imagen.id, "INSERT", null, { noticia_id: Number(id), orden: imagen.orden });
 
       res.status(201).json({ exito: true, datos: imagen, mensaje: "Imagen subida exitosamente" });
     } catch (error) {
@@ -259,19 +322,18 @@ const ControladorNoticia = {
       if (!Array.isArray(orden) || orden.some((x) => !Number.isInteger(x)) || new Set(orden).size !== orden.length) {
         return res.status(400).json({ exito: false, mensaje: "orden debe ser una lista de ids de imagen sin repetir" });
       }
-      const publicacion = await Noticia.obtenerPorId(id);
-      if (!publicacion) {
+      // Existencia, conjunto de ids y UPDATE se resuelven dentro de una sola transacción con bloqueo
+      const resultado = await Noticia.reordenarImagenesAtomico(id, orden);
+      if (resultado.noExiste) {
         return res.status(404).json({ exito: false, mensaje: "Noticia no encontrada" });
       }
-      const actuales = await Noticia.idsImagenes(id);
-      const mismas = actuales.length === orden.length && actuales.every((x) => orden.includes(x));
-      if (!mismas) {
+      if (resultado.conjuntoDistinto) {
         return res.status(400).json({
           exito: false,
           mensaje: "La lista debe contener exactamente las imágenes de la publicación",
         });
       }
-      await Noticia.reordenarImagenes(id, orden);
+      await auditar(req, "noticia_imagenes", id, "UPDATE", null, { reordenar: orden });
       res.json({ exito: true, mensaje: "Orden actualizado" });
     } catch (error) {
       res.status(500).json({ exito: false, mensaje: "Error al reordenar imágenes", error: error.message });
@@ -280,14 +342,16 @@ const ControladorNoticia = {
 
   async eliminarImagen(req, res) {
     try {
-      const imagen = await Noticia.obtenerImagen(req.params.imagenId);
+      // Solo imágenes de la noticia de la URL; si no pertenece responde 404 sin tocar Storage ni la fila
+      const imagen = await Noticia.obtenerImagen(req.params.imagenId, req.params.id);
       if (!imagen) {
         return res.status(404).json({ exito: false, mensaje: "Imagen no encontrada" });
       }
 
       await limpiarObjeto(imagen.ruta_archivo);
 
-      await Noticia.eliminarImagen(imagen.id);
+      await Noticia.eliminarImagen(imagen.id, req.params.id);
+      await auditar(req, "noticia_imagenes", imagen.id, "DELETE", { noticia_id: imagen.noticia_id }, null);
       res.json({ exito: true, mensaje: "Imagen eliminada" });
     } catch (error) {
       res.status(500).json({ exito: false, mensaje: "Error al eliminar imagen", error: error.message });

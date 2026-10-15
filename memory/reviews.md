@@ -2084,3 +2084,125 @@ Sin fallos. Falla preexistente (no relacionada): 2 tests de empleado.controller.
 **Lista de hallazgos (todos bajos; ninguno crítico ni alto):** F1 validación de fecha (utils:37-42), F2 actualizar no atómico (controller:140-177), F4 límite y MAX+1 con carrera (controller:214, model agregarImagen), F5 reordenar sin auditoría (routes:33-36), F6 reordenar vs subidas/borrados (controller ~223-238), F7 `activo` del carrusel no se recorta (CarruselImagenes:24-28), F8 sin fallback de imagen rota (ImagenVertical), F9 hourCycle en textoFechaLugar (utils:56), F10 regla "Finalizado" sin hora de fin y badge sin recalcular (utils:44-48), F11 icono de evento en tarjeta (NoticiaCard:5-11), F12 orden de publicaciones sin fecha_evento (PortalHome:63), F13 contraste del badge (globales.css:975), F14 reorden con dos clics (NewsEditorModal:143-156), F15 precisión de minuto en datetime-local (NewsEditorModal:22), F16 migración 006 sin rastrear (commit), F17 cambio de evento a noticia con más de 5 imágenes sin bloqueo (NewsEditorModal:58-67), F18 input de archivo no enfocable (NewsEditorModal:342-349, preexistente), F19 tests que validan SQL por regex y huecos.
 
 **Pendiente para el orquestador:** nada crítico ni alto. Recomiendo: (a) incluir 006 en el commit (F16); (b) aclarar con el humano la regla "Finalizado" (F10); (c) añadir el bloqueo de F17 al editor y la validación de tipo de F1 antes de la prueba con el tester.
+
+### [2026-10-15] [revisor] — Fase 4 noticias: revisión del endurecimiento y repaso transversal
+**VEREDICTO: APROBADO CON OBSERVACIONES.** No hay hallazgos críticos ni altos. Dos medios: (F1) la auditoría del POST sigue usando `auditoriaMiddleware` y guarda el cuerpo completo (incluido `contenido`) y también las respuestas de error, lo contrario de la política que la propia Fase 4 declara; (F2) el listado público ordena solo por `fecha_publicacion` (DATE) sin desempate, así que la paginación puede repetir o saltarse publicaciones entre páginas. El resto son bajos.
+
+**Verificado (ejecutado):** `npx jest modules/portal` 10 suites, 230 tests OK (el "373" del encargo corresponde al conjunto del repo; en `modules/portal` son 230, no lo confirmé para todo el repo). `npx eslint modules/portal` 0 errores, 102 warnings (sin cambio; falsos positivos de JSX). `npx vite build` a scratch OK. Grep de `TODO|FIXME|XXX|debugger|console.log` en los archivos tocados: sin residuos de depuración. Los `console.log` de `backend/app.js:29,142,143` (logger por petición y arranque) son preexistentes y no pertenecen a esta fase.
+
+**Verificado por lectura de código:** nginx (3 archivos y compose que los monta), validar-id.middleware.js, rutas, listado público y modelo, `paraPublico`, auditoría de cada mutación, transacciones de subir/reordenar, `eliminarImagen`, `validarFechaEvento`, `useFocoModal` y ArticleModal, servicio y PortalNoticias, tests.
+
+#### Punto 1 — nginx y límites de subida: CORRECTO
+- `client_max_body_size 50m` está en `location /api/` de `config/nginx/nginx.conf:35` y `nginx.staging.conf:24`. En `nginx.spa.conf:16` (la imagen del frontend, `Dockerfile.frontend:53`) ya existía a nivel `server` (`:7`); la línea nueva en `/api/` es redundante pero inofensiva. No se tocó ningún otro `location` del bloque modificado: `/auth/v1/` no tiene límite propio y hereda el 1 MB por defecto; `/storage/v1/` ya tenía 50 m desde antes (`nginx.conf:66`, `nginx.spa.conf:47`, `nginx.staging.conf:55`).
+- Coherencia: multer noticias 5 MB (`upload.noticia.middleware.js:22`), tickets 10 MB (`tickets/.../upload.middleware.js:19`), RH 10/5 MB (`rh/.../upload.middleware.js:27,40`); Storage `file_size_limit` 5/10 MB (`storage.service.js:22-58`). Todos caen por debajo de 50 MB, así que nginx nunca responde 413 antes que la aplicación. El resultado del límite más pequeño es un JSON de multer o de Storage, no HTML.
+- Otros límites que afectan subidas: `proxy_read_timeout` y `proxy_send_timeout` no están definidos (60 s por defecto); con 10 MB en una conexión lenta podría aproximarse pero no es un problema real. `client_body_buffer_size` por defecto: nginx escribe el cuerpo a disco, aceptable.
+- **F11 (bajo):** el límite de 50 MB aplica a TODO `/api/` (login, JSON, todos los módulos), no solo a las rutas con archivos. Amplía la superficie de cuerpos grandes en endpoints que no los necesitan. Fix (opcional): un `location` específico para `^/api/(noticias/\d+/imagenes|tickets/.*adjuntos|rh/.*)` con 50 m y `/api/` con 1 m.
+- `asegurarBuckets` no reconfigura buckets ya creados (documentado por el coder en code-notes): si se cambia el límite de Storage hay que hacerlo a mano. No hay cambio de límites en esta fase; **no verificado** en un Supabase real.
+
+#### Punto 2 — filtro `?tipo=` y paginación
+- Validación: `tipo` se valida contra `TIPOS_NOTICIA` con 400 listando los válidos (`noticia.controller.js:~34-40`). Arrays (`?tipo=a&tipo=b`) fallan `esTipoValido` (includes estricto) y dan 400. `pagina` y `limite` son enteros >= 1 o 400 (`:~27-31`). `Number("1e3")` o `"Infinity"` no pasan `Number.isInteger`.
+- SQL: el filtro está en el WHERE antes de `LIMIT/OFFSET` (`noticia.model.js:59-73`, `AND n.tipo = $3`), y el conteo usa el mismo filtro (`contarPublicadas(tipo)`, `:162-167`, `tipo = $1`). Ambas consultas son parametrizadas; nada se concatena con el valor del usuario (el texto de `filtroTipo` es una constante). `paginas_totales` coincide con el filtro.
+- Compatibilidad: sin `tipo`, la consulta y el conteo son los de antes (`parametros` sin el tercero).
+- **F3 (bajo):** `limite` no tiene tope en el endpoint público (`controller:~33`): `?limite=100000` devuelve todas las publicaciones con sus imágenes en una sola respuesta sin autenticación. `listarTodas` (autenticado) tampoco lo acota. Fix: tope (p. ej. 50) y 400 o recorte por encima.
+- **F4 (bajo):** `pagina` muy alto (p. ej. 1e15 con limite 10) produce un OFFSET que desborda el tipo de PG; el error llega a `errorPublico` (500 genérico, sin fuga) pero debería ser 400. Fix: tope superior de `pagina` o rango validado.
+- **F2 (medio):** `obtenerPublicadas` ordena por `n.fecha_publicacion DESC` sin desempate (`noticia.model.js:68`). `fecha_publicacion` es DATE, así que hay muchas publicaciones con la misma fecha. Con LIMIT/OFFSET, PG puede devolver filas repetidas o saltarse filas entre páginas de `/noticias` y del carrusel. Fix: `ORDER BY n.fecha_publicacion DESC, n.id DESC` (y lo mismo en `obtenerTodas`, aunque ahí es `fecha_creacion`, TIMESTAMP). Requiere comprobación con Postgres real (**no verificado**).
+- Frontend: `PortalNoticias` pasa `filtroTipo` al servicio (`obtenerNoticiasPublicadas(pagina, 12, filtroTipo)`, `services/noticias.service.js:8-11`, con `encodeURIComponent`). El efecto depende de `[pagina, filtroTipo]` (`PortalNoticias.jsx:34`) y el cambio de tipo reinicia la página (`setPagina(1)`). Ya no filtra en cliente por tipo; solo descarta boletines sin imagen, con huecos aceptados por la decisión.
+
+#### Punto 3 — validación de ids y orden de rutas: CORRECTO
+- `validar-id.middleware.js`: `^\d{1,10}$`, entre 1 y 2147483647 (INT4). `esIdValido` cubre `0`, `-3`, `1e3`, `2147483648`, cadenas vacías y `admin` (tests `:752-756`).
+- `router.param('id')` e `router.param('imagenId')` (`noticia.routes.js:14-15`) cubren todas las rutas con esos parámetros (`/:id`, `/admin/:id`, `/:id/imagenes`, `/:id/imagenes/orden`, `/:id/imagenes/:imagenId`, PUT/DELETE de `/:id`). Solo afectan a este router, no a otros módulos.
+- Orden: `/publicas`, `/publicadas` (`:18-19`) y `/:id` público (`:20`) antes de `authenticateJWT` (`:22`); `/admin/:id` (`:26`) después con `Noticias:consulta`. `GET /api/noticias/admin` ya responde 400 limpio y no llega a Postgres.
+- **F5 (bajo, informativo):** `router.param` corre antes de `authenticateJWT` en las rutas privadas, así que un id inválido sin token recibe 400 en lugar de 401. No revela datos; si se quiere coherencia de auth, mover la validación a después del middleware de auth.
+- Errores públicos: `errorPublico` registra con `console.error` y devuelve solo el contexto (`controller:~27-31`), usado en `listarPublicadas` y `obtenerPublica`.
+- **F6 (bajo):** los endpoints autenticados siguen devolviendo `error: error.message` a usuarios con permiso (`subirImagen`, `eliminar`, `eliminarImagen`, `actualizar`/`crear` 400 y `obtener`/`listarTodas`). No son públicos, pero tampoco aplican la política de la fase. Fix: usar `errorPublico` en todos los catch 500.
+
+#### Punto 4 — `paraPublico`: CORRECTO con una nota
+- Lista blanca de boletín: `{id, tipo, fecha_publicacion, publicada, imagenes}` y dentro de `imagenes` solo `{id, url, orden}` (`utils/tiposNoticia.js`, `paraPublico`). Test `:783-789` lo confirma. Otros tipos: el mismo objeto (`:796-799`).
+- La UI del boletín solo usa `url` (`urlImagenNoticia`, carrusel, tarjeta, visor); no lee `titulo` ni `nombre_archivo` de un boletín público (verificado por grep en NewsCarousel, NoticiaCard y ArticleModal).
+- **F9 (bajo):** `conUrls` no añade `url` a las rutas legadas `/uploads/` (`noticia.model.js`, `conUrls`). Como `paraPublico` quita `ruta_archivo`, un boletín con ruta legada quedaría sin imagen (📄). Riesgo práctico nulo: el tipo boletín es posterior a la migración a Storage. Fix: incluir `ruta_archivo` solo si no hay `url`, o confirmar en la BD que no existe ningún boletín con `/uploads/`.
+
+#### Punto 5 — auditoría
+- Correcta en PUT, DELETE, subir imagen, eliminar imagen y reordenar: se llama desde el controlador tras el éxito (`controller:219, 240, 297, 324, 342`), con `registrarAccion` dentro de try/catch (`auditar`, `:20-27`), así que un fallo de auditoría no rompe la respuesta. Usa `req.user` a través de `registrarAccion` (`auditoria.service.js:6`, `usuario_id || id`). Es el patrón de RH (`reciboNomina.controller.js:157,208`).
+- Contenido: PUT registra `{campos: [nombres], tipo?, publicada?}` (sin contenido; test `:821-830`). DELETE registra `{titulo, tipo, imagenes: n}`: el título del boletín es interno, pero entra en la auditoría (aceptable, es un destino interno). Subir y eliminar imagen registran ids y `orden`/`noticia_id`, nunca el archivo. Reordenar registra la lista de ids.
+- **F1 (medio):** `POST /api/noticias` sigue con `auditoriaMiddleware("portal","noticias","INSERT")` (`noticia.routes.js:27`). Ese middleware intercepta `res.json`: registra también las respuestas de error (400, 500) con `registroId='pendiente'` y guarda el `req.body` completo como `valores_nuevos`, es decir, el `contenido` de la noticia. Es exactamente lo que la Fase 4 declara evitar (code-notes, punto 5). Fix: quitar el middleware de POST y llamar a `auditar(req, "noticias", id, "INSERT", null, {campos, tipo})` tras el 201.
+- Política sin cubrir: los intentos fallidos (400/403/404) no se auditan en ninguna mutación. Es coherente con RH, pero no hay registro de intentos. Decisión del orquestador (bajo).
+- **F12 (bajo, preexistente):** `registrarAccion` toma la IP de `x-forwarded-for` sin validar (`auditoria.service.js:7`), así que el cliente puede falsificarla. No cambia en esta fase.
+
+#### Punto 6 — transacciones
+- `agregarImagenConLimite` (`noticia.model.js:191-222`) y `reordenarImagenesAtomico` (`:224-258`): `connect()` fuera del try; BEGIN; `SELECT … FOR UPDATE` sobre la noticia; ROLLBACK en cada salida anticipada (no existe, límite, conjunto distinto) y en la excepción (con `.catch` para no tapar el error original); `cliente.release()` en `finally` en ambos. Correcto.
+- Subida: el objeto se sube a Storage ANTES de la transacción (`controller:~278`), así que no hay bloqueo abierto durante la subida. Si la transacción falla (incluido el COMMIT), el catch elimina el objeto de Storage (`:~285-289`); si el resultado es `noExiste` o `limiteAlcanzado`, también se elimina (`:~291-293`). Compensación correcta.
+- Orden de bloqueos: subir y reordenar bloquean primero la fila de `noticias` y después las filas de `noticia_imagenes`. Como ambos siguen el mismo orden, no hay ciclo de espera entre ellos. El DELETE de la noticia (cascada) también toma primero la fila de la noticia. **No verificado** con Postgres (ver lista para el tester).
+- Validación del reorden dentro de la transacción: `SELECT … FOR UPDATE` de las imágenes y comparación con `idsEnOrden` antes de los UPDATE (`:~236-238`). El rechazo rápido del controlador es solo una optimización, no autoritativo. Correcto.
+- Pequeño punto (**F13, bajo**): el rechazo rápido por límite (`controller:~265-271`) sucede después de que el controlador consultó el conteo fuera de la transacción; solo evita una subida innecesaria, no garantiza nada. Está documentado como tal en el código.
+- **F7 (bajo):** `eliminarImagen` elimina primero el objeto de Storage (`controller:~334`) y después la fila (`:~337`). Si el DELETE de la BD falla, queda una fila apuntando a un objeto que ya no existe. Fix: borrar la fila primero (en transacción o a continuación) y limpiar Storage después, igual que en `eliminar`.
+- **F8 (bajo):** `eliminar` (noticia) lee las imágenes con `obtenerPorId` antes de borrar, fuera de transacción (`controller:~227-233`). Una imagen subida entre la lectura y el DELETE de la fila quedaría huérfana en Storage. Fix: usar `DELETE … RETURNING` con las imágenes en la misma transacción, o leer dentro de ella.
+
+#### Punto 7 — `fecha_evento` sin zona
+- Rechazadas (verificado con el regex `validarFechaEvento`, `utils/tiposNoticia.js`, y los tests `:803-807`): `2026-10-20T18:00:00`, `2026-10-20`, `2026-10-20 18:00`, `2026-10-20T18:00`. Aceptadas: `…Z`, `…-06:00`, `…+0100`, `2026-10-20 18:00:00+00`. Números y `Date` siguen válidos. Booleanos, arrays y objetos se rechazan por tipo (la corrección de F1 de Fase 3 quedó resuelta).
+- Espacios: `fecha.trim()` se usa para validar (`:~44-47`), pero `new Date(fecha)` recibe el valor sin recortar. `" 2026-10-20T18:00Z"` probablemente se acepte en V8, aunque no está probado. **F14 (bajo):** añadir un caso de test con espacios y recortar antes de parsear.
+- Mensajes: "fecha_evento debe incluir zona horaria (Z u offset ±hh:mm)" (específico) y "El evento requiere una fecha y hora de inicio válida" (genérico) — claros.
+- El editor envía ISO con zona: `inputLocalAIso` devuelve `toISOString()` (`frontend/utils/tiposNoticia.js`) y `NewsEditorModal` usa esa función al guardar (`NewsEditorModal.jsx:~84-87`). Correcto.
+- Rango 2000–2100 (`:~52`): razonable para un evento de la intranet.
+
+#### Punto 8 — propiedad de imagen y código muerto
+- `eliminarImagen` del controlador usa `obtenerImagen(imagenId, id)` (`WHERE id = $1 AND noticia_id = $2`) y `eliminarImagen(id, noticiaId)` con el mismo filtro (`noticia.model.js:260-271`). Si la imagen es de otra noticia, responde 404 "Imagen no encontrada" sin tocar Storage ni la fila (mismo mensaje que la inexistente). Correcto.
+- Código muerto retirado: `agregarImagen`, `idsImagenes` y el viejo `reordenarImagenes` ya no existen en el modelo y no tienen usos (grep: 0 llamadas `Noticia.reordenarImagenes`, `Noticia.agregarImagen`, `Noticia.idsImagenes`; la única coincidencia de `reordenarImagenes` es el nombre del handler en el controlador y la ruta).
+- **F10 (bajo, documental):** code-notes (entrada "Fase 4 noticias: endurecimiento", punto 6) dice que "el modelo conserva `agregarImagen` sin uso"; la entrada posterior lo retiró. Actualizar la primera para evitar confusión.
+- Sigue sin uso (preexistente): `obtenerNoticia` en el servicio frontend (`noticias.service.js:16`); `portal.permissions.js` no se importa en ningún archivo, aunque lo menciona `docs/AGENT.portal.md:46`. Decisión del orquestador, como indica code-notes.
+
+#### Punto 9 — `useFocoModal` y ArticleModal
+- Foco al abrir: `dialogo.focus({preventScroll:true})` sobre el diálogo con `tabIndex=-1` (`hooks/useFocoModal.js`; ArticleModal.jsx en los dos diálogos, `:60` y `:75`). La ref se asigna durante el commit del portal, así que está disponible en el efecto. Correcto.
+- Trampa de Tab: `querySelectorAll(SELECTOR_ENFOCABLES)` dentro del diálogo; Tab en el último elemento vuelve al primero y Shift+Tab en el primero va al último; si el foco está fuera del diálogo (p. ej. en `body` tras un clic en zona no enfocable) se reubica. Si no hay elementos enfocables, mantiene el foco en el diálogo. Correcto. El diálogo (`tabIndex=-1`) queda excluido por `:not([tabindex="-1"])`.
+- Restauración: `apertura` se guarda antes de mover el foco y se restaura al limpiar el efecto, solo si el elemento sigue en el DOM (`document.contains`). Si el elemento que abrió ya no existe, no hace nada (no falla). Correcto.
+- Esc y clic fuera: siguen en ArticleModal (sin cambios). Listeners: `keydown` se añade y se retira en el cleanup; el efecto depende de `[activo]`, sin fugas. Correcto.
+- Carrusel: el listener de Tab solo intercepta Tab; las flechas ←/→ del carrusel (`CarruselImagenes`) siguen funcionando. Con un carrusel de una imagen el contenedor no tiene `tabIndex` y no entra en la trampa; con varias sí entra (`[tabindex]:not([tabindex="-1"])`). Correcto.
+- createPortal y dimensiones: sin cambios; `.rayhsa-modal:focus { outline:none }` (`rayhsa-system.css:1087`) quita el anillo solo al propio diálogo; los controles internos conservan su `:focus-visible`.
+- **F15 (bajo):** `SELECTOR_ENFOCABLES` no comprueba visibilidad (`display:none`, `hidden`). Un control oculto dentro del diálogo podría recibir el foco. Hoy no hay controles ocultos en ArticleModal, pero conviene filtrar con `offsetParent !== null` o `getClientRects().length`.
+- **F16 (bajo):** si el modal pasa de un tipo a otro sin cerrarse (p. ej. de boletín a noticia), el diálogo cambia de elemento y el foco no se reubica (el efecto depende solo de `activo`). No ocurre en el flujo actual (el modal se cierra antes de abrir otro).
+- No interfiere con el editor: `NewsEditorModal` no se renderiza dentro de ArticleModal y no hay dos modales abiertos a la vez. **No verificado en navegador:** el foco real en Safari y en lectores de pantalla.
+
+#### Punto 10 — repaso transversal de noticias (Fases 1–4)
+**Tabla de rutas (`noticia.routes.js`):**
+
+| Ruta | Auth | Permiso | Qué devuelve | Notas |
+|---|---|---|---|---|
+| GET /publicas, GET /publicadas | no | — | solo publicadas; `?tipo=` validado; boletín mínimo | `:18-19` |
+| GET /:id | no | — | solo publicadas; 404 para borrador o inexistente | `:20` |
+| GET / | sí | Noticias:consulta | todas, incluidos borradores | `:24` |
+| GET /admin/:id | sí | Noticias:consulta | cualquier noticia completa | `:26` |
+| POST / | sí | Noticias:edicion | crea; auditoriaMiddleware (ver F1) | `:27` |
+| PUT /:id | sí | Noticias:edicion | actualiza; audita sin contenido | `:28` |
+| DELETE /:id | sí | Noticias:edicion | elimina y limpia Storage; audita | `:29` |
+| POST /:id/imagenes | sí | Noticias:edicion | sube con bloqueo y compensación | `:32-37` |
+| PUT /:id/imagenes/orden | sí | Noticias:edicion | reordena en transacción; audita | `:39-43` |
+| DELETE /:id/imagenes/:imagenId | sí | Noticias:edicion | elimina solo si pertenece a :id; audita | `:44-48` |
+
+- Mutaciones sin autenticar: ninguna. Lecturas de borradores sin permiso: ninguna (`/:id` público filtra por `publicada`; `/admin/:id` y `GET /` exigen consulta).
+- Tipos: backend (`utils/tiposNoticia.js:7`) y frontend (`frontend/utils/tiposNoticia.js:5-11`) coinciden en valores (noticia, comunicado, oferta_empleo, boletin, evento) y límites (boletín 1, evento 10, resto 5). Sin test de paridad automatizado (H10 de Fase 2, sigue abierto).
+- Duplicados y restos: `esBoletin` y `esEvento` existen en el frontend (utils) y en NewsEditorModal con alias; PortalHome repite la lógica de `kind` (aceptable). No quedan `ETIQUETAS` ni `MAX_IMAGENES` exportado. Sin código muerto de las fases de noticias salvo `obtenerNoticia` y `portal.permissions.js` (decisión abierta, ver Punto 8).
+- Tests: 230 en `modules/portal`, todos pasan. Frágiles por regex sobre SQL (`noticia.controller.test.js:456, 473, 476, 482, 485, 497, 507-511, 546-549`) y por `router.stack` (`:265, 586`). Requieren Postgres real: ORDER BY con desempate y orden de imágenes, MAX+1 bajo concurrencia, FOR UPDATE y bloqueo entre dos subidas, ROLLBACK real tras fallo de UPDATE, filtro de `eliminarImagen` por `noticia_id`, TIMESTAMPTZ de `fecha_evento`, y la paginación con `?tipo=` (F2). Sin tests de componentes frontend (CarruselImagenes, useFocoModal, editor).
+
+#### Lista de hallazgos
+| ID | Sev. | Archivo/línea | Problema | Fix |
+|---|---|---|---|---|
+| F1 | medio | noticia.routes.js:27 | POST audita con middleware: guarda el cuerpo completo (contenido) y también errores | auditar tras el 201 desde el controlador, sin middleware |
+| F2 | medio | noticia.model.js:68 | ORDER BY sin desempate: paginación inestable | `ORDER BY fecha_publicacion DESC, id DESC` |
+| F3 | bajo | noticia.controller.js (listarPublicadas, ~33) | `limite` sin tope en endpoint público | tope de 50 |
+| F4 | bajo | noticia.controller.js (listarPublicadas) | `pagina` enorme provoca overflow de OFFSET → 500 | validar rango superior, 400 |
+| F5 | bajo | noticia.routes.js:14-22 | id inválido sin token da 400 antes de 401 | aceptable; coherencia si se quiere |
+| F6 | bajo | noticia.controller.js (catch de endpoints autenticados) | `error.message` sigue en respuestas autenticadas | `errorPublico` en todos los 500 |
+| F7 | bajo | noticia.controller.js (eliminarImagen, ~334-337) | Storage antes que la fila: fila huérfana si falla el DELETE | DELETE primero, Storage después |
+| F8 | bajo | noticia.controller.js (eliminar, ~227-233) | imágenes leídas fuera de transacción: posible huérfano en Storage | DELETE … RETURNING en la misma transacción |
+| F9 | bajo | noticia.model.js (conUrls) / utils paraPublico | boletín con ruta legada `/uploads/` sin url (riesgo nulo en la práctica) | incluir ruta si no hay url, o confirmar en BD |
+| F10 | bajo | memory/code-notes.md (Fase 4, punto 6) | documenta `agregarImagen` como conservado; ya se retiró | actualizar la nota |
+| F11 | bajo | config/nginx/nginx.conf:35 y staging:24 | 50 MB en todo `/api/`, no solo en rutas con archivos | `location` específico para rutas de subida |
+| F12 | bajo | auditoria.service.js:7 (preexistente) | IP tomada de `x-forwarded-for` sin validar | confiar solo en proxy conocido |
+| F13 | bajo | noticia.controller.js (subirImagen, ~265-271) | rechazo rápido fuera de la transacción (no autoritativo) | documentado; sin cambio |
+| F14 | bajo | utils/tiposNoticia.js (validarFechaEvento) y tests :803-807 | sin test de espacios; no se recorta antes de `new Date` | recortar y añadir caso |
+| F15 | bajo | hooks/useFocoModal.js (SELECTOR) | no filtra elementos ocultos en la trampa de Tab | filtrar visibilidad |
+| F16 | bajo | hooks/useFocoModal.js (efecto [activo]) | cambiar de tipo de modal sin cerrar no reubica el foco | depender también de `item` |
+| F17 | bajo | noticia.controller.test.js (regex y router.stack) | tests de SQL por regex y de rutas por internos de Express | tests de integración con PG; `handle ===` en vez de nombre |
+
+**Lo que requiere Postgres real o navegador (no verificado aquí):** paginación con `?tipo=` y desempate (F2); FOR UPDATE y no deadlock entre subida y reordenar; ROLLBACK real; filtro `noticia_id` en DELETE; `ORDER BY` de imágenes; TIMESTAMPTZ; límites de nginx con una subida real de 5 MB y 10 MB en staging; foco del modal en navegador y lector de pantalla.
+
+**Pendiente para el orquestador:** nada crítico ni alto. Recomiendo corregir F1 (la auditoría de contenido contradice la política de la fase) y F2 (paginación) antes del GO a staging; el resto puede ir como deuda con la nota en roadmap.

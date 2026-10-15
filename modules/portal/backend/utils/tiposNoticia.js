@@ -29,7 +29,10 @@ function mensajeTipoInvalido() {
 function paraPublico(noticia) {
   if (!noticia || noticia.tipo !== "boletin") return noticia;
   const { id, tipo, fecha_publicacion, publicada, imagenes } = noticia;
-  return { id, tipo, fecha_publicacion, publicada, imagenes };
+  // Lista blanca también en las imágenes: solo lo que la UI pública necesita (sin ruta_archivo,
+  // nombre_archivo ni noticia_id)
+  const imagenesPublicas = (imagenes || []).map(({ id: imagenId, url, orden }) => ({ id: imagenId, url, orden }));
+  return { id, tipo, fecha_publicacion, publicada, imagenes: imagenesPublicas };
 }
 
 // Tipo 'evento': fecha_evento (fecha y hora de inicio) y lugar obligatorios.
@@ -42,7 +45,11 @@ function validarFechaEvento(fecha) {
     (typeof fecha === "number" && Number.isFinite(fecha)) ||
     fecha instanceof Date;
   if (!tipoAceptable) return error;
-  const instante = new Date(fecha);
+  // Un string sin zona (Z u offset ±hh:mm) se interpretaría en la zona del servidor: se rechaza
+  if (typeof fecha === "string" && !/[T ]\d{2}:\d{2}.*(Z|[+-]\d{2}(:?\d{2})?)$/i.test(fecha.trim())) {
+    return { error: "fecha_evento debe incluir zona horaria (Z u offset ±hh:mm)" };
+  }
+  const instante = new Date(typeof fecha === "string" ? fecha.trim() : fecha);
   if (Number.isNaN(instante.getTime())) return error;
   const anio = instante.getUTCFullYear();
   if (anio < 2000 || anio > 2100) return error; // rango razonable para un evento de la intranet
