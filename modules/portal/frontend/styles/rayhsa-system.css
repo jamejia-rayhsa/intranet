@@ -423,6 +423,121 @@
 }
 
 /* ============================================================
+   IMAGEN VERTICAL 2:3 — marco reutilizable (carrusel, modal, tarjetas)
+   Imagen completa (contain) sobre fondo desenfocado de la misma imagen.
+   --iv-alto-max limita el alto (por defecto 750px); el ancho sale de 2:3,
+   nunca pasa de 500px ni del ancho disponible. Sin scope .rayhsa: el modal
+   se monta en document.body.
+   ============================================================ */
+
+.imagen-vertical {
+  --iv-alto-max: 750px;
+  position: relative;
+  width: min(500px, 100%, calc(var(--iv-alto-max) * 2 / 3));
+  max-width: 100%;
+  min-width: 0;
+  aspect-ratio: 2 / 3;
+  margin-inline: auto;
+  overflow: hidden;
+  border-radius: var(--radio-borde-lg);
+  background: var(--color-primario-oscuro);
+  flex-shrink: 0;
+}
+.imagen-vertical__fondo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.25); /* oculta el borde difuminado del blur */
+  filter: blur(22px) brightness(0.8);
+  pointer-events: none;
+}
+.imagen-vertical__imagen {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  user-select: none;
+}
+.imagen-vertical__texto-vacio {
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.65);
+}
+.imagen-vertical__vacia {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 3rem;
+  background:
+    radial-gradient(120% 80% at 85% 10%, rgba(37, 99, 235, 0.35) 0%, rgba(37, 99, 235, 0) 60%),
+    linear-gradient(135deg, var(--color-primario) 0%, var(--color-primario-oscuro) 100%);
+}
+
+/* Boletín en tarjeta: solo el marco, dentro de un botón sin estilo (clic = ampliar) */
+.noticia-tarjeta--boletin { padding: 1rem; align-self: start; } /* sin estirarse al alto de la fila */
+.noticia-boletin-boton {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+  font: inherit;
+}
+.noticia-boletin-boton:focus-visible { outline: 3px solid var(--color-acento); outline-offset: 2px; border-radius: 6px; }
+.noticia-boletin-boton .imagen-vertical--tarjeta { margin-bottom: 0; }
+
+/* Boletín en el carrusel: botón que envuelve el marco (después de .news-hero__slide por cascada) */
+.rayhsa .news-hero__slide.news-hero__slide--boletin { cursor: zoom-in; }
+.rayhsa .news-hero__boletin-boton {
+  display: block;
+  width: min(500px, 100%, calc(var(--iv-alto-max) * 2 / 3));
+  max-width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radio-borde-lg);
+  background: none;
+  font: inherit;
+  cursor: zoom-in;
+}
+.rayhsa .news-hero__slide[role="button"]:focus-visible { outline: 3px solid var(--color-acento); outline-offset: -3px; } /* dentro del slide (overflow hidden) */
+.rayhsa .news-hero__boletin-boton:focus-visible { outline: 3px solid var(--color-acento); outline-offset: 3px; }
+
+/* Tarjeta de evento: clic en toda la tarjeta; botón "Ver detalle" para teclado */
+.noticia-tarjeta--evento { cursor: pointer; }
+.noticia-pie--evento { flex-direction: column; align-items: flex-start; }
+.noticia-fecha-lugar { font-weight: 500; }
+.noticia-ver-detalle {
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--color-primario);
+  border-radius: 999px;
+  background: none;
+  color: var(--color-primario);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.noticia-ver-detalle:focus-visible { outline: 3px solid var(--color-acento); outline-offset: 2px; }
+
+/* Tarjeta de /noticias: imagen arriba, texto debajo (va después de la base por orden de cascada) */
+.imagen-vertical--tarjeta {
+  --iv-alto-max: 300px; /* marco de 200x300 como máximo; 168x252 en el ancho mínimo de columna */
+  margin-bottom: 0.75rem;
+  border-radius: 6px;
+}
+
+/* ============================================================
    NEWS HERO — noticias y comunicados a pantalla completa
    Cada publicación ocupa todo el alto del área de contenido; la
    información va al pie, sobre un degradado. Pista con scroll-snap.
@@ -464,34 +579,33 @@
   scroll-snap-stop: always;
   overflow: hidden;
   cursor: pointer;
+  /* Marco 2:3 centrado; arriba se deja espacio para las barras de progreso */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2.5rem 4.5rem 1rem;
 }
 
-.rayhsa .news-hero__imagen {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center;
-  user-select: none;
+/* Alto máximo del marco: ventana - barra superior - relleno del contenido - holgura de barras */
+.rayhsa .imagen-vertical--carrusel {
+  --iv-alto-max: max(364px, min(750px, calc(100vh - var(--alto-topbar) - 4rem - 3.5rem)));
 }
-.rayhsa .news-hero__sin-imagen {
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(120% 80% at 85% 10%, rgba(37, 99, 235, 0.35) 0%, rgba(37, 99, 235, 0) 60%),
-    linear-gradient(135deg, var(--color-primario) 0%, var(--color-primario-oscuro) 100%);
+@supports (height: 100dvh) {
+  .rayhsa .imagen-vertical--carrusel {
+    --iv-alto-max: max(364px, min(750px, calc(100dvh - var(--alto-topbar) - 4rem - 3.5rem)));
+  }
 }
 
-/* Degradado inferior: garantiza la legibilidad del texto sobre cualquier imagen */
+/* Degradado inferior del marco: garantiza la legibilidad del texto sobre cualquier imagen */
 .rayhsa .news-hero__velo {
   position: absolute;
   inset: 0;
+  z-index: 1;
   background: linear-gradient(to top,
     rgba(0, 18, 46, 0.92) 0%,
-    rgba(0, 18, 46, 0.70) 26%,
-    rgba(0, 18, 46, 0.18) 52%,
-    rgba(0, 18, 46, 0) 70%);
+    rgba(0, 18, 46, 0.70) 30%,
+    rgba(0, 18, 46, 0.18) 58%,
+    rgba(0, 18, 46, 0) 75%);
   pointer-events: none;
 }
 
@@ -500,9 +614,9 @@
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 2rem 4.5rem 2.25rem;
+  z-index: 2;
+  padding: 1.25rem 1.1rem 1.25rem;
   color: #fff;
-  max-width: 62rem;
 }
 .rayhsa .news-hero__meta {
   display: flex;
@@ -515,8 +629,8 @@
 }
 .rayhsa .news-hero__titulo {
   margin: 0 0 0.5rem;
-  font-size: clamp(1.4rem, 2.7vw, 2.6rem);
-  line-height: 1.15;
+  font-size: clamp(1.1rem, 1.8vw, 1.5rem);
+  line-height: 1.2;
   font-weight: 700;
   letter-spacing: -0.01em;
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
@@ -527,12 +641,11 @@
 }
 .rayhsa .news-hero__resumen {
   margin: 0;
-  max-width: 46rem;
-  font-size: 1.05rem;
-  line-height: 1.45;
+  font-size: 0.9rem;
+  line-height: 1.4;
   color: rgba(255, 255, 255, 0.92);
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -540,13 +653,13 @@
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  margin-top: 1rem;
-  padding: 0.55rem 1.1rem;
+  margin-top: 0.8rem;
+  padding: 0.45rem 1rem;
   border: 1px solid rgba(255, 255, 255, 0.55);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.14);
   backdrop-filter: blur(4px);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 600;
   transition: background var(--transicion), color var(--transicion);
 }
@@ -555,6 +668,7 @@
 /* Barras de progreso (una por publicación) y enlace al archivo */
 .rayhsa .news-hero__barras {
   position: absolute;
+  z-index: 3;
   top: 1rem;
   left: 1.25rem;
   right: 8.5rem;
@@ -578,6 +692,7 @@
 
 .rayhsa .news-hero__todas {
   position: absolute;
+  z-index: 3;
   top: 0.55rem;
   right: 1.25rem;
   display: inline-flex;
@@ -596,6 +711,7 @@
 
 .rayhsa .news-hero__flecha {
   position: absolute;
+  z-index: 4; /* por encima del texto del marco (z-index 2): siempre operable */
   top: 50%;
   transform: translateY(-50%);
   display: inline-flex;
@@ -623,14 +739,26 @@
     margin-bottom: 1.25rem;
     border-radius: var(--radio-borde);
   }
-  .rayhsa .news-hero__info { padding: 1.25rem 1.1rem 1.4rem; }
-  .rayhsa .news-hero__resumen { font-size: 0.95rem; -webkit-line-clamp: 3; }
-  .rayhsa .news-hero__cta { margin-top: 0.8rem; padding: 0.5rem 1rem; }
+  .rayhsa .news-hero__slide { padding: 2.25rem 3.25rem 0.75rem; }
+  .rayhsa .imagen-vertical--carrusel {
+    --iv-alto-max: max(364px, min(750px, calc(100vh - var(--alto-topbar) - 2rem - 3rem)));
+  }
+  @supports (height: 100dvh) {
+    .rayhsa .imagen-vertical--carrusel {
+      --iv-alto-max: max(364px, min(750px, calc(100dvh - var(--alto-topbar) - 2rem - 3rem)));
+    }
+  }
+  .rayhsa .news-hero__resumen { font-size: 0.85rem; -webkit-line-clamp: 2; }
   .rayhsa .news-hero__barras { left: 0.85rem; right: 7rem; }
   .rayhsa .news-hero__todas { right: 0.85rem; }
   .rayhsa .news-hero__flecha { width: 36px; height: 36px; }
   .rayhsa .news-hero__flecha--izq { left: 0.5rem; }
   .rayhsa .news-hero__flecha--der { right: 0.5rem; }
+}
+
+/* Móvil: el marco usa casi todo el ancho; las flechas quedan sobre sus bordes (también se desliza) */
+@media (max-width: 640px) {
+  .rayhsa .news-hero__slide { padding-left: 0.75rem; padding-right: 0.75rem; }
 }
 
 /* ============================================================
@@ -948,6 +1076,7 @@
   justify-content: center;
   padding: 4rem 2rem 2rem;
   overflow-y: auto;
+  overflow-x: hidden;
   animation: rayhsa-fade-in 0.18s ease-out;
   font-family: 'Asap', -apple-system, sans-serif;
 }
@@ -956,17 +1085,25 @@
   to   { opacity: 1; }
 }
 
+.rayhsa-modal:focus { outline: none; } /* el foco programático entra al diálogo sin anillo; los controles internos sí lo muestran */
 .rayhsa-modal {
   background: #fff;
   border-radius: 10px;
   width: 100%;
-  max-width: 760px;
+  max-width: min(760px, 100%);
+  min-width: 0;
+  max-height: calc(100vh - 6rem); /* alto del overlay menos su padding (4rem + 2rem): el diálogo cabe sin scroll del overlay */
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.30);
   overflow: hidden;
   display: flex;
   flex-direction: column;
   animation: rayhsa-pop 0.22s cubic-bezier(0.16, 1, 0.3, 1);
   color: #1a1f36;
+}
+@supports (height: 100dvh) {
+  .rayhsa-modal { max-height: calc(100dvh - 6rem); }
 }
 @keyframes rayhsa-pop {
   from { transform: translateY(12px) scale(0.985); opacity: 0; }
@@ -985,7 +1122,7 @@
   color: #1a1f36;
   cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
-  z-index: 2;
+  z-index: 3; /* sobre el marco y la etiqueta; el botón es absoluto en la esquina del diálogo */
   box-shadow: 0 2px 8px rgba(0,0,0,0.18);
   transition: background 0.15s, transform 0.15s;
 }
@@ -1026,6 +1163,134 @@
   font-size: 0.72rem;
 }
 
+.rayhsa-modal__media .badge { z-index: 2; }
+
+/* Modal de noticia: marco 2:3 centrado; el alto se limita con la ventana para no desbordar */
+.rayhsa-modal-overlay .rayhsa-modal .rayhsa-modal__media.rayhsa-modal__media--vertical {
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  padding: 1.25rem 1.5rem;
+}
+/* Las etiquetas (tipo, Finalizado) van encima del marco (no sobre la imagen) */
+.rayhsa-modal-overlay .rayhsa-modal .rayhsa-modal__media.rayhsa-modal__media--vertical .rayhsa-modal__etiquetas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  order: -1;
+  align-self: flex-start;
+  margin: 0 0 0.75rem;
+  padding-right: 2.75rem; /* deja libre el botón de cierre */
+}
+.rayhsa-modal-overlay .rayhsa-modal .rayhsa-modal__media.rayhsa-modal__media--vertical .rayhsa-modal__etiquetas .badge {
+  margin: 0;
+  align-self: auto;
+}
+.rayhsa-modal-overlay .rayhsa-modal .rayhsa-modal__media.rayhsa-modal__media--vertical .badge {
+  position: static;
+  order: -1;
+  align-self: flex-start;
+  margin: 0 0 0.75rem;
+}
+/* Alto del marco del modal: ventana - padding del overlay (6rem) - resto del diálogo (~310px:
+   padding+etiqueta del media 74, acciones ~66, ~170 de cuerpo visible). Mín. 200, máx. 560 (373x560). */
+.imagen-vertical--modal {
+  --iv-alto-max: clamp(200px, calc(100vh - 406px), 560px);
+}
+@supports (height: 100dvh) {
+  .imagen-vertical--modal { --iv-alto-max: clamp(200px, calc(100dvh - 406px), 560px); }
+}
+
+/* Visor de boletín: solo la imagen, tan grande como quepa en la ventana (2:3, completa, fondo desenfocado).
+   Especificidad 0,2,0 para ganar a las reglas móviles del modal (pantalla completa) sin !important. */
+.rayhsa-modal-overlay.rayhsa-modal-overlay--boletin {
+  align-items: center;
+  padding: 1rem;
+}
+.rayhsa-modal.rayhsa-modal--boletin {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 10px;
+}
+.imagen-vertical--ampliada {
+  --iv-alto-max: min(1400px, calc(100vh - 2rem));
+  width: min(calc(100vw - 2rem), calc(var(--iv-alto-max) * 2 / 3));
+}
+@supports (height: 100dvh) {
+  .imagen-vertical--ampliada { --iv-alto-max: min(1400px, calc(100dvh - 2rem)); }
+}
+
+/* Carrusel de imágenes del detalle de un evento: slides 2:3 con scroll-snap, flechas y puntos */
+.carrusel-imagenes {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  outline: none;
+}
+.carrusel-imagenes__pista:focus-visible { outline: 3px solid var(--color-acento); outline-offset: -3px; border-radius: 10px; }
+.carrusel-imagenes__pista {
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.carrusel-imagenes__pista::-webkit-scrollbar { display: none; }
+.carrusel-imagenes__slide {
+  flex: 0 0 100%;
+  min-width: 0;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+.carrusel-imagenes__flecha {
+  position: absolute;
+  top: 50%;
+  z-index: 4;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  cursor: pointer;
+}
+.carrusel-imagenes__flecha:hover { background: rgba(0, 0, 0, 0.7); }
+.carrusel-imagenes__flecha:focus-visible,
+.carrusel-imagenes__punto:focus-visible { outline: 3px solid var(--color-acento); outline-offset: 2px; }
+.carrusel-imagenes__flecha--izq { left: 0.25rem; }
+.carrusel-imagenes__flecha--der { right: 0.25rem; }
+.carrusel-imagenes__puntos {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 0.6rem;
+}
+.carrusel-imagenes__punto {
+  position: relative;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+}
+.carrusel-imagenes__punto::after { content: ''; position: absolute; inset: -8px; } /* área táctil mayor */
+.carrusel-imagenes__punto.is-activo { background: #fff; }
+
 .rayhsa-modal__media--com {
   height: 70px;
   background: #f8f9fb;
@@ -1047,9 +1312,11 @@
   margin-left: auto;
 }
 
+.rayhsa-modal__body:focus-visible { outline: 3px solid var(--color-acento); outline-offset: -3px; }
 .rayhsa-modal__body {
   padding: 1.75rem 2rem 2rem;
-  max-height: calc(100vh - 14rem);
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -1058,12 +1325,14 @@
   align-items: center;
   gap: 0.6rem;
   font-size: 0.78rem;
-  color: #718096;
+  color: var(--color-texto-medio); /* #4a5568 sobre blanco: ~7,5:1 (el gris anterior #718096 daba ~4,0:1) */
   margin-bottom: 0.65rem;
   flex-wrap: wrap;
 }
 .rayhsa-modal__meta > span:not(.sep) {
-  white-space: nowrap;
+  white-space: normal;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
 }
 .rayhsa-modal__meta .sep {
   width: 3px; height: 3px;
@@ -2023,7 +2292,10 @@
   }
   .rayhsa-modal__media { height: 160px; }
   .rayhsa-modal__close { top: 0.75rem; right: 0.75rem; }
-  .rayhsa-modal__body { padding: 1.25rem 1.1rem 1.5rem; max-height: none; flex: 1; }
+  .rayhsa-modal__body { padding: 1.25rem 1.1rem 1.5rem; max-height: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .rayhsa-modal__acciones { flex-shrink: 0; }
+  /* Marco más bajo en móvil para dejar sitio al cuerpo (que se desplaza) y a las acciones */
+  .imagen-vertical--modal { --iv-alto-max: max(220px, min(750px, 45vh)); }
   .rayhsa-modal__titulo { font-size: 1.25rem; }
   .rayhsa-modal__lead { font-size: 0.92rem; }
   .rayhsa-modal__contenido { font-size: 0.88rem; }

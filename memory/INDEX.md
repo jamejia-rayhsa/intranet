@@ -69,3 +69,60 @@
 - [2026-10-09] orquestador → decisions.md — ADR: Encuestas de satisfacción de tickets (UNIQUE por ticket, estados, invitación, estadísticas por rol)
 - [2026-10-13] orquestador → decisions.md — ADR: Notificaciones vía event-proxy (webhook n8n WF-INTRA-01); lado intranet listo, activar y probar
 - [2026-10-14] orquestador → decisions.md — ADR: notificaciones listas para producción (RH por n8n, override prod.n8n, docs/notificaciones.md)
+- [2026-10-14] investigador → research.md — Noticias, eventos e imágenes: estado actual para 500x750, boletín y carrusel
+- [2026-10-14] orquestador → roadmap.md — Plan PROPUESTO por fases para noticias 2:3, boletín y eventos con carrusel (pendiente de GO)
+- [2026-10-14] orquestador → decisions.md — Noticias/eventos 2:3, boletín y carrusel: hallazgos y plan propuesto (pendiente de aprobación)
+- [2026-10-14] orquestador → tests.md/roadmap.md — Paso 0: agregados tester.md, tests.md y roadmap.md (CLAUDE.md sin cambios)
+- [2026-10-14] orquestador → decisions.md — Noticias/eventos: decisiones de producto del humano (fondo desenfocado, evento con fecha y lugar, boletín, 2:3 en todas las vistas)
+- [2026-10-14] orquestador → roadmap.md — GO del humano a la Fase 1 (presentación 2:3): delegada a coder y luego revisor
+- [2026-10-14] coder → code-notes.md — Fase 1 noticias: marco vertical 2:3 con fondo desenfocado
+- [2026-10-14] revisor → reviews.md — Fase 1 noticias: revisión del marco vertical 2:3 (APROBADO CON OBSERVACIONES)
+- [2026-10-14] coder → code-notes.md — Fase 1 noticias: correcciones de la revisión (H1, H5-H9)
+- [2026-10-14] orquestador → decisions.md — Fase 1 noticias: revisión aprobada con observaciones; tarjetas más angostas (decisión del humano); H3/H4 diferidos
+- [2026-10-14] coder → code-notes.md — Fase 1 noticias: tarjetas más angostas (minmax 200px, marco 200x300)
+- [2026-10-14] revisor → reviews.md — Fase 1 noticias: re-revisión (correcciones + tarjetas angostas) (APROBADO CON OBSERVACIONES)
+- [2026-10-14] coder → code-notes.md — Fase 1 noticias: segunda ronda de correcciones (cierre absoluto, @supports dvh, modal móvil)
+- [2026-10-14] revisor → reviews.md — Fase 1 noticias: confirmación de la segunda ronda (APROBADO CON OBSERVACIONES)
+- [2026-10-14] orquestador → roadmap.md/decisions.md — Fase 1 noticias lista para GO/NO-GO (revisión visual en staging pendiente)
+- [2026-10-14] coder → code-notes.md — Fase 1 noticias: modal desbordaba el ancho de la página (min-width:0 en el diálogo flex)
+- [2026-10-14] orquestador → code-notes.md — Fase 1 noticias: corregido desborde de ancho del modal (reportado por el humano al verlo en desarrollo)
+- [2026-10-14] tester → tests.md — Modal de noticia con imagen: medición real (Chromium 156 + Firefox 157, 632 mediciones): desborde de ancho NO reproducido; diagnóstico del coder (min-width:auto) refutado
+- [2026-10-14] tester → decisions.md — PARA RESOLVER: modal de noticia desborda el ancho (no reproducido; faltan datos del entorno del humano)
+- [2026-10-14] coder → code-notes.md — Fase 1 noticias: modal con alto máximo y marco reducido (corrección del diagnóstico anterior)
+- [2026-10-14] tester → tests.md — Modal de noticia: re-medición tras reducir el marco y limitar el alto (6/6 PASS, sin fallos; marco 373x560 a 1080)
+- [2026-10-14] orquestador → decisions.md — Fase 1: modal con imagen reducida para caber en la ventana (tester: 280/280 PASS; desborde de ancho no reproducido)
+- [2026-10-14] orquestador → roadmap.md — Fase 1 cerrada por el humano; GO a la Fase 2 (boletín): coder, luego revisor y tester en paralelo
+- [2026-10-14] coder → code-notes.md — Fase 2 noticias: categoría boletín
+- [2026-10-14] revisor → reviews.md — Fase 2 noticias: revisión de la categoría boletín (APROBADO CON OBSERVACIONES; sin críticos; H1 alto preexistente: GET /:id sirve borradores)
+- [2026-10-14] tester → tests.md — Fase 2 noticias: categoría boletín (componentes reales en Chromium 156 + Firefox 157, 72 combos de viewport; jest 263/263, eslint 0 errores; sin fallos funcionales, 1 FAIL cosmético: cursor zoom-in)
+- [2026-10-14] tester → decisions.md — PARA RESOLVER: cursor del slide de boletín (menor) y tarjeta de boletín estirada en /noticias (decisión de producto)
+- [2026-10-14] coder → code-notes.md — Fase 2 noticias: correcciones de la revisión
+- [2026-10-14] orquestador → decisions.md — Fase 2 boletín: revisión/pruebas sin críticos; decisiones del humano (borradores, API pública del boletín, tarjeta)
+- [2026-10-14] coder → code-notes.md — Fase 2 noticias: borradores, API pública del boletín y tarjeta
+- [2026-10-14] revisor → reviews.md — Fase 2 noticias: re-revisión (correcciones, borradores y API pública del boletín) (APROBADO CON OBSERVACIONES; sin críticos ni altos; 7 bajos)
+- [2026-10-14] tester → tests.md — Fase 2 noticias: re-prueba tras correcciones (7/7 PASS en Chromium 156 + Firefox 157; jest 275/275, eslint 0 errores; PARA RESOLVER cursor y tarjeta estirada RESUELTOS, sin fallos)
+- [2026-10-14] orquestador → roadmap.md/decisions.md — Fase 2 noticias (boletín) lista para GO/NO-GO; bajos diferidos a Fase 4
+- [2026-10-14] orquestador → roadmap.md — Fases 1-2 cerradas y commiteadas (158f063); GO del humano a la Fase 3 (eventos)
+- [2026-10-15] orquestador → decisions.md — Fase 3 eventos: decisiones de producto del humano (lista, fecha y hora, 10 imágenes, editor con orden)
+- [2026-10-15] coder → code-notes.md — Fase 3 noticias: eventos con fecha, lugar y carrusel de imágenes
+- [2026-10-15] revisor → reviews.md — Fase 3 noticias: revisión de eventos, migración, reordenar y carrusel (APROBADO CON OBSERVACIONES; sin críticos ni altos; 19 bajos)
+- [2026-10-15] tester → tests.md — Fase 3 noticias: eventos, carrusel de imágenes y SQL real (Chromium 156 + Firefox 157 + móvil; Postgres 16 desechable 64/64; migración 006 idempotente; jest 305/305, eslint 0 errores; 1 FAIL menor: carrera en el reorden del editor)
+- [2026-10-15] tester → decisions.md — PARA RESOLVER: reorden de imágenes del editor se desincroniza si dos clics rápidos fallan (menor)
+- [2026-10-15] orquestador → decisions.md — Fase 3 eventos: revisión/pruebas sin críticos; decisiones del humano (Finalizado, bloqueo de cambio de tipo, orden) y correcciones
+- [2026-10-15] coder → code-notes.md — Fase 3 noticias: decisiones del humano y correcciones de la revisión
+- [2026-10-15] tester → tests.md — Fase 3 noticias: re-verificación de decisiones y correcciones (6/6 PASS en Chromium 156 + Firefox 157 + Postgres 16 desechable 71/71; jest 323/323, eslint 0 errores; PARA RESOLVER del reorden RESUELTO, sin fallos)
+- [2026-10-15] orquestador → roadmap.md/decisions.md — Fase 3 noticias (eventos) CERRADA y commiteada; esperando GO a la Fase 4
+- [2026-10-15] orquestador → docs/supabase.md — Anotado el paso de re-ejecutar supabase-db-init con migraciones nuevas; GO a la Fase 4 (endurecimiento)
+- [2026-10-15] coder → code-notes.md — Fase 4 noticias: endurecimiento
+- [2026-10-15] coder → code-notes.md — Fase 4 noticias: propiedad de imagen al eliminar y limpieza del modelo
+- [2026-10-15] revisor → reviews.md — Fase 4 noticias: revisión del endurecimiento y repaso transversal (APROBADO CON OBSERVACIONES; sin críticos ni altos; 2 medios F1 auditoría POST y F2 paginación; 15 bajos)
+- [2026-10-15] tester → tests.md — Fase 4 noticias: concurrencia (Postgres real, 130 comprobaciones), filtro, nginx 50 MiB x3 (antes 413 desde 6 MiB), foco/fugas y rendimiento del blur (50 tarjetas: 60 FPS, 0 tareas largas, raster 2,2x; headless); jest 373/373, eslint 0 errores; 2 PARA RESOLVER menores
+- [2026-10-15] tester → decisions.md — PARA RESOLVER: cuerpo desplazable del detalle de evento inalcanzable por teclado; `limite` sin tope en el listado público (ambos menores)
+- [2026-10-15] coder → code-notes.md — Fase 4 noticias: correcciones de la revisión final
+- [2026-10-15] tester → tests.md — Fase 4 noticias: confirmación de las correcciones finales (6/6 PASS: orden estable, tope de limite/pagina, auditoría del POST, cuerpo enfocable, fecha_evento; Postgres real 49/49, Chromium + Firefox; jest 387/387, eslint 0 errores; los 2 PARA RESOLVER RESUELTOS, sin fallos)
+- [2026-10-15] orquestador → roadmap.md/decisions.md — Fase 4 noticias CERRADA y commiteada; plan completo, pendiente OK para publicar y desplegar
+- [2026-10-15] coder → code-notes.md — eslint-plugin-react y slides de Inicio accesibles por teclado
+- [2026-10-15] tester → tests.md — Slides de Inicio accesibles por teclado (y regresión): Tab/Enter/Espacio/clic y ←/→ OK en Chromium + Firefox (15 paradas, 1 apertura), regresión 19/19, jest 387/387, eslint 0 errores; 2 PARA RESOLVER menores (foco no sigue al slide activo; hallazgos axe); incidente: `npm i axe-core` en la raíz del repo, revertido
+- [2026-10-15] coder → code-notes.md — Foco con ←/→ en el carrusel de Inicio y hallazgos de axe
+- [2026-10-15] tester → tests.md — Confirmación del foco con ←/→ y de los hallazgos de axe (foco RESUELTO en Chromium + Firefox; CarruselImagenes y trampa de Tab en los 4 modales OK; axe: corregido lo pedido, quedan 3 hallazgos menores de contraste/nombre; jest 387/387, eslint 0 errores; repo sin axe-core)
+- [2026-10-15] orquestador → decisions.md/roadmap.md — eslint-plugin-react instalado y carrusel de Inicio accesible por teclado; axe restante como deuda (paleta previa)

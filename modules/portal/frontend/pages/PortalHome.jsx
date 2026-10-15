@@ -2,7 +2,7 @@
 //
 // Home responsive con sistema visual Rayhsa.
 // Consume `obtenerNoticiasPublicadas` y particiona el resultado en:
-//   - publicaciones: noticias y comunicados -> carrusel a pantalla completa (las 10 más recientes)
+//   - publicaciones: noticias, comunicados, eventos y boletines (estos solo con imagen) -> carrusel a pantalla completa (las 10 más recientes)
 //   - vacantes (tipo === 'oferta_empleo') -> cinta inferior
 
 import { useState, useEffect, useMemo } from 'react';
@@ -12,6 +12,7 @@ import { obtenerNoticiasPublicadas } from '../services/noticias.service';
 import NewsCarousel from '../components/NewsCarousel';
 import JobsTicker from '../components/JobsTicker';
 import ArticleModal from '../components/ArticleModal';
+import { esBoletin, esEvento, esMostrable } from '../utils/tiposNoticia';
 
 const MAX_PUBLICACIONES = 10;
 
@@ -59,7 +60,7 @@ export default function PortalHome() {
   const { publicaciones, vacantes } = useMemo(() => {
     const vacantes = todas.filter(n => n.tipo === 'oferta_empleo');
     // Noticias y comunicados comparten el carrusel; se limita para que las barras de progreso sigan siendo legibles
-    const publicaciones = todas.filter(n => n.tipo !== 'oferta_empleo').slice(0, MAX_PUBLICACIONES);
+    const publicaciones = todas.filter(n => n.tipo !== 'oferta_empleo' && esMostrable(n)).slice(0, MAX_PUBLICACIONES);
     return { publicaciones, vacantes };
   }, [todas]);
 
@@ -75,7 +76,7 @@ export default function PortalHome() {
       {publicaciones.length > 0 && (
         <NewsCarousel
           noticias={publicaciones}
-          onOpen={(n) => setModalItem({ kind: n.tipo === 'comunicado' ? 'comunicado' : 'news', noticia: n })}
+          onOpen={(n) => setModalItem({ kind: esBoletin(n) ? 'boletin' : esEvento(n) ? 'evento' : n.tipo === 'comunicado' ? 'comunicado' : 'news', noticia: n })}
         />
       )}
 

@@ -81,7 +81,9 @@ CREATE TABLE IF NOT EXISTS noticias (
   publicada BOOLEAN DEFAULT false,
   autor_id INT REFERENCES usuarios(id),
   fecha_creacion TIMESTAMP DEFAULT NOW(),
-  fecha_actualizacion TIMESTAMP
+  fecha_actualizacion TIMESTAMP,
+  fecha_evento TIMESTAMPTZ,   -- solo tipo 'evento' (migración portal 006)
+  lugar VARCHAR(255)          -- solo tipo 'evento'
 );
 
 -- Tabla de imágenes de noticias

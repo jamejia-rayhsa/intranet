@@ -50,6 +50,21 @@ Puntos clave (verificados en `docker-compose.supabase.yml`, `config/nginx/*.conf
 
 Orden interno: `supabase-db` -> `supabase-db-init` (one-shot: carga `config/database/init.sql` solo si no existe `public.usuarios`, y siempre aplica migraciones idempotentes `004`, `005` y `007`) -> `supabase-auth` y `supabase-storage` -> backend. El backend espera a que `db-init` termine con éxito.
 
+### Migraciones nuevas con el entorno ya levantado
+
+`supabase-db-init` es un servicio de una sola ejecución: aplica `init.sql` (solo si la BD está vacía) y las migraciones idempotentes **cada vez que se levanta**, no mientras el entorno sigue arriba. Si cambias de rama o haces `git pull` y trae una migración nueva (p. ej. `portal/006-eventos-noticias.sql`), la BD que ya está corriendo **no la tiene** y la app falla al usar las columnas nuevas (síntoma: error al crear/guardar). Hay que volver a ejecutar el `db-init`:
+
+```bash
+# dev
+docker compose -f docker-compose.dev.yml --env-file .env.dev up -d supabase-db-init
+# staging / prod (mismo servicio, su compose y su .env)
+docker compose -f docker-compose.staging.yml --env-file .env.staging up -d supabase-db-init
+```
+
+Comprueba el resultado con `docker logs intranet_supabase_db_init | grep -E "aplicando|listo|ERROR"`. No borra datos ni toca volúmenes; todas las migraciones son idempotentes (`IF NOT EXISTS`). En un despliegue normal (`up -d` completo) ya corre solo.
+
+**Al crear una migración nueva:** además del archivo en `modules/<módulo>/backend/migrations/`, (1) refleja el cambio en `config/database/init.sql` para instalaciones nuevas y (2) agrega en `docker-compose.supabase.yml`, dentro de `supabase-db-init`, el volumen `/sql/<archivo>:ro` y la línea `psql -v ON_ERROR_STOP=1 -f /sql/<archivo>` con su `echo`. Sin ese montaje la migración nunca se aplica.
+
 Variables: plantilla en `.env.supabase.example` (se añaden al `.env.<entorno>`). `POSTGRES_DB` del backend debe ser `postgres`.
 
 ## 3. Secretos

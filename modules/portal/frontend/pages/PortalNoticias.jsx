@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { obtenerNoticiasPublicadas } from '../services/noticias.service';
 import NoticiaCard from '../components/NoticiaCard';
+import ArticleModal from '../components/ArticleModal';
+import { TIPOS_NOTICIA, esBoletin, esMostrable } from '../utils/tiposNoticia';
 
 export default function PortalNoticias() {
   const [noticias, setNoticias] = useState([]);
@@ -8,17 +10,16 @@ export default function PortalNoticias() {
   const [pagina, setPagina] = useState(1);
   const [paginasTotales, setPaginasTotales] = useState(1);
   const [filtroTipo, setFiltroTipo] = useState('');
+  const [modalItem, setModalItem] = useState(null);
 
   useEffect(() => {
     async function cargarNoticias() {
       setCargando(true);
       try {
-        const respuesta = await obtenerNoticiasPublicadas(pagina, 12);
+        const respuesta = await obtenerNoticiasPublicadas(pagina, 12, filtroTipo);
         if (respuesta.exito) {
-          let filtradas = respuesta.datos.noticias;
-          if (filtroTipo) {
-            filtradas = filtradas.filter((n) => n.tipo === filtroTipo);
-          }
+          // El tipo lo filtra el servidor antes de paginar; aquí solo se descarta lo no mostrable (boletín sin imagen)
+          const filtradas = respuesta.datos.noticias.filter(esMostrable);
           setNoticias(filtradas);
           setPaginasTotales(respuesta.datos.paginas_totales);
         }
@@ -39,9 +40,9 @@ export default function PortalNoticias() {
       <div className="noticias-filtros">
         <select value={filtroTipo} onChange={(e) => { setFiltroTipo(e.target.value); setPagina(1); }}>
           <option value="">Todos los tipos</option>
-          <option value="noticia">Noticias</option>
-          <option value="comunicado">Comunicados</option>
-          <option value="oferta_empleo">Ofertas de Empleo</option>
+          {TIPOS_NOTICIA.map((t) => (
+            <option key={t.valor} value={t.valor}>{t.plural}</option>
+          ))}
         </select>
       </div>
 
@@ -53,7 +54,11 @@ export default function PortalNoticias() {
         <>
           <div className="grid-noticias">
             {noticias.map((noticia) => (
-              <NoticiaCard key={noticia.id} noticia={noticia} />
+              <NoticiaCard
+                key={noticia.id}
+                noticia={noticia}
+                onAbrir={(n) => setModalItem({ kind: esBoletin(n) ? 'boletin' : 'evento', noticia: n })}
+              />
             ))}
           </div>
 
@@ -68,6 +73,7 @@ export default function PortalNoticias() {
           </div>
         </>
       )}
+      {modalItem && <ArticleModal item={modalItem} onClose={() => setModalItem(null)} />}
     </div>
   );
 }

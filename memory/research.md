@@ -1466,3 +1466,78 @@ async actualizar(req, res) {
 - `/home/jamejia/intranet/modules/rh/backend/` (patrones a copiar: models, controllers, routes)
 - `/home/jamejia/intranet/modules/portal/backend/package.json` (agregar puppeteer)
 
+
+### [2026-10-14] [investigador] — Noticias, eventos e imágenes: estado actual para 500x750, boletín y carrusel
+**Pregunta:** Estado actual (código y datos) de noticias/eventos para: (a) imagen vertical 500x750 centrada en el área de contenido; (b) categoría "boletín" solo con imagen; (c) varias imágenes por evento en carrusel. Sin diseño de solución.
+
+**Hallazgo:**
+
+**1. Base de datos**
+- Tabla `noticias` (`config/database/init.sql:74-85`; igual en `modules/portal/backend/migrations/001-crear-tablas-portal.sql:55-66`): `id SERIAL`, `titulo VARCHAR(255) NOT NULL`, `subtitulo TEXT`, `contenido TEXT`, `tipo VARCHAR(30)` (línea 79), `fecha_publicacion DATE`, `publicada BOOLEAN DEFAULT false`, `autor_id INT REFERENCES usuarios(id)`, `fecha_creacion`, `fecha_actualizacion`. No hay columna de categoría distinta de `tipo`.
+- Tabla `noticia_imagenes` (`init.sql:88-95`): `id`, `noticia_id INT NOT NULL REFERENCES noticias(id) ON DELETE CASCADE` (línea 90), `ruta_archivo VARCHAR(255) NOT NULL` (91), `nombre_archivo VARCHAR(255)` (92), `orden INT DEFAULT 0` (93), `fecha_subida`. No tiene ancho, alto ni proporción. Ninguna migración de `modules/portal/backend/migrations/` crea `noticia_imagenes`; solo existe en `init.sql` (baseline según `memory/decisions.md:177`).
+- No hay CHECK, enum ni catálogo para `tipo` (`init.sql:79`). Valores que existen en código: `noticia`, `comunicado`, `oferta_empleo` (`modules/portal/frontend/components/NoticiaCard.jsx:3-7,15-19`; `NewsEditorModal.jsx:124-126`; `PortalNoticias.jsx:42-44`; `NewsCarousel.jsx:19`). El backend no valida `tipo`: lo pasa tal cual (`noticia.controller.js:84`), con default `"noticia"` en `noticia.model.js:44`.
+- Sin seed de noticias en `init.sql` (no hay `INSERT INTO noticias`). En dev, según decisión previa, había 3 noticias con 3 imágenes cuyos archivos ya no existen en disco (`memory/decisions.md:66,84`). No se consultó la BD de staging ni producción (investigación solo de lectura de código).
+- Límite de imágenes: 5 por noticia, aplicado en controlador (`noticia.controller.js:4,134-140`) y en UI (`NewsEditorModal.jsx:10,62-63,199`). No hay restricción en BD. El chequeo es "contar y luego insertar" (no atómico, `controller:134-140`). `orden` se asigna como el conteo actual al insertar (`noticia.model.js:166-167`); no hay UI para reordenar.
+- Borrado: `ON DELETE CASCADE` borra filas de imágenes (`init.sql:90`). El controlador además borra los objetos de Storage con limpieza best-effort (`noticia.controller.js:108-117`, `8-15`).
+
+**2. Backend**
+- Rutas (`modules/portal/backend/routes/noticia.routes.js`): públicas sin JWT `GET /publicas`, `GET /publicadas` y `GET /:id` (líneas 12-14). Con JWT (línea 16): `GET /` requiere `Noticias:consulta` (18); `POST /`, `PUT /:id`, `DELETE /:id` y las imágenes requieren `Noticias:edicion` (19-21, 24-34). Montaje en `modules/portal/backend/app.js:41`.
+- **Qué valida crear:** solo `titulo` obligatorio (`noticia.controller.js:76-78`). Actualizar no valida nada (`:96-106`). No hay validación de `tipo`, de fechas ni de `contenido`.
+- **Imágenes:** `multer.memoryStorage()` con filtro por `mimetype` declarado por el cliente (`modules/portal/backend/middleware/upload.noticia.middleware.js:3,14,16`): JPG, PNG, GIF, WebP; límite 5 MB (`:22`). Se sube una imagen por petición, campo `imagen` (`noticia.routes.js:27`). No hay validación de dimensiones, proporción ni comprobación de contenido real (magic bytes). Ni `sharp`, `jimp` ni `canvas` están en `package.json` (solo `multer` en módulos rh/tickets).
+- **Flujo:** clave `claveSegura()` (`modules/portal/backend/services/storage.service.js:205-219`), subida a bucket `noticias` (`:134`), insert en `noticia_imagenes` con compensación si falla (`noticia.controller.js:142-150`). La clave base del nombre no tiene longitud máxima, mientras `ruta_archivo` y `nombre_archivo` son `VARCHAR(255)`: un nombre largo puede fallar al insertar (riesgo, no comprobado).
+- **Respuestas:** listado y detalle devuelven la noticia con `autor_nombre`, `autor_apellido` e `imagenes` (JSON agregado ordenado por `orden, fecha_subida`, `noticia.model.js:3-9`). Cada imagen recibe `url` pública vía `conUrls` (`:13-22`) salvo las legadas `/uploads/`. `GET /publicadas` devuelve `{noticias,total,pagina,limite,paginas_totales}` (`noticia.controller.js:24-33`). La subida devuelve `datos` con `url` (`:151-153`).
+- **Riesgo de publicación:** `GET /api/noticias/:id` es público y `obtenerPorId` no filtra `publicada` (`noticia.model.js:82-92`; `noticia.routes.js:14`). Quien conozca el id puede leer un borrador. No contradice ninguna decisión previa (`memory/decisions.md` no fija visibilidad de borradores), pero es relevante si boletines o eventos se guardan como borrador.
+- **Permisos:** `verificarPermiso('portal','Noticias',…)` en `noticia.routes.js` (líneas 18-34). Hay además `modules/portal/config/portal.permissions.js:43-49` con reglas distintas (p. ej. DELETE solo admin), pero ningún archivo lo importa (grep vacío): config muerta, divergente.
+- **Auditoría:** solo en `POST /` (`noticia.routes.js:19`, `auditoriaMiddleware`). No hay auditoría en PUT, DELETE ni en imágenes (`:20-21,24-34`).
+- **Tests:** solo `modules/portal/backend/tests/storage.service.test.js:17-49` menciona el bucket `noticias`. No hay tests de modelo, controlador, rutas ni middleware de noticias. No existen `modules/portal/tests/` ni `noticia.controller.test.js`/`noticias.integration.test.js` que cita `PLAN.md:209-211`. El frontend no tiene tests unitarios (`memory/decisions.md:126`).
+
+**3. Frontend: vistas que pintan noticias o imágenes y cómo dimensionan hoy**
+- **PortalHome → NewsCarousel** (`pages/PortalHome.jsx:75-80`): carrusel a pantalla completa (`components/NewsCarousel.jsx`). Usa solo `imagenes[0]` (`NewsCarousel.jsx:80`). Contenedor `.news-hero`: alto `calc(100dvh - 56px - 4rem)`, `min-height: 420px` (`styles/rayhsa-system.css:431-441`). Imagen `position:absolute; inset:0; width:100%; height:100%; object-fit:cover` (`:469-476`), es decir, recorte de cobertura al ancho completo de la diapositiva. En móvil `calc(100dvh - 56px - 2rem)` (`:619-627`).
+  - Props: `noticias`, `onOpen`, `verTodasTo='/noticias'` (`NewsCarousel.jsx:31`). Qué incluye: `PortalHome.jsx:59-64` toma todo lo que no sea `oferta_empleo` y limita a 10 (`MAX_PUBLICACIONES`, `:16`). Viene de `obtenerNoticiasPublicadas(1, 50)` (`:53`).
+  - Autoavance: no existe (cero `setInterval`). Navegación por scroll-snap horizontal, flechas (`NewsCarousel.jsx:140-141`), barras (`:122-135`), teclado (`:62-65`) y deslizar.
+  - Etiquetas: `ETIQUETAS` solo cubre `comunicado` y `oferta_empleo` (`:19`). Un tipo nuevo se muestra como texto crudo (`:109`), y se clasifica como `noticia` a efectos de estilo (`:85`).
+  - Sin imagen: fondo `news-hero__sin-imagen` (`rayhsa-system.css:478-485`).
+- **PortalNoticias** (`pages/PortalNoticias.jsx:54-58`): cuadrícula `.grid-noticias` con `repeat(auto-fill, minmax(300px,1fr))` (`styles/globales.css:872-876`). Filtra por tipo en cliente después de paginar en servidor (`PortalNoticias.jsx:16,19-21`): los conteos y páginas no coinciden con el filtro. Opciones de filtro sin boletín (`:41-44`).
+- **NoticiaCard** (`components/NoticiaCard.jsx:22-32`): primera imagen en `.noticia-imagen-preview`, altura fija 130px, `object-fit:cover` (`styles/globales.css:3127-3138`). Tipo desconocido: icono 📄 y etiqueta cruda (`NoticiaCard.jsx:36-38`).
+- **ArticleModal** (`components/ArticleModal.jsx:33-34,56-65`): solo la primera imagen, como `background-image` con `cover` (`:58-62`). Contenedor `.rayhsa-modal__media` con altura fija 220px (`styles/rayhsa-system.css:997-1002`), `.rayhsa-modal` de ancho máx. 760px (`:959-963`); en ≤640px la altura pasa a 160px (`:2017-2024`). Solo distingue `comunicado` del resto (`PortalHome.jsx:78`). Los botones "Marcar como leído", "Compartir" y "Descargar PDF" no tienen `onClick` (`ArticleModal.jsx:83-84,128`).
+- **NewsEditorModal** (`components/NewsEditorModal.jsx`): selector de tipo con 3 opciones (`:121-128`). Máx. 5 imágenes (`:10,62-63`). Cada subida es una imagen a la vez (`:55-78`, input sin `multiple`, `:202-209`). Exige guardar antes de subir (`:58-61,172-176`). Miniaturas de 80x60 con `cover` (`styles/globales.css:3077-3089`).
+- **PortalAdminNoticias** (`pages/PortalAdminNoticias.jsx:72-109`): tabla sin miniaturas; muestra `noticia.tipo` crudo (`:87`); carga hasta 100 (`:20`).
+- **Otros lugares:** `urlImagenNoticia` (`utils/storage.js:4-12`) solo usa `imagen.url` del backend o construye la URL pública. No hay otro carrusel reutilizable: `JobsTicker` es una cinta de texto para vacantes (`components/JobsTicker.jsx`). `App.jsx` duplica rutas de noticias (`:8,88`) pero no lo importa nadie (`index.html:14` carga `/main.jsx`): código muerto.
+- **Área de contenido:** `main.app-contenido` (`main.jsx:142`) dentro de `.app-main` con `margin-left: var(--ancho-sidebar)` (`styles/rayhsa-system.css:182-187`; `--ancho-sidebar: 220px` en `:41`) y padding `1.5rem 2rem 2rem` (`:295-300`). Sin sesión se usa `main.contenido-principal` (`main.jsx:121`; `globales.css:503-507`). Ancho útil de escritorio ≈ viewport − 284 px.
+- **Clases de modo móvil:** `.rayhsa.is-mobile` (`rayhsa-system.css:1175-1233`) e `is-tablet` (`:1444-1508`) no se aplican en ningún JSX (grep vacío). Solo funcionan las `@media` (768, 640, 480 px).
+
+**4. Eventos**
+- "Evento" **no existe** como concepto de noticias: no es `tipo`, no es tabla ni módulo. Tipos reales: `noticia`, `comunicado`, `oferta_empleo`. "Eventos" aparece solo en la bitácora de auditoría (`modules/auditoria/frontend/pages/AuditoriaDashboard.jsx:58,68-80`) y como etiqueta de gráfica (`modules/portal/frontend/components/GraficaBarras.jsx:5`). `PLAN.md` no define eventos para noticias.
+- "Boletín" solo aparece en `docs/UI/modules/portal/frontend/components/ComunicadosGrid.jsx:17` (título de sección "Comunicados y boletines"), en un mockup de docs que la app no importa. No hay boletín en código vivo.
+
+**5. Riesgos y restricciones**
+- **Redimensionado:** no hay redimensionado ni recorte en servidor (sin librería de imágenes) ni en cliente. Todo es CSS. El tamaño 500x750 no puede garantizarse con el código actual.
+- **Imágenes horizontales existentes con 500x750 forzado:** con `cover`, una imagen 3:2 o 16:9 se escala por altura y se recorta por los lados; una 2:3 se recorta por arriba y abajo. Como la BD no guarda dimensiones (`init.sql:88-95`), no se sabe la proporción de lo ya subido sin leer los archivos de Storage.
+- **Cálculo de recorte en el carrusel de escritorio** (viewport 1280x1024, a modo de ejemplo): área ≈ 996x904 px. Una imagen 2:3 con `cover` se escala a ~996x1494 y muestra ~60% de su altura. Con `contain` quedarían franjas laterales grandes.
+- **Modal:** imagen 2:3 en 760x220 con `cover` muestra ~19% de su altura (escala a 760x1140).
+- **Tarjeta:** preview de 130 px de alto con `cover`: recorte fuerte para vertical.
+- **Límites de tamaño:** Storage (`noticias`) limita 5 MB y 4 MIME (`storage.service.js:55-60`). La creación del bucket es idempotente: si ya existe, `asegurarBuckets` solo avisa cuando `public` no coincide y **no actualiza `file_size_limit` ni `allowed_mime_types`** (`:182-203`). Cambiar la configuración no afecta al bucket de producción ya creado.
+- **nginx (prod):** `docker-compose.prod.yml:90` monta `config/nginx/nginx.conf`. Ahí `client_max_body_size 50m` solo está en la ruta `/storage/v1/` (`nginx.conf:63`), no en `/api/`, así que aplica el valor por defecto de 1 MB. Una imagen de más de 1 MB que suba por `/api/noticias/:id/imagenes` recibe un 413 en HTML antes de multer (que acepta 5 MB). Como `subirImagenNoticia` hace `respuesta.json()` sin comprobar el estado (`noticias.service.js:49`), el usuario verá un error de parseo genérico. Staging usa `nginx.spa.conf` con `client_max_body_size 50m` a nivel servidor (`:7`, `Dockerfile.frontend:53`); dev usa el proxy de Vite sin límite visible.
+- **Móvil:** el carrusel depende de `100dvh` y de `min-height: 420px`. Un 500 px fijo no cabe en pantallas de ~360-430 px de ancho: el objetivo "500x750" solo puede ser proporción 2:3 con ancho relativo (no px fijos). Las reglas `is-mobile`/`is-tablet` no están activas (ver 3).
+- **Multer:** `memoryStorage` con 5 MB por petición; el filtro usa el tipo MIME del cliente, sin validar contenido.
+- **Tests:** ninguna protección automatizada del flujo de imágenes ni del frontend. Cualquier cambio de proporción o de tipos no tendría red de pruebas.
+
+**6. Preguntas abiertas para producto (no deducibles del código)**
+1. Proporción 2:3: ¿recorte (cover), franjas (contain) o fondo desenfocado? ¿Los 500x750 son píxeles fijos o solo la proporción?
+2. ¿Se valida la proporción al subir (rechazar o pedir recorte), se redimensiona en servidor (nueva dependencia, p. ej. `sharp`) o solo se muestra?
+3. ¿Qué pasa con las imágenes horizontales ya subidas: recortarlas, mostrarlas con franjas o pedir resubida?
+4. Boletín: ¿es un tipo nuevo (valor `boletin` en `tipo`, sin enum en BD)? ¿Debe aparecer en el carrusel de inicio (hoy entra todo lo que no es `oferta_empleo`)? ¿Tiene una o varias imágenes? ¿Al hacer clic abre algo o no hace nada? ¿Aparece en `/noticias` y en el filtro?
+5. Evento: ¿es un tipo nuevo de noticia o una entidad aparte? ¿Requiere campos propios (fecha del evento, lugar)? ¿Va al carrusel principal o solo a su propia vista?
+6. Varias imágenes por evento: ¿el carrusel es dentro de la tarjeta/modal del evento o es el carrusel principal? ¿Autoavance? ¿Se mantiene el máximo de 5? ¿Hace falta reordenar (hoy el orden es el de subida)?
+7. ¿Se mantiene el límite de 5 MB por imagen? ¿Se corrige el límite de 1 MB de nginx en `/api/` (prod)?
+8. Permisos: ¿quién crea boletines o eventos (hoy cualquiera con `Noticias:edicion`)? ¿Se restringe la lectura por id de borradores?
+9. ¿Las tarjetas de `/noticias` también pasan a 2:3 o solo el carrusel y el modal?
+10. Los 3 archivos de dev ya no existen: ¿se resubirán a mano?
+
+**Implicación:**
+- Para las fases, el primer bloque es de CSS y de modelo de presentación (proporción, carrusel, modal, tarjeta), sin tocar BD. Cualquier garantía de 500x750 necesita una decisión sobre procesado de imagen (CSS vs servidor + dependencia), porque hoy no existe.
+- Boletín es un valor nuevo de `tipo` sin cambios de BD, pero el frontend tiene que decidir cómo lo trata el carrusel (hoy entra por defecto y su etiqueta sería cruda). Evento no existe: es decisión de producto y puede implicar tabla o campos nuevos.
+- El carrusel de imágenes por evento tiene soporte parcial en BD (1:N con `orden`, máx. 5 por API), pero el frontend solo muestra la primera imagen en tres lugares. Es el mayor cambio de UI pendiente.
+- Antes de cambiar límites hay que corregir nginx de prod (`/api/` sin límite, 1 MB) y tener en cuenta que `asegurarBuckets` no actualiza buckets existentes.
+- Riesgos a incluir en el plan: visibilidad por id de borradores (`noticia.routes.js:14`), auditoría incompleta (solo POST), config de permisos muerta (`portal.permissions.js`), y cero tests de noticias.
+- Ningún hallazgo contradice una decisión previa: no se escribió entrada CONFLICTO.
