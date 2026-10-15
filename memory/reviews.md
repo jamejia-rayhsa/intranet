@@ -2206,3 +2206,57 @@ Sin fallos. Falla preexistente (no relacionada): 2 tests de empleado.controller.
 **Lo que requiere Postgres real o navegador (no verificado aquí):** paginación con `?tipo=` y desempate (F2); FOR UPDATE y no deadlock entre subida y reordenar; ROLLBACK real; filtro `noticia_id` en DELETE; `ORDER BY` de imágenes; TIMESTAMPTZ; límites de nginx con una subida real de 5 MB y 10 MB en staging; foco del modal en navegador y lector de pantalla.
 
 **Pendiente para el orquestador:** nada crítico ni alto. Recomiendo corregir F1 (la auditoría de contenido contradice la política de la fase) y F2 (paginación) antes del GO a staging; el resto puede ir como deuda con la nota en roadmap.
+
+### [2026-10-15] [revisor] — Calendario laboral Fase 2: revisión general (APROBADO CON OBSERVACIONES; sin críticos; 1 alto preexistente escalado; 3 medios, 2 bajos)
+**Archivo/línea:** modules/rh/backend/{migrations/009-calendario-laboral.sql, models/calendarioLaboral.model.js, controllers/calendarioLaboral.controller.js, routes/calendario.routes.js, tests/calendarioLaboral.test.js, tests/calendario-migracion.test.js}, config/database/init.sql:667-783, docker-compose.supabase.yml:83,106, modules/portal/backend/app.js:49
+**Problema:** revisión de la Fase 2 contra decisions.md (2026-10-15) y code-notes.md. Verificado: SQL parametrizado (columnas fijas, valores en `$n`); `to_char` y `Date.UTC` sin desfase de zona; 400/409/404/500 sin `error.message` al cliente; `rh_empleado` solo `Calendario:consulta` y 403 real en escritura (`verificarPermiso` no mockeado en los tests); `portal_admin` sin `Departamentos`; `departamento_id` con backfill; `cupo_vacaciones INT NOT NULL DEFAULT 1 CHECK (>= 1)`; auditoría INSERT/UPDATE/DELETE desde el controlador sin descripción; `ON CONFLICT` respaldado por PK de `rol_opcion_permisos` y `UNIQUE(modulo_id,nombre)`; cuerpo SQL de init.sql (líneas 667-783) idéntico al de 009 (solo cambia la cabecera, comprobado con diff); compose y app.js correctos. Los 14 festivos son correctos (1.er lunes feb 2026-02-02 / 2027-02-01; 3.er lunes mar 2026-03-16 / 2027-03-15; 3.er lunes nov 2026-11-16 / 2027-11-15; fijos 1-may, 16-sep, 25-dic, 1-ene). Jest: `calendarioLaboral.test.js` + `calendario-migracion.test.js` = 56/56 OK.
+**Severidad:** medio (veredicto global)
+**Fix sugerido:** aplicar los hallazgos F2-F6 antes de la Fase 4; F1 requiere decisión del humano/orquestador. Sin cambios de código hechos por el revisor.
+
+### [2026-10-15] [revisor] — F1: portal_admin puede auto-otorgarse cualquier permiso de RH (preexistente, escalado)
+**Archivo/línea:** config/database/init.sql:412-421 (portal_admin = todas las opciones de `portal`, incluida `Roles` consulta+edición); modules/portal/backend/routes/permiso.routes.js:43-60 (PUT `/rol/:rol_id/modulo/:modulo` guarda cualquier módulo; solo exige `portal/Roles:edicion`)
+**Problema:** decisión 8 de decisions.md limita a portal_admin a la opción `Calendario` "sin otros permisos de RH", pero con `portal/Roles:edicion` puede escribir `rol_opcion_permisos` de cualquier rol y darse `rh/Vacaciones`, `rh/Empleados`, `rh/Departamentos`, etc. El límite de la decisión no se cumple en la práctica; el diff no lo empeora (portal_admin ya tenía ese camino), pero la Fase 2 le concede `Calendario:edicion` apoyándose en esa restricción.
+**Severidad:** alto
+**Fix sugerido:** (decisión del humano) o bien (a) que PUT de permisos exija que el usuario tenga la opción de cada módulo que modifica, o que solo `super_admin` edite módulos distintos de `portal`; o bien (b) registrar en decisions.md que portal_admin puede administrar permisos de RH y ajustar la decision 8. ESCALADO al orquestador.
+
+### [2026-10-15] [revisor] — F2: el cupo de vacaciones no se puede editar desde la API ni la UI
+**Archivo/línea:** modules/rh/backend/models/departamento.model.js:4-9 (crear) y :20-47 (actualizar, ignora `cupo_vacaciones`); modules/rh/backend/routes/departamentos.routes.js:9-13
+**Problema:** la columna `departamentos.cupo_vacaciones` existe y `obtenerTodos` la devuelve (`d.*`), pero ningún endpoint la escribe ni la valida. La decisión 1 pide que la opción `Departamentos` se siembre "para poder editarlo", y hoy RH solo podría cambiar el cupo con SQL directo.
+**Severidad:** medio
+**Fix sugerido:** aceptar `cupo_vacaciones` en crear/actualizar de departamentos (entero >= 1, si no 400 con mensaje claro) con prueba; o registrar en roadmap.md que se completa antes de la Fase 4 (que es la que lo consume).
+
+### [2026-10-15] [revisor] — F3: los festivos borrados por RH reaparecen en cada despliegue
+**Archivo/línea:** modules/rh/backend/migrations/009-calendario-laboral.sql:99-114; config/database/init.sql:768-783; docker-compose.supabase.yml:106-107 (db-init re-ejecuta 009 en cada `up`, ver docs/supabase.md:55)
+**Problema:** la semilla usa `ON CONFLICT (fecha, tipo) DO NOTHING`. Desactivar un festivo (`activo=false`) sobrevive, pero si RH lo BORRA, el siguiente `supabase-db-init` lo vuelve a insertar. Es un efecto silencioso en cada despliegue.
+**Severidad:** medio
+**Fix sugerido:** sembrar solo una vez (tabla de control o marca de versión de semilla) y documentar en docs/supabase.md que el calendario se corrige con `activo=false`, no borrando; o añadir a la API la regla de no borrar festivos oficiales.
+
+### [2026-10-15] [revisor] — F4: el backfill de departamento_id se re-ejecuta en cada despliegue y no refleja el departamento al solicitar
+**Archivo/línea:** modules/rh/backend/migrations/009-calendario-laboral.sql:37-43; config/database/init.sql:708-714; (ausencia) modules/rh/backend/models/solicitudVacaciones.model.js y controllers/vacaciones.controller.js no escriben `departamento_id` (grep sin resultados)
+**Problema:** (a) el UPDATE se ejecuta en cada db-init y rellena `departamento_id` NULL con el departamento ACTUAL del empleado, así que también captura solicitudes creadas después de la migración; si un empleado cambió de área entre despliegues, su histórico se reasigna. (b) La decisión 5 pide guardar `departamento_id` al crear la solicitud; eso aún no ocurre, así que toda solicitud nueva queda NULL hasta el siguiente despliegue. Hoy no hay consumidor (el cupo es Fase 4), por eso es medio y no alto.
+**Severidad:** medio
+**Fix sugerido:** escribir `departamento_id` (el del empleado al crear) en el INSERT de `solicitudVacaciones`, con prueba; y limitar el backfill a una sola pasada (p. ej. solo filas con `fecha_solicitud` anterior a la migración, o con bandera de semilla). Antes de la Fase 4.
+
+### [2026-10-15] [revisor] — F5: tests de migración por regex; no comparan init.sql con 009 y el test de festivos es circular
+**Archivo/línea:** modules/rh/backend/tests/calendario-migracion.test.js:19-42 (regex sobre ambos archivos), :56-59 (permisos de init.sql solo por dos regex), :13-16 (lista de festivos duplicada del propio SQL)
+**Problema:** nada detecta que init.sql y 009 diverjan (hoy son idénticos, lo comprobé con diff), y el test de festivos compara el SQL contra la misma lista escrita a mano: no valida que las fechas sean las correctas (lo hice a mano: son correctas).
+**Severidad:** medio
+**Fix sugerido:** comparar el cuerpo de ambos bloques normalizado (quitando cabeceras y espacios) y generar las fechas de referencia con la regla (n-ésimo lunes, fijos) en lugar de listarlas.
+
+### [2026-10-15] [revisor] — F6: el SQL real (CHECK, UNIQUE, ON CONFLICT, to_char, idempotencia) no tiene prueba automática
+**Archivo/línea:** modules/rh/backend/tests/calendarioLaboral.test.js:44-57 (mock de `grupo.query`), :100-107 (`to_char` solo se comprueba como texto del SQL)
+**Problema:** 56 pruebas con mocks prueban controlador, validación y permisos (verificarPermiso real, bien), pero no que Postgres aplique CHECK/UNIQUE, que la migración sea idempotente o que `to_char` devuelva `YYYY-MM-DD`. Esto se verificó a mano con Postgres 16 desechable (code-notes), no en CI.
+**Severidad:** medio
+**Fix sugerido:** prueba de integración opcional (docker-compose.test.yml) que aplique init.sql y 009 dos veces y compruebe 14 festivos, 23505 en duplicado, CHECK cupo>=1 y `fecha` devuelta como texto.
+
+### [2026-10-15] [revisor] — F7: departamento.controller.js devuelve error.message al cliente (preexistente, ahora alcanzable por rh_admin)
+**Archivo/línea:** modules/rh/backend/controllers/departamento.controller.js:15, :36, :59, :78, :102
+**Problema:** las respuestas de error incluyen `error: error.message` (en importar, `error` de Postgres se filtra). Antes solo `super_admin` pasaba; con el permiso `Departamentos` sembrado, `rh_admin` también llega ahí. El diseño de calendario sí lo evita.
+**Severidad:** bajo
+**Fix sugerido:** quitar `error.message` de las respuestas y dejar el detalle en console, como en calendarioLaboral.controller.js:79-82.
+
+### [2026-10-15] [revisor] — F8: pendientes para la Fase 4 (no son hallazgos de Fase 2)
+**Archivo/línea:** modules/rh/backend/controllers/calendarioLaboral.controller.js (sin auditoría de bloqueos); modules/rh/backend/controllers/vacaciones.controller.js (sin revalidación de cupo al aprobar)
+**Problema:** la decisión 9 pide auditar los rechazos por cupo y la 2 revalidar al aprobar; ambos son alcance de la Fase 4 y todavía no existen. Se anota para que no se pierdan.
+**Severidad:** bajo
+**Fix sugerido:** incluirlos en el plan de la Fase 4 (auditar rechazos por cupo con `registrarAccion` verificado, guardia `WHERE estatus='pendiente'` y bloqueo al aprobar).

@@ -46,6 +46,7 @@ app.use("/api/rh", require("../../rh/backend/routes/rh.dashboard.routes"));
 app.use("/api/empleados", require("../../rh/backend/routes/empleados.routes"));
 app.use("/api/permisos-rh", require("../../rh/backend/routes/permisos.routes"));
 app.use("/api/vacaciones", require("../../rh/backend/routes/vacaciones.routes"));
+app.use("/api/calendario-laboral", require("../../rh/backend/routes/calendario.routes"));
 app.use("/api/recibos", require("../../rh/backend/routes/recibos.routes"));
 app.use(
   "/api/expediente",

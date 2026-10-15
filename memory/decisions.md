@@ -809,3 +809,41 @@ Nota operativa: `npm test` reutiliza imágenes ya construidas; para probar cambi
 **No verificado:** subida real de una imagen a Storage, sesión real de principio a fin, crear un evento/boletín desde la interfaz de staging, GPU real y WebKit. Lo prueba el humano.
 **Trampas de esta ronda:** (a) las consultas SQL con comillas dentro de `ssh '...'` y `set -e` se rompen y cortan el script: usar un archivo `.sql` copiado con `scp`; (b) el `db-init` solo corre al levantar: en entornos ya arriba (dev o staging) hay que re-ejecutar `supabase-db-init` (documentado en `docs/supabase.md`); (c) un PR con `eslint-plugin-react` cambia el lockfile con ~95 paquetes: comprobar que no se quitan paquetes y que `npm ci --dry-run` pasa.
 **Pendiente:** migrar producción (la migración 006 se aplicará con el `db-init`; seguir el checklist de `docs/notificaciones.md`), prueba manual en staging y la deuda menor listada en roadmap.md.
+
+### [2026-10-15] orquestador — Calendario laboral y bloqueo de vacaciones por departamento: decisiones del humano
+**Contexto:** tarea "calendario laboral" (fechas oficiales/otorgadas/eventos) para que una solicitud no tome fechas ya concedidas a un compañero del mismo departamento. No hay plan previo en PLAN.md: las fases son propuesta del orquestador y cada una exige GO del humano.
+**Decisiones (del humano):**
+1. "Concedida" = solo solicitudes con estatus `aprobado` (las pendientes no bloquean).
+2. Bloqueo por `departamento_id` con **cupo configurable** (máx. de personas del departamento de vacaciones a la vez).
+3. Tipos de fecha del calendario: **oficial de ley** (no se descuenta del saldo), **descanso otorgado** (no se descuenta del saldo), **evento** (informativo, no bloquea; incluye actividades laborales como inventario físico, fin de año, Navidad, Independencia). Todas aplican a **toda la empresa** (sin alcance por departamento/ubicación).
+4. Los días de vacaciones pasan a **días hábiles**: semana laboral lunes a viernes, excluyendo oficiales y otorgadas.
+5. Solicitudes existentes: **se mantienen como están** (sin recalcular histórico); la validación de traslape y el nuevo cálculo aplican hacia adelante.
+6. Administran el calendario **solo RH y Administradores**.
+7. Rama de trabajo: `feat/calendariolaboral-vacaciones`.
+**Pendiente de precisar (investigador/coder lo proponen, humano confirma):** dónde vive el cupo (por departamento vs. global con override), si un evento puede coincidir con vacaciones sin avisar, y cómo se trata una solicitud que cruza un día de evento.
+
+### [2026-10-15] orquestador — Respuestas a las preguntas abiertas de la Fase 1 (el humano delegó en las recomendaciones del orquestador) y GO a la Fase 2
+**Decisión (del humano):** "avanza con tus recomendaciones y Go fase 2".
+**Recomendaciones adoptadas:**
+1. Cupo = columna `departamentos.cupo_vacaciones INT NOT NULL DEFAULT 1 CHECK (>= 1)` (máx. de personas del departamento de vacaciones a la vez). Valor inicial 1 en todos. Opción `Departamentos` se siembra para `rh_admin` para poder editarlo.
+2. Al **aprobar** se revalida cupo y saldo dentro de transacción con bloqueo y guardia `WHERE estatus='pendiente'`; si ya no cabe, se rechaza la aprobación con mensaje claro y RH decide (no se rechaza sola la solicitud). Misma validación de cupo al crear.
+3. Las aprobadas anteriores sí cuentan para el cupo (son `aprobado`), sin recalcular sus días.
+4. Días hábiles: lun-vie, sin oficiales ni otorgadas; se puede iniciar/terminar en día no hábil (solo cuentan los hábiles); solicitud con 0 días hábiles se rechaza; el periodo sigue siendo el año de `fecha_inicial`. Fechas se comparan como texto `YYYY-MM-DD` (nada de `new Date(texto).getFullYear()`).
+5. Se guarda `departamento_id` en la solicitud al crearla (el del empleado en ese momento); filas existentes se rellenan por JOIN a `empleados`.
+6. Se mantiene la regla de no traslape del mismo empleado (pendientes + aprobadas).
+7. Todos los empleados **leen** el calendario; los eventos avisan en la pantalla de solicitud sin bloquear. Solo RH/Administradores lo **editan**.
+8. "Administradores" = `rh_admin`, `super_admin` y `portal_admin` (este último solo con la opción `Calendario`, sin otros permisos de RH).
+9. Se auditan altas/cambios/bajas del calendario y los rechazos por cupo.
+10. Se siembran los festivos oficiales de ley de México 2026 y 2027 (editables por RH).
+**Fase 2 (alcance):** migración (calendario_laboral, cupo, departamento_id), permisos, CRUD API con auditoría, semilla y tests. NO incluye días hábiles ni bloqueo (Fase 4) ni pantalla (Fase 3).
+
+### [2026-10-15] [tester] — PARA RESOLVER (menor, opcional, preexistente): JSON malformado devuelve 500 en lugar de 400 en todo el backend del portal
+Con el calendario laboral (Fase 2) no hay fallos. Al probar `POST /api/calendario-laboral` con cuerpo `{no es json` el backend responde 500 "Error interno del servidor" y registra `Error no controlado: SyntaxError`. Causa: el manejador global de errores de `modules/portal/backend/app.js` (`app.use((error, req, res, next)`) convierte todo en 500 e ignora `error.status`/`error.type === 'entity.parse.failed'` de `express.json()`. Afecta a todas las rutas, no es del calendario ni lo introdujo esta fase. No filtra detalle al cliente. Decisión pedida al orquestador: dejarlo (deuda) o responder 400 `{exito:false,mensaje:"JSON inválido"}` para `entity.parse.failed`. Detalle y evidencia: tests.md, "API /api/calendario-laboral contra Postgres real". Observación aparte (no es fallo): las solicitudes sin departamento del empleado quedan con `departamento_id` NULL tras el backfill; la Fase 4 debe decidir cómo tratarlas.
+
+### [2026-10-15] orquestador — Fase 2 (calendario laboral: BD, API, permisos, auditoría, semilla) lista para GO/NO-GO
+**Quién escribió qué:** coder (migración 009, API `/api/calendario-laboral`, tests, y correcciones F2/F3/F4-parcial/F5/F7) → code-notes.md; revisor (APROBADO CON OBSERVACIONES, 0 críticos) → reviews.md; tester (Postgres 16 y supabase/postgres 17.6, `supabase-db-init` real, API real con 4 zonas horarias) → tests.md.
+**Resultado:** tabla `calendario_laboral` (oficial/otorgado/evento, UNIQUE fecha+tipo), `departamentos.cupo_vacaciones` (default 1, CHECK >= 1, editable por la API de departamentos), `solicitudes_vacaciones.departamento_id` con backfill solo de NULL, permiso `Calendario` (lectura para todos; escritura rh_admin, super_admin, portal_admin), `Departamentos` sembrado para rh_admin, 14 festivos MX 2026-2027 sembrados solo si la tabla está vacía, auditoría de alta/edición/baja. Desviación: `rol_opcion_permisos.tipo` solo admite `consulta`/`edicion`, así que alta/cambio/baja usan `edicion`.
+**Verificación del orquestador:** jest 29/29 suites (465 tests), eslint 0 errores.
+**PARA RESOLVER (humano):** (1) F1 preexistente, alto: `portal_admin` tiene `Roles:edicion` y puede otorgarse permisos de RH (contradice la decisión 8); (2) JSON malformado → 500 en el manejador global (preexistente, menor).
+**Pendiente para la Fase 4:** escribir `departamento_id` al crear la solicitud y decidir qué hacer con solicitudes de empleados sin departamento (NULL); revalidación al aprobar; auditoría de rechazos por cupo; concurrencia de dos POST del mismo (fecha, tipo) sin probar. Sin verificar: tokens reales de GoTrue/Microsoft, datos reales de dev/staging/prod, frontend de departamentos.
+**Despliegue:** en entornos ya levantados hay que re-ejecutar `supabase-db-init` (docs/supabase.md:55).

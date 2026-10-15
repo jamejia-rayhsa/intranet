@@ -2,6 +2,14 @@ const { grupo } = require("../config/database");
 
 const Departamento = {
   async crear(datos) {
+    if (datos.cupo_vacaciones !== undefined) {
+      return (
+        await grupo.query(
+          `INSERT INTO departamentos (nombre, descripcion, cupo_vacaciones) VALUES ($1, $2, $3) RETURNING *`,
+          [datos.nombre, datos.descripcion || null, datos.cupo_vacaciones]
+        )
+      ).rows[0];
+    }
     const consulta = `INSERT INTO departamentos (nombre, descripcion) VALUES ($1, $2) RETURNING *`;
     return (
       await grupo.query(consulta, [datos.nombre, datos.descripcion || null])
@@ -41,6 +49,11 @@ const Departamento = {
       valores.push(datos.activo);
       c++;
     }
+    if (datos.cupo_vacaciones !== undefined) {
+      campos.push(`cupo_vacaciones = $${c}`);
+      valores.push(datos.cupo_vacaciones);
+      c++;
+    }
     valores.push(id);
     const consulta = `UPDATE departamentos SET ${campos.join(", ")} WHERE id = $${c} RETURNING *`;
     return (await grupo.query(consulta, valores)).rows[0];
@@ -75,7 +88,8 @@ const Departamento = {
         insertados++;
         existentes.add(fila.nombre.toLowerCase());
       } catch (e) {
-        errores.push({ fila, error: e.message });
+        console.error("[departamentos] importar", e);
+        errores.push({ fila, error: "No se pudo insertar el departamento" });
       }
     }
 

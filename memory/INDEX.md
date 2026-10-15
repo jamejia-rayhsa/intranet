@@ -13,6 +13,12 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-15] orquestador → decisions.md — Fase 2 lista para GO/NO-GO (calendario laboral: BD, API, permisos, semilla); pendientes F1 y JSON malformado
+- [2026-10-15] revisor → reviews.md — Calendario laboral Fase 2: revisión (APROBADO CON OBSERVACIONES; sin críticos; 1 alto preexistente escalado: portal_admin puede auto-otorgarse permisos de RH; medios F2-F6)
+- [2026-10-15] coder → code-notes.md — Calendario laboral Fase 2: migración 009, API /api/calendario-laboral, permisos Calendario/Departamentos, semilla de 14 festivos y 56 tests
+- [2026-10-15] orquestador → decisions.md — Recomendaciones adoptadas para el cupo, aprobación, días hábiles y permisos; GO a la Fase 2
+- [2026-10-15] investigador → research.md — Vacaciones y calendario laboral: flujo actual, fechas, permisos, cupo y frontend
+- [2026-10-15] orquestador → decisions.md — Calendario laboral y bloqueo de vacaciones por departamento: decisiones del humano
 - [2026-10-09] orquestador → decisions.md — Nombre de usuarios de Microsoft completado desde el proveedor (scope profile + sincronización solo con apellido vacío)
 - [2026-10-09] orquestador → decisions.md — Staging migrado a Supabase (ejecución real, verificado por dominio público y Chromium); reversa disponible
 - [2026-10-09] orquestador → decisions.md — CI reparado antes del despliegue: lint 0 errores, scripts en la imagen del backend, npm test 78/78
@@ -127,3 +133,8 @@
 - [2026-10-15] tester → tests.md — Confirmación del foco con ←/→ y de los hallazgos de axe (foco RESUELTO en Chromium + Firefox; CarruselImagenes y trampa de Tab en los 4 modales OK; axe: corregido lo pedido, quedan 3 hallazgos menores de contraste/nombre; jest 387/387, eslint 0 errores; repo sin axe-core)
 - [2026-10-15] orquestador → decisions.md/roadmap.md — eslint-plugin-react instalado y carrusel de Inicio accesible por teclado; axe restante como deuda (paleta previa)
 - [2026-10-15] orquestador → decisions.md/roadmap.md — Despliegue a staging del plan de noticias (PR #9, d278a9a): pasos, verificación, trampas y pendientes
+- [2026-10-15] tester → tests.md — Calendario laboral Fase 2: migración 009 e init.sql en Postgres real (supabase/postgres 17.6 + pg16 desechables, db-init real x2, idempotente, 14 festivos, cupo, backfill, permisos); sin fallos
+- [2026-10-15] tester → tests.md — Calendario laboral Fase 2: API /api/calendario-laboral con servidor y Postgres reales (105 comprobaciones x 4 zonas horarias; fechas sin desfase, 403 empleado, 409/400/404, auditoría exacta); 1 FAIL menor preexistente (JSON malformado -> 500)
+- [2026-10-15] tester → tests.md — Calendario laboral Fase 2: regresión (jest 28 suites / 443 tests, eslint 0 errores)
+- [2026-10-15] tester → decisions.md — PARA RESOLVER: JSON malformado devuelve 500 en lugar de 400 en el backend del portal (menor, preexistente)
+- [2026-10-15] [coder] Correcciones de la revisión de la Fase 2 (cupo en API departamentos, semilla NOT EXISTS, tests de paridad) -> code-notes.md

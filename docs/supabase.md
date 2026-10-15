@@ -50,6 +50,8 @@ Puntos clave (verificados en `docker-compose.supabase.yml`, `config/nginx/*.conf
 
 Orden interno: `supabase-db` -> `supabase-db-init` (one-shot: carga `config/database/init.sql` solo si no existe `public.usuarios`, y siempre aplica migraciones idempotentes `004`, `005` y `007`) -> `supabase-auth` y `supabase-storage` -> backend. El backend espera a que `db-init` termine con éxito.
 
+Nota sobre la semilla de festivos (`rh/009-calendario-laboral.sql`): solo inserta los festivos oficiales 2026-2027 si `calendario_laboral` está vacía, así que un festivo borrado por RH no reaparece al relanzar `db-init`; si se vacía por completo la tabla, la siguiente ejecución volverá a sembrarlos.
+
 ### Migraciones nuevas con el entorno ya levantado
 
 `supabase-db-init` es un servicio de una sola ejecución: aplica `init.sql` (solo si la BD está vacía) y las migraciones idempotentes **cada vez que se levanta**, no mientras el entorno sigue arriba. Si cambias de rama o haces `git pull` y trae una migración nueva (p. ej. `portal/006-eventos-noticias.sql`), la BD que ya está corriendo **no la tiene** y la app falla al usar las columnas nuevas (síntoma: error al crear/guardar). Hay que volver a ejecutar el `db-init`:

@@ -45,3 +45,17 @@
 - **Candidatos diferidos de la Fase 3 (bajos):** atomicidad del límite de imágenes y `MAX(orden)+1` bajo concurrencia · validación del reorden dentro de la transacción y auditoría de las rutas de imágenes · fechas sin zona en la API · slides de Inicio no enfocables por teclado · aplicar la migración 006 en staging con el `db-init` y probar subida real a Storage.
 - **Candidatos diferidos de las Fases 1-2 (bajos salvo H5):** H3 coste del blur con 50 tarjetas (medir en staging) · H4 warnings falsos de ESLint (`react/jsx-uses-vars`) · H5 filtro de `/noticias` aplicado tras paginar en servidor (medio) · `GET /api/noticias/admin` sin id cae en `/:id` y devuelve 500 con `error.message` de Postgres · `paraPublico` debería listar en blanco también los campos de `imagenes[]` (`nombre_archivo`, `ruta_archivo`, `noticia_id`) · PUT sin `auditoriaMiddleware` · foco del visor/modales · carrera del límite de 1 imagen · `obtenerNoticiaAdmin` sin consumidor y `portal.permissions.js` sin uso · tests de ruta frágiles (`router.stack`).
 - **Puerta:** GO del humano antes de mergear/desplegar.
+
+---
+
+# Tarea: Calendario laboral y bloqueo de vacaciones por departamento (2026-10-15)
+> Rama `feat/calendariolaboral-vacaciones`. Fases = PROPUESTA del orquestador; cada una cierra con GO del humano. Decisiones en decisions.md (2026-10-15).
+
+## Estado global
+- **Fase actual:** 2 LISTA PARA GO/NO-GO (commit hecho en la rama). **Actualizado:** 2026-10-15
+
+## Fase 1 — Investigación — CERRADA (research.md 1545-1638)
+## Fase 2 — Calendario laboral: BD, backend, permisos, auditoría, semilla de festivos MX — LISTA PARA GO/NO-GO (coder + revisor APROBADO CON OBSERVACIONES + tester; ver decisions.md)
+## Fase 3 — Pantalla de administración del calendario (RH/Admin) — NO INICIADA
+## Fase 4 — Días hábiles + bloqueo por departamento con cupo + fechas ocupadas en el selector — NO INICIADA
+## Fase 5 — Revisión, pruebas y cierre — NO INICIADA

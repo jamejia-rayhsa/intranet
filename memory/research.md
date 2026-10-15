@@ -1541,3 +1541,98 @@ async actualizar(req, res) {
 - Antes de cambiar límites hay que corregir nginx de prod (`/api/` sin límite, 1 MB) y tener en cuenta que `asegurarBuckets` no actualiza buckets existentes.
 - Riesgos a incluir en el plan: visibilidad por id de borradores (`noticia.routes.js:14`), auditoría incompleta (solo POST), config de permisos muerta (`portal.permissions.js`), y cero tests de noticias.
 - Ningún hallazgo contradice una decisión previa: no se escribió entrada CONFLICTO.
+
+### [2026-10-15] [investigador] — Vacaciones y calendario laboral: flujo actual, fechas, permisos, cupo y frontend (base para la tarea)
+**Pregunta:** Para el calendario laboral (oficial/otorgado/evento), días hábiles en vacaciones y bloqueo por cupo de departamento: (1) flujo actual de solicitud, cálculo de días, saldo y aprobación (¿revalida algo al aprobar?); (2) manejo de fechas y tipo de columnas; (3) cómo se define un permiso nuevo y quién puede administrar; (4) dónde ubicar el cupo; (5) rutas, sidebar, librerías de fecha y date input; (6) tests existentes; (7) riesgos y preguntas abiertas. Se respetan las decisiones de `decisions.md` (entrada 2026-10-15 "Calendario laboral..."). Sin conflictos con decisiones previas: no se escribe entrada CONFLICTO. `blockers.md` está vacío.
+
+**Hallazgo:**
+
+**1. Flujo actual de vacaciones (backend)**
+- Modelo `modules/rh/backend/models/solicitudVacaciones.model.js`:
+  - `calcularDisfrutados` suma `dias_a_disfrutar` solo de `estatus='aprobado'` del mismo `periodo` (`:15-23`, filtro en `:19`). `calcularSaldo` (`:25-46`) devuelve `dias_periodo` (lookup en `tabla_calculo_vacaciones`, `:4-13`), `dias_disfrutados` y `dias_pendientes = periodo - disfrutados` (`:43`). Las pendientes NO restan del saldo.
+  - Antigüedad = `anio_periodo - fecha_ingreso.getFullYear()`, mínimo 1 (`:30-39`).
+  - `tieneTraslape` (`:222-239`) bloquea por **mismo empleado** contra `estatus IN ('pendiente','aprobado')` (`:226`). No considera departamento.
+  - `responder` (`:204-220`) hace `UPDATE ... WHERE id=$5` **sin** condición `estatus='pendiente'`.
+- Controlador `modules/rh/backend/controllers/vacaciones.controller.js`:
+  - `crear` (`:49-206`): valida fechas `:60-65` y orden `:81-86`; `periodoCalculado = parseInt(periodo) || new Date(fecha_inicial).getFullYear()` (`:88-89`); traslape por empleado (`:99-110`); saldo (`:112-115`); **días = `Math.round((fin-inicio)/día)+1` = días naturales** (`:117-118`); rechazo si `dias > saldo.dias_pendientes` (`:120-125`); luego `SolicitudVacaciones.crear` (`:142-164`) copia `departamento: empleado.departamento` (`:151`), que es el **nombre** del departamento (`empleado.model.js:46,52`), no el id. Notifica al jefe (`:166-178`) y audita INSERT (`:180-192`). Cualquier excepción responde **400** con `error.message` (`:199-204`).
+  - **No hay transacción ni bloqueo**: todas las queries son `grupo.query` sueltas.
+  - `responder` (`:287-380`): solo valida `estatus` (`:291-296`), `motivo_rechazo` al rechazar (`:298-303`) y que el estado previo sea `pendiente` (`:312-317`). **No revalida saldo, traslape ni cupo al aprobar**. Luego UPDATE (`:324-330`), notifica (`:332-352`) y audita UPDATE (`:354-366`).
+  - `listar` (`:208-267`): `esAdmin` = rol `super_admin`/`rh_admin` por nombre (`:214`) o `tienePermiso(...,'rh','Empleados','edicion')` (`:215`). `puede_responder` en `:243-246`.
+- Rutas `modules/rh/backend/routes/vacaciones.routes.js`:
+  - `POST /` requiere `Vacaciones:edicion` + `empleadoPropioEnPeticion` (`:44-49`); `PUT /:id/responder` requiere `Vacaciones:edicion` + `accesoEmpleado` con `permitirDueno:false` y `permitirSi` = jefe inmediato de la solicitud (`:51-62`, regla en `:23-27`). RH (`Empleados:edicion`) pasa siempre (`middleware/acceso-empleado.middleware.js:62`).
+- Montaje: `modules/portal/backend/app.js:48`.
+- Migración de base: `modules/rh/backend/migrations/002-solicitudes-vacaciones.sql` (tabla `tabla_calculo_vacaciones` `:1-11`, tabla `solicitudes_vacaciones` `:13-44`). Las 16 filas de tabla de días están en `:7-10`.
+
+**2. Fechas, zona horaria y tipos de columna**
+- Columnas: `fecha_inicial DATE NOT NULL`, `fecha_final DATE NOT NULL`, `fecha_regreso DATE` (`002:27-29`); `fecha_solicitud` y `fecha_creacion` son `TIMESTAMP` (`002:15,43`). `empleados.fecha_ingreso` es `DATE` (`config/database/init.sql:252`). `departamentos` (`init.sql:208-215`) **no tiene cupo ni capacidad**.
+- `solicitudes_vacaciones` no tiene `departamento_id`: solo `departamento VARCHAR(100)` (`002:24`), copia de nombre.
+- Trampa comprobada (Node 20+, con `pg-types` del repo, `node_modules/pg-types` v2.2.0):
+  - `new Date("2027-01-01").getFullYear()` devuelve **2026** con `TZ=America/Mexico_City` y 2027 con UTC o Europe/Madrid. Afecta `controller:89` (periodo asignado) y en el frontend cualquier `new Date(texto)` sin hora.
+  - pg devuelve DATE como medianoche **local**: con `TZ=Europe/Madrid` el JSON sale como `"2026-12-31T23:00:00.000Z"` (día anterior). El frontend formatea con `timeZone:"UTC"` (`VacacionesPage.jsx:118-126`), así que mostraría el día anterior si el proceso Node corre con offset positivo. No hay `setTypeParser` ni `TZ` en Dockerfiles/compose (grep vacío), por lo que en contenedor (UTC por defecto) no se observa hoy; en el host de dev (WSL) sí es relevante.
+  - El cálculo de días usa `Date` en UTC (`controller:78-79,117-118`), que es estable; el DST no aplica en México desde 2022.
+- Fecha de referencia verificada: 2026-10-17 es sábado (`getUTCDay()=6`).
+
+**3. Permisos, roles y auditoría**
+- Opción `Vacaciones` de `rh`: `config/database/init.sql:395` (seed, con `Ubicaciones` `:397`) y `modules/portal/backend/migrations/003-opcion-vacaciones-rh.sql:4-28` (crea la opción y da `consulta`+`edicion` a `rh_admin` y `rh_empleado`). Las opciones `Empleados`, `Expedientes`, `Permisos`, `Recibos` se crean en `002-modelo-permisos-granular.sql:44-50`.
+- Modelo de permisos: `usuarios.rol_id` (un rol por usuario, `002:33-43`); `rol_opcion_permisos(rol_id, opcion_id, tipo)` con `tipo IN ('consulta','edicion')`. `verificarPermiso` (`modules/portal/backend/middleware/permisos.middleware.js:36-82`) y `tienePermiso` (`:9-28`) dan bypass a `super_admin` por nombre (`:11,43`); `edicion` cubre solo `edicion`, `consulta` acepta ambos (`:14`).
+- Roles (`init.sql:103-112`, `seeds/001-semilla-inicial.sql:5-17`): `super_admin`, `portal_admin`, `rh_admin`, `rh_empleado`, `tickets_*`, `bi_*`, `comercial_admin`, `auditoria_viewer`.
+  - `rh_admin` tiene acceso total a `rh` (`init.sql:431-438`; `seeds/001:128-135`).
+  - `rh_empleado` tiene `Vacaciones` consulta+edición y `Permisos`/`Recibos`/`Expedientes` consulta (`seeds/001:138-...`, `init.sql:441`, `rh/008`).
+  - `portal_admin` solo tiene permisos de `portal` (`seeds/001:109-...`). Pero el menú lo trata como admin: `ROLES_ADMIN = ['super_admin','portal_admin']` (`modules/portal/frontend/components/MenuDinamico.jsx:56`). "Administradores" es ambiguo (ver preguntas).
+- Trampa: **la opción `Departamentos` no está sembrada** (grep: 0 coincidencias en `init.sql` y en todas las migraciones), y `departamentos.routes.js:9-13` exige `rh/Departamentos`. Solo `super_admin` pasa; `rh_admin` recibiría 403 en `/api/departamentos`. Igual pasa con `Puestos` y `Áreas` (sus rutas usan opciones no sembradas; verificado solo para Departamentos).
+- Cómo se define un permiso nuevo (patrón del repo): (a) `INSERT INTO modulo_opciones` (como `portal/003`); (b) `rol_opcion_permisos` para cada rol; (c) la misma opción en `config/database/init.sql` (bloque `:380-397`) porque el init carga ese archivo; (d) `verificarPermiso` en la ruta. `rh/config/rh.permisos.js` y `portal/config/portal.permissions.js` son configuración muerta (ningún `require`, ver `noticias` en el investigador previo): no las uses como fuente.
+- Auditoría: `registrarAccion(req, modulo, tabla, registroId, accion, previos, nuevos)` en `modules/auditoria/backend/services/auditoria.service.js:4-26`. **Nunca lanza**: si falla devuelve `null` y solo imprime en consola (`:21-25`), así que una auditoría perdida no se nota. `auditoriaMiddleware(modulo, tabla, accion)` existe en `modules/auditoria/backend/middleware/auditoria.middleware.js:7` y lo usa `portal/controllers/modulo.controller.js:2`. Vacaciones usa la función directa dentro de try/catch (`controller:180-192,354-366`).
+
+**4. Dónde ubicar el cupo (dos alternativas)**
+- **A. Columna en `departamentos`** (p. ej. `cupo_vacaciones INT NULL`, NULL = sin límite). Costo: migración `rh/009` + bloque en `init.sql` + dos sitios en `docker-compose.supabase.yml` (volumen `:76-82` y comando `:93-104`); `departamento.model.js` `actualizar` (`:20-47`) y `crear` (`:4-9`) amplían campos; `DepartamentosPage.jsx` ya es CRUD genérico (`apiRuta="/departamentos"`, `:17`), así que el campo entra con poco código. Requiere sembrar la opción `Departamentos` (o reusar `Empleados`) para que `rh_admin` la edite. Ventaja: cupo por departamento sin tablas extra. Desventaja: no hay valor por defecto global.
+- **B. Tabla de configuración** (fila única `cupo_default` + tabla opcional `departamento_cupo(departamento_id, cupo)`, patrón de `tabla_calculo_vacaciones`, `002:1-11`). Costo: 1-2 tablas, endpoint y pantalla nuevos (no existe ni tabla genérica de parámetros: grep `configur|parametro|settings` en `init.sql` vacío) y su propio permiso. Ventaja: un default y futuros parámetros (p. ej. reglas de calendario) en un solo lugar.
+- **Común a ambas:** la solicitud no guarda `departamento_id` (`002:24`). La comprobación debe resolverse con `JOIN empleados e ON e.id = s.empleado_id` (departamento actual) o añadir `departamento_id` a `solicitudes_vacaciones` con backfill (departamento al momento de solicitar). Para "máximo de personas a la vez" hay que contar **por día** (p. ej. `generate_series` sobre el rango con `COUNT(DISTINCT empleado_id)`), no solo "hay traslape"; el algoritmo queda para el coder.
+
+**5. Frontend**
+- Rutas: `modules/portal/frontend/main.jsx` importa páginas `:36-44`, define rutas `/rh/vacaciones` y `/rh/vacaciones/listado` `:167-168`, y el título de cabecera en `:65-67`. Sidebar: `SUB_RUTAS.rh` en `modules/portal/frontend/components/MenuDinamico.jsx:16-26`, con campo `opcion` (p. ej. `'Vacaciones'`, `'Empleados'`) usado para filtrar; una página nueva de calendario sería una entrada más. Cualquier entrada nueva necesita su opción de permiso.
+- Librerías de fecha/calendario: **ninguna**. `modules/portal/frontend/package.json:11-17` = `@supabase/supabase-js`, `react`, `react-dom`, `react-router-dom`, `recharts`, `xlsx`. Backend RH (`modules/rh/backend/package.json:13-18`) = `express`, `cors`, `pg`, `multer`. No hay `date-fns`, `dayjs`, `moment`, ni componente de calendario.
+- Input actual: `<input type="date">` nativo (`modules/rh/frontend/pages/VacacionesPage.jsx:277-302`), con `min` encadenado (`:292`, `:302`). Valor `YYYY-MM-DD`, sin validación de fin de semana ni de festivos.
+- Cálculo de días en el cliente: `diasSolicitados` (`VacacionesPage.jsx:181-188`) = días naturales (`Math.round(...)+1`, `:187`). **Debe cambiar junto con el backend** (hoy son dos cálculos independientes; si cambian en uno solo, la vista previa miente).
+- Servicio: `modules/rh/frontend/services/vacaciones.service.js:1-37` (`obtenerSaldo`, `crearSolicitud`, `listarSolicitudes`, `obtenerSolicitud`, `responderSolicitud`), vía `solicitar` de `modules/portal/frontend/utils/api.js`.
+- Listado: `modules/rh/frontend/pages/VacacionesListadoPage.jsx` (`formatearFecha` `:71-74`, misma técnica).
+
+**6. Tests existentes y convenciones**
+- Jest 29 + Supertest; `npm test` en el paquete = `jest --coverage`, `testEnvironment: node` (`modules/rh/backend/package.json:11,24-26`). Ejecutar con `npm test --workspace=modules/rh/backend` (sugerido; no lo ejecuté). El `npm test` raíz es `docker compose -f docker-compose.test.yml` (`package.json` raíz).
+- Tests RH de vacaciones: `modules/rh/backend/tests/acceso-empleados-permisos-vacaciones.test.js` (bloque `vacaciones`, `:133-180`). **Mockea el controlador completo** (`jest.mock("../controllers/vacaciones.controller", ...)`) y el modelo, así que **ninguna prueba cubre cálculo de días, traslape, saldo ni aprobación**. `modules/rh/backend/tests/notificacion.service.test.js` solo cubre notificaciones. `modules/rh/tests/rh.integration.test.js` menciona vacaciones solo en un listado (`:20`); esa carpeta está fuera del `rootDir` del paquete backend, así que probablemente no corre con `npm test` del workspace (no verificado).
+- Convenciones (`.claude/rules/testing.md`, 14 líneas): Jest + Supertest; `describe`/`it` en español; mockear `config/database` en tests de backend. El frontend RH no tiene pruebas unitarias (ver `memory/decisions.md`, entrada 2026-10-08 "Fase 4").
+
+**7. Riesgos, trampas y preguntas abiertas**
+- **Carrera en aprobación (alta):** `responder` no tiene guardia de estado en SQL (`model:205-211`) ni revalidación de cupo/saldo/traslape (`controller:312-330`). Dos aprobaciones concurrentes de solicitudes que se traslapan pasan ambas. Tampoco hay protección en `crear` (lectura de cupo y luego INSERT sin lock).
+- **Saldo y pendientes:** `dias_pendientes` ignora solicitudes pendientes (`model:17-19`), así que varias pendientes dentro del saldo pueden sumar más que el saldo y aprobarse todas (no hay revalidación al aprobar).
+- **Cupo y solicitudes históricas:** las aprobadas antes del cambio son `aprobado`, así que **sí cuentan** para el cupo aunque no se recalculen sus días. Hay que decidir si cuentan para el cupo.
+- **Periodo y año:** `periodo` es el año de `fecha_inicial` (`controller:88-89`); una solicitud que cruza el 31-dic reparte días entre periodos y el cálculo hábil no lo contempla.
+- **Zona horaria (media):** `new Date(texto).getFullYear()` (`controller:89`, `model:31`) falla en hosts de offset negativo (verificado). Y pg puede desplazar DATE en hosts de offset positivo (verificado).
+- **Regla de empleado vs. regla de departamento:** `tieneTraslape` (`model:222-239`) bloquea al mismo empleado contra pendientes y aprobadas. La nueva regla solo mira aprobadas por departamento. Hay que decidir si la primera se conserva.
+- **Departamento como texto:** `departamento` en `solicitudes_vacaciones` es un nombre snapshot (`002:24`, `controller:151`). Si el empleado cambia de departamento, el histórico no se mueve.
+- **Errores:** todo fallo de `crear` devuelve 400 con `error.message` (`controller:199-204`). Un error de BD o del nuevo chequeo también saldría como 400, sin código diferenciado.
+- **Migraciones:** `npm run db:migrate` solo carga `config/database/init.sql` (`modules/portal/backend/scripts/migrar.js:14`). En `docker-compose.supabase.yml` (`supabase-db-init`) se aplican 004, 005, 007, 008, tickets/003 y portal/006 (`:76-82`, `:93-104`). **`rh/002` y `portal/003` no están cableadas**: solo existen dentro de `init.sql`. Una migración nueva debe ir en `init.sql` + `db-init` (volumen y comando), y en bases ya levantadas hay que re-ejecutar `supabase-db-init` (`docs/supabase.md:55`).
+- **Auditoría silenciosa:** `registrarAccion` nunca lanza (`auditoria.service.js:21-25`). Si el cumplimiento exige trazar bloqueos o cambios de calendario, no basta con `registrarAccion` sin verificación.
+- **Roles por nombre:** `listar` compara `rol_nombre` con `super_admin`/`rh_admin` (`controller:214`), mientras el resto usa permisos. Un rol nuevo de RH no entraría sin tocar código.
+- **Autorización del calendario:** no hay ninguna tabla ni opción de calendario hoy. Falta decidir quién **lee** el calendario (empleados).
+- **Preguntas abiertas para el humano (no decido):**
+  1. Cupo: ¿por departamento (columna en `departamentos`) o default global con override? ¿Qué pasa con `NULL` y con `0`? ¿Valor inicial?
+  2. Aprobación: si al aprobar ya no cabe el cupo o el saldo, ¿se rechaza automáticamente, se avisa y RH decide, o se permite? ¿La revalidación cubre también saldo?
+  3. Solicitudes aprobadas antes del cambio: ¿cuentan para el cupo? ¿Y si caen en un día oficial o de descanso otorgado?
+  4. Días hábiles: ¿un día de la solicitud en sábado/domingo o en oficial cuenta 0? ¿Se permite iniciar o terminar en día no hábil? ¿Cómo se parte una solicitud que cruza el 31-dic?
+  5. Departamento: ¿el actual del empleado al solicitar, o el histórico? ¿Se guarda `departamento_id` en la solicitud?
+  6. Regla de traslape por empleado (`tieneTraslape`): ¿se mantiene para pendientes?
+  7. Lectura del calendario: ¿todos los empleados o solo RH/Administradores? ¿Los eventos generan aviso en la pantalla de solicitud (sin bloquear)?
+  8. "Administradores": ¿incluye `portal_admin` (hoy sin permisos de RH, `ROLES_ADMIN` en `MenuDinamico.jsx:56`)? Si sí, hay que darle `rh/Calendario` explícitamente.
+  9. Auditoría: ¿deben auditarse los bloqueos por cupo y los cambios de calendario (y con qué detalle)?
+  10. Carga de días oficiales: ¿lista fija en código o registros del calendario por año? No hay listado de días oficiales en el repo (grep `feriado|oficial` sin resultado).
+
+**Implicación:**
+- Cálculo de días: hay que cambiar a días hábiles en **dos lugares** (`controller:117-118` y `VacacionesPage.jsx:181-188`) y compartir la misma regla (o exponer un endpoint de vista previa); no hay librería de fechas, así que conviene aritmética con UTC (`getUTCDay`) como ya se hace.
+- Cupo y revalidación: el bloqueo al crear es insuficiente por las carreras y por la falta de revalidación al aprobar (`responder`). Se necesita el mismo chequeo en ambos puntos, con lock o transacción y guardia `WHERE estatus='pendiente'`. Esta decisión de diseño corresponde al orquestador.
+- Persistencia: el cupo necesita `departamento_id` en la solicitud o un JOIN a `empleados`, y una columna o tabla nueva. Ambas opciones pasan por `init.sql` y por `docker-compose.supabase.yml` (la migración no se aplica sola).
+- Permisos: crear la opción `Calendario` (o reusar `Empleados`/`Vacaciones`) con `modulo_opciones` + `rol_opcion_permisos` + bloque en `init.sql`; `rh_admin` y `super_admin` cubren RH+Administradores. `portal_admin` requiere concesión explícita si se incluye. `Departamentos` no está sembrada: el campo de cupo en `DepartamentosPage` no funcionaría para `rh_admin` hasta sembrarla.
+- Fechas: usar `DATE` para el calendario (como `solicitudes_vacaciones`), comparar texto `YYYY-MM-DD`, y evitar `new Date(texto).getFullYear()`.
+- Pruebas: no hay cobertura de la lógica de vacaciones (los tests mockean el controlador). Hace falta cubrir días hábiles, cupo, aprobación y periodo; los tests de RH son Jest + Supertest con mocks de `config/database`.
+- Auditoría: `registrarAccion` no lanza; si el bloqueo debe quedar trazado, verificar la escritura o registrarlo de forma explícita.
+- Sin conflictos con decisiones previas. `blockers.md` vacío.
+- Pendiente de la línea de índice: `memory/INDEX.md` no se escribió desde este agente (solo `research.md`). Se pide al orquestador añadir la línea que apunte a esta entrada.
