@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import Icons from './Icons';
 import ImagenVertical from './ImagenVertical';
 import { urlImagenNoticia } from '../utils/storage';
-import { etiquetaTipo, esBoletin } from '../utils/tiposNoticia';
+import { etiquetaTipo, esBoletin, esEvento, eventoFinalizado, textoFechaLugar } from '../utils/tiposNoticia';
 
 function textoPlano(valor) {
   return String(valor || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -84,6 +84,7 @@ export default function NewsCarousel({ noticias = [], onOpen, verTodasTo = '/not
             : null;
           const resumen = resumenDe(n);
           const boletin = esBoletin(n);
+          const evento = esEvento(n);
           const tipo = n.tipo === 'comunicado' ? 'comunicado' : n.tipo === 'oferta_empleo' ? 'oferta' : 'noticia';
           return (
             <article
@@ -113,13 +114,15 @@ export default function NewsCarousel({ noticias = [], onOpen, verTodasTo = '/not
                   src={imagen ? urlImagenNoticia(imagen) : ''}
                   alt=""
                   prioritaria={i === 0}
+                  iconoVacio={evento ? '📅' : undefined}
                   className="imagen-vertical--carrusel"
                 >
                   <div className="news-hero__velo" aria-hidden="true" />
                   <div className="news-hero__info">
                     <div className="news-hero__meta">
                       <span className={`badge badge-${tipo}`}>{n.tipo === 'oferta_empleo' ? 'Oferta' : etiquetaTipo(n.tipo)}</span>
-                      {fecha && <span>{fecha}</span>}
+                      {evento && eventoFinalizado(n.fecha_evento) && <span className="badge badge-finalizado">Finalizado</span>}
+                      {evento ? <span>{textoFechaLugar(n)}</span> : fecha && <span>{fecha}</span>}
                       {n.tiempo_lectura && <span>{n.tiempo_lectura} min de lectura</span>}
                     </div>
                     <h3 className="news-hero__titulo">{n.titulo}</h3>

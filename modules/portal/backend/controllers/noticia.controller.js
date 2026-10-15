@@ -1,7 +1,7 @@
 const Noticia = require("../models/noticia.model");
 const Storage = require("../services/storage.service");
 
-const { esTipoValido, limiteImagenes, mensajeTipoInvalido, paraPublico } = require("../utils/tiposNoticia");
+const { esTipoValido, limiteImagenes, mensajeTipoInvalido, paraPublico, validarCamposEvento, validarFechaEvento, validarLugarEvento } = require("../utils/tiposNoticia");
 
 // Borra el objeto de Storage; un fallo de limpieza no debe impedir borrar la fila.
 // Las rutas legadas (/uploads/...) aún no migradas no están en Storage.
@@ -87,7 +87,7 @@ const ControladorNoticia = {
 
   async crear(req, res) {
     try {
-      const { titulo, subtitulo, contenido, tipo, fecha_publicacion, publicada } = req.body;
+      const { titulo, subtitulo, contenido, tipo, fecha_publicacion, publicada, fecha_evento, lugar } = req.body;
 
       if (!titulo) {
         return res.status(400).json({ exito: false, mensaje: "El título de la noticia es obligatorio" });
@@ -99,6 +99,14 @@ const ControladorNoticia = {
         return res.status(400).json({ exito: false, mensaje: mensajeTipoInvalido() });
       }
 
+      // Evento: fecha_evento y lugar obligatorios; en otros tipos se ignoran (quedan NULL)
+      let datosEvento = { fecha_evento: null, lugar: null };
+      if (tipo === "evento") {
+        const v = validarCamposEvento({ fecha_evento, lugar });
+        if (v.error) return res.status(400).json({ exito: false, mensaje: v.error });
+        datosEvento = v;
+      }
+
       const noticia = await Noticia.crear({
         titulo,
         subtitulo,
@@ -107,6 +115,8 @@ const ControladorNoticia = {
         fecha_publicacion,
         publicada,
         autor_id: req.user.usuario_id,
+        fecha_evento: datosEvento.fecha_evento,
+        lugar: datosEvento.lugar,
       });
 
       res.status(201).json({ exito: true, datos: noticia, mensaje: "Noticia creada exitosamente" });
@@ -123,6 +133,57 @@ const ControladorNoticia = {
       }
       // tipo vacío = no cambiar: se omite para no escribir NULL en la columna
       const datos = tipoVacio(tipo) ? resto : { ...resto, tipo };
+
+      // Cambiar a un tipo con menor límite de imágenes que las que ya tiene no está permitido
+      if (!tipoVacio(tipo)) {
+        const previa = await Noticia.obtenerPorId(req.params.id);
+        if (previa && previa.tipo !== tipo) {
+          const total = await Noticia.contarImagenes(req.params.id);
+          const maximo = limiteImagenes(tipo);
+          if (total > maximo) {
+            return res.status(400).json({
+              exito: false,
+              mensaje: `Esta publicación tiene ${total} imágenes; el tipo ${tipo} admite ${maximo}. Quita imágenes antes de cambiar el tipo.`,
+            });
+          }
+        }
+      }
+
+      // Evento: tipo explícito 'evento' exige fecha y lugar; sin tipo en el cuerpo, si la publicación
+      // ya es evento se validan los campos que lleguen; fuera de evento se ignoran y, al cambiar
+      // de tipo, se ponen a NULL.
+      const tocaEvento = resto.fecha_evento !== undefined || resto.lugar !== undefined;
+      let tipoEfectivo = tipo;
+      if (tipoVacio(tipo) && tocaEvento) {
+        const actual = await Noticia.obtenerPorId(req.params.id);
+        tipoEfectivo = actual && actual.tipo;
+      }
+      if (!tipoVacio(tipo) && tipo === "evento") {
+        // Se declara evento: ambos campos obligatorios
+        const v = validarCamposEvento({ fecha_evento: resto.fecha_evento, lugar: resto.lugar });
+        if (v.error) return res.status(400).json({ exito: false, mensaje: v.error });
+        datos.fecha_evento = v.fecha_evento;
+        datos.lugar = v.lugar;
+      } else if (tipoEfectivo === "evento") {
+        // Ya es evento y el cuerpo no cambia el tipo: se validan solo los campos que lleguen
+        if (resto.fecha_evento !== undefined) {
+          const f = validarFechaEvento(resto.fecha_evento);
+          if (f.error) return res.status(400).json({ exito: false, mensaje: f.error });
+          datos.fecha_evento = f.valor;
+        }
+        if (resto.lugar !== undefined) {
+          const l = validarLugarEvento(resto.lugar);
+          if (l.error) return res.status(400).json({ exito: false, mensaje: l.error });
+          datos.lugar = l.valor;
+        }
+      } else if (!tipoVacio(tipo)) {
+        datos.fecha_evento = null; // cambia a un tipo que no es evento
+        datos.lugar = null;
+      } else {
+        delete datos.fecha_evento; // no es evento: se ignoran
+        delete datos.lugar;
+      }
+
       const noticia = await Noticia.actualizar(req.params.id, datos);
       if (!noticia) {
         return res.status(404).json({ exito: false, mensaje: "Noticia no encontrada" });
@@ -187,6 +248,33 @@ const ControladorNoticia = {
       res.status(201).json({ exito: true, datos: imagen, mensaje: "Imagen subida exitosamente" });
     } catch (error) {
       res.status(500).json({ exito: false, mensaje: "Error al subir imagen", error: error.message });
+    }
+  },
+
+  // Reordena las imágenes de una publicación: { orden: [idImagen, ...] } con exactamente sus imágenes
+  async reordenarImagenes(req, res) {
+    try {
+      const { id } = req.params;
+      const { orden } = req.body || {};
+      if (!Array.isArray(orden) || orden.some((x) => !Number.isInteger(x)) || new Set(orden).size !== orden.length) {
+        return res.status(400).json({ exito: false, mensaje: "orden debe ser una lista de ids de imagen sin repetir" });
+      }
+      const publicacion = await Noticia.obtenerPorId(id);
+      if (!publicacion) {
+        return res.status(404).json({ exito: false, mensaje: "Noticia no encontrada" });
+      }
+      const actuales = await Noticia.idsImagenes(id);
+      const mismas = actuales.length === orden.length && actuales.every((x) => orden.includes(x));
+      if (!mismas) {
+        return res.status(400).json({
+          exito: false,
+          mensaje: "La lista debe contener exactamente las imágenes de la publicación",
+        });
+      }
+      await Noticia.reordenarImagenes(id, orden);
+      res.json({ exito: true, mensaje: "Orden actualizado" });
+    } catch (error) {
+      res.status(500).json({ exito: false, mensaje: "Error al reordenar imágenes", error: error.message });
     }
   },
 

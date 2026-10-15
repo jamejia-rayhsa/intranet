@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { obtenerNoticiasPublicadas } from '../services/noticias.service';
 import NoticiaCard from '../components/NoticiaCard';
 import ArticleModal from '../components/ArticleModal';
-import { TIPOS_NOTICIA, esMostrable } from '../utils/tiposNoticia';
+import { TIPOS_NOTICIA, esBoletin, esMostrable } from '../utils/tiposNoticia';
 
 export default function PortalNoticias() {
   const [noticias, setNoticias] = useState([]);
@@ -59,7 +59,7 @@ export default function PortalNoticias() {
               <NoticiaCard
                 key={noticia.id}
                 noticia={noticia}
-                onAbrir={(n) => setModalItem({ kind: 'boletin', noticia: n })}
+                onAbrir={(n) => setModalItem({ kind: esBoletin(n) ? 'boletin' : 'evento', noticia: n })}
               />
             ))}
           </div>

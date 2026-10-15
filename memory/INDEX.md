@@ -102,3 +102,13 @@
 - [2026-10-14] revisor → reviews.md — Fase 2 noticias: re-revisión (correcciones, borradores y API pública del boletín) (APROBADO CON OBSERVACIONES; sin críticos ni altos; 7 bajos)
 - [2026-10-14] tester → tests.md — Fase 2 noticias: re-prueba tras correcciones (7/7 PASS en Chromium 156 + Firefox 157; jest 275/275, eslint 0 errores; PARA RESOLVER cursor y tarjeta estirada RESUELTOS, sin fallos)
 - [2026-10-14] orquestador → roadmap.md/decisions.md — Fase 2 noticias (boletín) lista para GO/NO-GO; bajos diferidos a Fase 4
+- [2026-10-14] orquestador → roadmap.md — Fases 1-2 cerradas y commiteadas (158f063); GO del humano a la Fase 3 (eventos)
+- [2026-10-15] orquestador → decisions.md — Fase 3 eventos: decisiones de producto del humano (lista, fecha y hora, 10 imágenes, editor con orden)
+- [2026-10-15] coder → code-notes.md — Fase 3 noticias: eventos con fecha, lugar y carrusel de imágenes
+- [2026-10-15] revisor → reviews.md — Fase 3 noticias: revisión de eventos, migración, reordenar y carrusel (APROBADO CON OBSERVACIONES; sin críticos ni altos; 19 bajos)
+- [2026-10-15] tester → tests.md — Fase 3 noticias: eventos, carrusel de imágenes y SQL real (Chromium 156 + Firefox 157 + móvil; Postgres 16 desechable 64/64; migración 006 idempotente; jest 305/305, eslint 0 errores; 1 FAIL menor: carrera en el reorden del editor)
+- [2026-10-15] tester → decisions.md — PARA RESOLVER: reorden de imágenes del editor se desincroniza si dos clics rápidos fallan (menor)
+- [2026-10-15] orquestador → decisions.md — Fase 3 eventos: revisión/pruebas sin críticos; decisiones del humano (Finalizado, bloqueo de cambio de tipo, orden) y correcciones
+- [2026-10-15] coder → code-notes.md — Fase 3 noticias: decisiones del humano y correcciones de la revisión
+- [2026-10-15] tester → tests.md — Fase 3 noticias: re-verificación de decisiones y correcciones (6/6 PASS en Chromium 156 + Firefox 157 + Postgres 16 desechable 71/71; jest 323/323, eslint 0 errores; PARA RESOLVER del reorden RESUELTO, sin fallos)
+- [2026-10-15] orquestador → roadmap.md/decisions.md — Fase 3 noticias (eventos) CERRADA y commiteada; esperando GO a la Fase 4

@@ -63,3 +63,11 @@ export async function eliminarImagenNoticia(noticiaId, imagenId) {
     metodo: "DELETE",
   });
 }
+
+// Guarda el orden de las imágenes (la primera es la portada): ids de TODAS las imágenes de la publicación
+export async function reordenarImagenesNoticia(noticiaId, idsEnOrden) {
+  return solicitar(`/noticias/${noticiaId}/imagenes/orden`, {
+    metodo: "PUT",
+    cuerpo: JSON.stringify({ orden: idsEnOrden }),
+  });
+}

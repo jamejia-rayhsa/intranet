@@ -2,7 +2,7 @@ const { grupo } = require("../config/database");
 
 const IMAGENES_AGG = `
   COALESCE((
-    SELECT JSON_AGG(ni ORDER BY ni.orden ASC, ni.fecha_subida ASC)
+    SELECT JSON_AGG(ni ORDER BY ni.orden ASC, ni.id ASC)
     FROM noticia_imagenes ni
     WHERE ni.noticia_id = n.id
   ), '[]'::json) AS imagenes
@@ -31,10 +31,12 @@ const Noticia = {
       fecha_publicacion,
       publicada,
       autor_id,
+      fecha_evento,
+      lugar,
     } = datos;
     const consulta = `
-      INSERT INTO noticias (titulo, subtitulo, contenido, tipo, fecha_publicacion, publicada, autor_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      INSERT INTO noticias (titulo, subtitulo, contenido, tipo, fecha_publicacion, publicada, autor_id, fecha_evento, lugar)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *
     `;
     const valores = [
@@ -45,6 +47,8 @@ const Noticia = {
       fecha_publicacion || new Date(),
       publicada || false,
       autor_id,
+      fecha_evento || null,
+      lugar || null,
     ];
     const resultado = await grupo.query(consulta, valores);
     return resultado.rows[0];
@@ -121,6 +125,16 @@ const Noticia = {
       valores.push(datos.fecha_publicacion);
       contador++;
     }
+    if (datos.fecha_evento !== undefined) {
+      campos.push(`fecha_evento = $${contador}`);
+      valores.push(datos.fecha_evento);
+      contador++;
+    }
+    if (datos.lugar !== undefined) {
+      campos.push(`lugar = $${contador}`);
+      valores.push(datos.lugar);
+      contador++;
+    }
     if (datos.publicada !== undefined) {
       campos.push(`publicada = $${contador}`);
       valores.push(datos.publicada);
@@ -164,19 +178,46 @@ const Noticia = {
   },
 
   async agregarImagen(noticiaId, rutaArchivo, nombreArchivo) {
-    const orden = await this.contarImagenes(noticiaId);
+    // Siempre al final: máximo actual + 1 (contar duplicaría el orden tras borrar una imagen intermedia)
     const consulta = `
       INSERT INTO noticia_imagenes (noticia_id, ruta_archivo, nombre_archivo, orden)
-      VALUES ($1, $2, $3, $4)
+      VALUES ($1, $2, $3, (SELECT COALESCE(MAX(orden), -1) + 1 FROM noticia_imagenes WHERE noticia_id = $1))
       RETURNING *
     `;
     const resultado = await grupo.query(consulta, [
       noticiaId,
       rutaArchivo,
       nombreArchivo,
-      orden,
     ]);
     return resultado.rows[0];
+  },
+
+  async idsImagenes(noticiaId) {
+    const resultado = await grupo.query(
+      "SELECT id FROM noticia_imagenes WHERE noticia_id = $1 ORDER BY orden ASC, id ASC",
+      [noticiaId],
+    );
+    return resultado.rows.map((fila) => fila.id);
+  },
+
+  // Reasigna orden = posición en la lista (0..n-1) en una sola transacción
+  async reordenarImagenes(noticiaId, idsEnOrden) {
+    const cliente = await grupo.connect();
+    try {
+      await cliente.query("BEGIN");
+      for (let posicion = 0; posicion < idsEnOrden.length; posicion++) {
+        await cliente.query(
+          "UPDATE noticia_imagenes SET orden = $1 WHERE id = $2 AND noticia_id = $3",
+          [posicion, idsEnOrden[posicion], noticiaId],
+        );
+      }
+      await cliente.query("COMMIT");
+    } catch (error) {
+      await cliente.query("ROLLBACK");
+      throw error;
+    } finally {
+      cliente.release();
+    }
   },
 
   async obtenerImagen(id) {

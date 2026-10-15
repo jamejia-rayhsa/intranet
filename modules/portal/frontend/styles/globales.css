@@ -972,6 +972,7 @@ button:disabled {
 .badge-noticia    { background: var(--color-exito-suave);       color: var(--color-exito); }
 .badge-comunicado { background: var(--color-advertencia-suave); color: var(--color-advertencia); }
 .badge-oferta     { background: var(--color-info-suave);        color: var(--color-info); }
+.badge-finalizado { background: var(--color-texto-medio);       color: var(--color-superficie); } /* contraste >= 4,5:1 */
 
 .noticia-tipo-noticia {
   background-color: #d4efdf;
@@ -3094,6 +3095,27 @@ button:disabled {
   margin-bottom: 0.75rem;
 }
 
+.noticia-imagen-item { display: flex; flex-direction: column; align-items: center; gap: 0.25rem; }
+.noticia-imagen-orden { display: flex; gap: 0.25rem; }
+.noticia-imagen-orden button {
+  min-width: 32px;
+  min-height: 28px;
+  padding: 0;
+  border: 1px solid var(--color-borde);
+  border-radius: 4px;
+  background: var(--color-superficie);
+  cursor: pointer;
+}
+.noticia-imagen-orden button:disabled { opacity: 0.4; cursor: default; }
+.noticia-imagen-portada {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  padding: 0 0.3rem;
+  background: var(--color-primario);
+  color: #fff;
+  font-size: 0.65rem;
+}
 .noticia-imagen-miniatura {
   position: relative;
   width: 80px;

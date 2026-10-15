@@ -6,7 +6,7 @@
 > y no arrancan sin el GO del humano. Cada fase se cierra solo con una puerta GO/NO-GO suya.
 
 ## Estado global
-- **Fase actual:** 2 LISTA PARA GO/NO-GO (revisión visual del humano pendiente)
+- **Fase actual:** 3 CERRADA y commiteada; esperando GO del humano a la Fase 4 (y OK para publicar/desplegar)
 - **Situación:** Fase 1 CERRADA por el humano (GO a la Fase 2); Fases 3-4 esperan su GO
 - **Actualizado:** 2026-10-14
 
@@ -26,19 +26,20 @@
 - **Puerta:** revisión visual del humano en staging.
 
 ## Fase 2 — Categoría "boletín" (solo imagen)
-- **Situación:** LISTA PARA GO/NO-GO (coder + 2 rondas de correcciones; revisor APROBADO CON OBSERVACIONES, 0 críticos/altos; tester sin fallos en Chromium y Firefox con los componentes reales). Falta que el humano vea un boletín en su entorno y la prueba con Storage real y sesión real.
+- **Situación:** CERRADA (GO del humano a la Fase 3; commit 158f063 junto con la Fase 1). Antes: LISTA PARA GO/NO-GO (coder + 2 rondas de correcciones; revisor APROBADO CON OBSERVACIONES, 0 críticos/altos; tester sin fallos en Chromium y Firefox con los componentes reales). Falta que el humano vea un boletín en su entorno y la prueba con Storage real y sesión real.
 - **Objetivo:** nuevo valor de `tipo` = `boletin`; sin título ni descripción visibles, solo la imagen; el clic amplía la imagen; aparece en el carrusel de Inicio y en `/noticias`. Se guarda un título interno (solo para el panel).
 - **Tareas:** [x] lista central de tipos válidos (backend y frontend, con paridad comentada) · [x] editor: opción "Boletín" (una imagen, título interno, bloqueo de publicar sin imagen) · [x] vistas: carrusel de Inicio, `/noticias`, filtro y etiquetas · [x] ampliar imagen al clic (visor 2:3 accesible por teclado) · [x] tests backend (30) · [x] borradores ya no visibles por id público (ruta `GET /noticias/admin/:id` para el panel) · [x] API pública del boletín sin título/subtítulo/contenido/autor.
 - **Puerta:** GO del humano tras ver un boletín de prueba.
 
 ## Fase 3 — Eventos con varias imágenes y carrusel
-- **Situación:** NO INICIADA (propuesta)
+- **Situación:** CERRADA (coder + revisor APROBADO CON OBSERVACIONES, 0 críticos/altos + tester sin fallos en navegador real y Postgres real; decisiones del humano aplicadas; commit al cerrar la fase). Pendiente: revisión visual del humano en su entorno, aplicar la migración 006 en staging/prod y probar con Storage y sesión reales.
 - **Objetivo:** `tipo = 'evento'` con fecha y lugar propios y varias imágenes mostradas en un carrusel 2:3 centrado.
-- **Tareas:** [ ] migración BD (`fecha_evento`, `lugar`) también en init.sql y db-init · [ ] editor con campos de evento, subida múltiple y orden · [ ] carrusel de imágenes (modal/vista) · [ ] tests.
+- **Tareas:** [x] migración `006-eventos-noticias.sql` (`fecha_evento TIMESTAMPTZ`, `lugar`) también en init.sql y db-init · [x] editor: fecha y hora, lugar, subida múltiple, orden ↑/↓ y portada · [x] `CarruselImagenes` 2:3 en el detalle · [x] evento como noticia en Inicio y /noticias con "Finalizado" al terminar el día · [x] endpoint de reorden · [x] límites 10/1/5 también al cambiar de tipo · [x] tests (323).
 - **Puerta:** GO del humano.
 
 ## Fase 4 — Endurecimiento, revisión y pruebas
 - **Situación:** NO INICIADA (propuesta)
 - **Tareas:** [ ] límite de cuerpo de nginx en `/api/` de producción (hoy 1 MB) · [ ] revisor · [ ] tester · [ ] despliegue a staging con prueba de subida real a Storage.
+- **Candidatos diferidos de la Fase 3 (bajos):** atomicidad del límite de imágenes y `MAX(orden)+1` bajo concurrencia · validación del reorden dentro de la transacción y auditoría de las rutas de imágenes · fechas sin zona en la API · slides de Inicio no enfocables por teclado · aplicar la migración 006 en staging con el `db-init` y probar subida real a Storage.
 - **Candidatos diferidos de las Fases 1-2 (bajos salvo H5):** H3 coste del blur con 50 tarjetas (medir en staging) · H4 warnings falsos de ESLint (`react/jsx-uses-vars`) · H5 filtro de `/noticias` aplicado tras paginar en servidor (medio) · `GET /api/noticias/admin` sin id cae en `/:id` y devuelve 500 con `error.message` de Postgres · `paraPublico` debería listar en blanco también los campos de `imagenes[]` (`nombre_archivo`, `ruta_archivo`, `noticia_id`) · PUT sin `auditoriaMiddleware` · foco del visor/modales · carrera del límite de 1 imagen · `obtenerNoticiaAdmin` sin consumidor y `portal.permissions.js` sin uso · tests de ruta frágiles (`router.stack`).
 - **Puerta:** GO del humano antes de mergear/desplegar.

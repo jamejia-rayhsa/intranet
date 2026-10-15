@@ -4,6 +4,8 @@ import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Icons from './Icons';
 import ImagenVertical from './ImagenVertical';
+import CarruselImagenes from './CarruselImagenes';
+import { eventoFinalizado, textoFechaLugar } from '../utils/tiposNoticia';
 
 
 /**
@@ -12,7 +14,8 @@ import ImagenVertical from './ImagenVertical';
  * Acepta dos formas de uso:
  *   1. `item={ kind: 'news', noticia }` — abre una noticia con sus imágenes y contenido.
  *   2. `item={ kind: 'comunicado', noticia }` — abre como comunicado con folio + banner urgente.
- *   3. `item={ kind: 'boletin', noticia }` — visor: SOLO la imagen ampliada (sin título ni texto).
+ *   3. `item={ kind: 'evento', noticia }` — como una noticia, con carrusel de todas sus imágenes, fecha y lugar.
+ *   4. `item={ kind: 'boletin', noticia }` — visor: SOLO la imagen ampliada (sin título ni texto).
  *
  * Donde `noticia` es la entidad cruda de la API (`/api/noticias/:id`).
  */
@@ -33,11 +36,13 @@ export default function ArticleModal({ item, onClose }) {
   if (!noticia) return null;
 
   const isBoletin = kind === 'boletin';
-  const isNews = kind === 'news';
+  const isEvento = kind === 'evento';
+  const isNews = kind === 'news' || isEvento;
   const primeraImagen = noticia.imagenes?.[0];
   const onOverlay = (e) => { if (e.target === e.currentTarget) onClose(); };
 
-  const meta = [
+  const finalizado = isEvento && eventoFinalizado(noticia.fecha_evento);
+  const meta = isEvento ? [textoFechaLugar(noticia)].filter(Boolean) : [
     noticia.tipo || (isNews ? 'Noticia' : 'Comunicado'),
     noticia.fecha_publicacion ? new Date(noticia.fecha_publicacion).toLocaleDateString('es-MX') : null,
     noticia.tiempo_lectura ? `${noticia.tiempo_lectura} min de lectura` : null,
@@ -75,14 +80,21 @@ export default function ArticleModal({ item, onClose }) {
         {isNews ? (
           <>
             <div className="rayhsa-modal__media rayhsa-modal__media--vertical">
-              <ImagenVertical
-                src={primeraImagen ? urlImagenNoticia(primeraImagen) : ''}
-                alt={noticia.titulo || ''}
-                prioritaria
-                textoVacio="Sin imagen"
-                className="imagen-vertical--modal"
-              />
-              <span className="badge badge-noticia">{noticia.tipo || 'Noticia'}</span>
+              {isEvento ? (
+                <CarruselImagenes imagenes={noticia.imagenes || []} alt={noticia.titulo || ''} />
+              ) : (
+                <ImagenVertical
+                  src={primeraImagen ? urlImagenNoticia(primeraImagen) : ''}
+                  alt={noticia.titulo || ''}
+                  prioritaria
+                  textoVacio="Sin imagen"
+                  className="imagen-vertical--modal"
+                />
+              )}
+              <div className="rayhsa-modal__etiquetas">
+                <span className="badge badge-noticia">{isEvento ? 'Evento' : (noticia.tipo || 'Noticia')}</span>
+                {finalizado && <span className="badge badge-finalizado">Finalizado</span>}
+              </div>
             </div>
             <div className="rayhsa-modal__body">
               <div className="rayhsa-modal__meta">
@@ -100,15 +112,17 @@ export default function ArticleModal({ item, onClose }) {
                 </div>
               )}
             </div>
-            <div className="rayhsa-modal__acciones">
-              <button className="rayhsa-modal__btn rayhsa-modal__btn--primario">Marcar como leído</button>
-              <button className="rayhsa-modal__btn rayhsa-modal__btn--secundario">Compartir</button>
-              {noticia.autor_nombre && (
-                <span className="rayhsa-modal__acciones-meta">
-                  Publicado por {noticia.autor_nombre} {noticia.autor_apellido}
-                </span>
-              )}
-            </div>
+            {!isEvento && (
+              <div className="rayhsa-modal__acciones">
+                <button className="rayhsa-modal__btn rayhsa-modal__btn--primario">Marcar como leído</button>
+                <button className="rayhsa-modal__btn rayhsa-modal__btn--secundario">Compartir</button>
+                {noticia.autor_nombre && (
+                  <span className="rayhsa-modal__acciones-meta">
+                    Publicado por {noticia.autor_nombre} {noticia.autor_apellido}
+                  </span>
+                )}
+              </div>
+            )}
           </>
         ) : (
           <>

@@ -512,6 +512,23 @@
 }
 .rayhsa .news-hero__boletin-boton:focus-visible { outline: 3px solid var(--color-acento); outline-offset: 3px; }
 
+/* Tarjeta de evento: clic en toda la tarjeta; botón "Ver detalle" para teclado */
+.noticia-tarjeta--evento { cursor: pointer; }
+.noticia-pie--evento { flex-direction: column; align-items: flex-start; }
+.noticia-fecha-lugar { font-weight: 500; }
+.noticia-ver-detalle {
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--color-primario);
+  border-radius: 999px;
+  background: none;
+  color: var(--color-primario);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.noticia-ver-detalle:focus-visible { outline: 3px solid var(--color-acento); outline-offset: 2px; }
+
 /* Tarjeta de /noticias: imagen arriba, texto debajo (va después de la base por orden de cascada) */
 .imagen-vertical--tarjeta {
   --iv-alto-max: 300px; /* marco de 200x300 como máximo; 168x252 en el ancho mínimo de columna */
@@ -1155,7 +1172,20 @@
   min-width: 0;
   padding: 1.25rem 1.5rem;
 }
-/* La etiqueta del tipo va encima del marco (no sobre la imagen) */
+/* Las etiquetas (tipo, Finalizado) van encima del marco (no sobre la imagen) */
+.rayhsa-modal-overlay .rayhsa-modal .rayhsa-modal__media.rayhsa-modal__media--vertical .rayhsa-modal__etiquetas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  order: -1;
+  align-self: flex-start;
+  margin: 0 0 0.75rem;
+  padding-right: 2.75rem; /* deja libre el botón de cierre */
+}
+.rayhsa-modal-overlay .rayhsa-modal .rayhsa-modal__media.rayhsa-modal__media--vertical .rayhsa-modal__etiquetas .badge {
+  margin: 0;
+  align-self: auto;
+}
 .rayhsa-modal-overlay .rayhsa-modal .rayhsa-modal__media.rayhsa-modal__media--vertical .badge {
   position: static;
   order: -1;
@@ -1193,6 +1223,71 @@
 @supports (height: 100dvh) {
   .imagen-vertical--ampliada { --iv-alto-max: min(1400px, calc(100dvh - 2rem)); }
 }
+
+/* Carrusel de imágenes del detalle de un evento: slides 2:3 con scroll-snap, flechas y puntos */
+.carrusel-imagenes {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  outline: none;
+}
+.carrusel-imagenes:focus-visible { box-shadow: 0 0 0 3px var(--color-acento); border-radius: 10px; }
+.carrusel-imagenes__pista {
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.carrusel-imagenes__pista::-webkit-scrollbar { display: none; }
+.carrusel-imagenes__slide {
+  flex: 0 0 100%;
+  min-width: 0;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+.carrusel-imagenes__flecha {
+  position: absolute;
+  top: 50%;
+  z-index: 4;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  cursor: pointer;
+}
+.carrusel-imagenes__flecha:hover { background: rgba(0, 0, 0, 0.7); }
+.carrusel-imagenes__flecha:focus-visible,
+.carrusel-imagenes__punto:focus-visible { outline: 3px solid var(--color-acento); outline-offset: 2px; }
+.carrusel-imagenes__flecha--izq { left: 0.25rem; }
+.carrusel-imagenes__flecha--der { right: 0.25rem; }
+.carrusel-imagenes__puntos {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 0.6rem;
+}
+.carrusel-imagenes__punto {
+  position: relative;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+}
+.carrusel-imagenes__punto::after { content: ''; position: absolute; inset: -8px; } /* área táctil mayor */
+.carrusel-imagenes__punto.is-activo { background: #fff; }
 
 .rayhsa-modal__media--com {
   height: 70px;

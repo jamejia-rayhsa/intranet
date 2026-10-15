@@ -29,6 +29,12 @@ router.post(
   subirImagenNoticia.single("imagen"),
   ControladorNoticia.subirImagen,
 );
+// Reordenar (PUT; no choca con DELETE /:id/imagenes/:imagenId)
+router.put(
+  "/:id/imagenes/orden",
+  verificarPermiso("portal", "Noticias", "edicion"),
+  ControladorNoticia.reordenarImagenes,
+);
 router.delete(
   "/:id/imagenes/:imagenId",
   verificarPermiso("portal", "Noticias", "edicion"),

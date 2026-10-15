@@ -1,4 +1,5 @@
 // modules/portal/frontend/components/ImagenVertical.jsx
+import { useState } from 'react';
 
 /**
  * ImagenVertical — marco vertical 2:3 (hasta 500 x 750 px) para imágenes de noticias.
@@ -11,13 +12,16 @@
  * @param {string} [alt] — texto alternativo ("" cuando la imagen es decorativa)
  * @param {boolean} [prioritaria] — true para la imagen visible al cargar (carga inmediata)
  * @param {string} [className] — clases extra para el marco (modificadores por contexto)
+ * @param {string} [iconoVacio] — icono del placeholder (📄 por defecto; 📅 para eventos)
  * @param {string} [textoVacio] — leyenda bajo el 📄 cuando no hay imagen (p. ej. "Sin imagen")
  * @param {React.ReactNode} [children] — contenido superpuesto dentro del marco (texto, etiquetas)
- */
-export default function ImagenVertical({ src, alt = '', prioritaria = false, className = '', textoVacio = '', children }) {
+ */export default function ImagenVertical({ src, alt = '', prioritaria = false, className = '', textoVacio = '', iconoVacio = '📄', children }) {
+  // Si la imagen no carga (404, red) se muestra el placeholder en lugar del icono roto del navegador
+  const [srcFallida, setSrcFallida] = useState(null);
+  const hayImagen = Boolean(src) && srcFallida !== src;
   return (
     <div className={`imagen-vertical ${className}`.trim()}>
-      {src ? (
+      {hayImagen ? (
         <>
           <img
             className="imagen-vertical__fondo"
@@ -27,6 +31,7 @@ export default function ImagenVertical({ src, alt = '', prioritaria = false, cla
             loading={prioritaria ? 'eager' : 'lazy'}
             decoding="async"
             draggable={false}
+            onError={() => setSrcFallida(src)}
           />
           <img
             className="imagen-vertical__imagen"
@@ -35,11 +40,12 @@ export default function ImagenVertical({ src, alt = '', prioritaria = false, cla
             loading={prioritaria ? 'eager' : 'lazy'}
             decoding="async"
             draggable={false}
+            onError={() => setSrcFallida(src)}
           />
         </>
       ) : (
         <div className="imagen-vertical__vacia" aria-hidden="true">
-          <span>📄</span>
+          <span>{iconoVacio}</span>
           {textoVacio && <small className="imagen-vertical__texto-vacio">{textoVacio}</small>}
         </div>
       )}

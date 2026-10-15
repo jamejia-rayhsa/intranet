@@ -1,22 +1,35 @@
 import { urlImagenNoticia } from "../utils/storage";
 import { useState, useRef } from "react";
-import { TIPOS_NOTICIA, limiteImagenes, esBoletin as esTipoBoletin } from "../utils/tiposNoticia";
+import {
+  TIPOS_NOTICIA,
+  limiteImagenes,
+  esBoletin as esTipoBoletin,
+  esEvento as esTipoEvento,
+  etiquetaTipo,
+  isoAInputLocal,
+  inputLocalAIso,
+} from "../utils/tiposNoticia";
 import {
   crearNoticia,
   actualizarNoticia,
   subirImagenNoticia,
   eliminarImagenNoticia,
+  reordenarImagenesNoticia,
 } from "../services/noticias.service";
 
 export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) {
   const [formulario, setFormulario] = useState(
-    noticiaEditar || {
+    noticiaEditar
+      ? { ...noticiaEditar, fecha_evento: isoAInputLocal(noticiaEditar.fecha_evento), lugar: noticiaEditar.lugar || "" }
+      : {
       titulo: "",
       subtitulo: "",
       contenido: "",
       tipo: "noticia",
       fecha_publicacion: new Date().toISOString().split("T")[0],
       publicada: false,
+      fecha_evento: "",
+      lugar: "",
     },
   );
   const [imagenes, setImagenes] = useState(
@@ -24,11 +37,15 @@ export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) 
   );
   const [cargando, setCargando] = useState(false);
   const [subiendoImg, setSubiendoImg] = useState(false);
+  const [progreso, setProgreso] = useState(null); // { actual, total } durante la subida múltiple
   const [error, setError] = useState("");
   const inputArchivoRef = useRef(null);
+  const [reordenando, setReordenando] = useState(false);
+  const reordenandoRef = useRef(false); // una sola petición de reorden en vuelo
 
   // Boletín: solo imagen; el título es interno y no hay subtítulo ni contenido
   const esBoletin = esTipoBoletin(formulario);
+  const esEvento = esTipoEvento(formulario);
   const maxImagenes = limiteImagenes(formulario.tipo);
 
   function manejarCambio(evento) {
@@ -47,16 +64,38 @@ export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) 
       );
       return;
     }
-    if (esBoletin && imagenes.length > 1) {
-      setError("Un boletín admite una sola imagen. Elimina las demás antes de guardarlo como boletín.");
+    // Cambiar a un tipo con menor límite de imágenes que las actuales no se permite
+    const cambiaTipo = !noticiaEditar || formulario.tipo !== noticiaEditar.tipo;
+    if (cambiaTipo && imagenes.length > maxImagenes) {
+      setError(
+        `Esta publicación tiene ${imagenes.length} imágenes; el tipo ${etiquetaTipo(formulario.tipo)} admite ${maxImagenes}. Quita imágenes antes de cambiar el tipo.`,
+      );
       return;
+    }
+
+    if (esEvento) {
+      if (!formulario.fecha_evento) {
+        setError("El evento necesita fecha y hora de inicio.");
+        return;
+      }
+      if (!formulario.lugar.trim()) {
+        setError("El evento necesita un lugar.");
+        return;
+      }
     }
 
     setCargando(true);
 
     try {
       // Un boletín no usa subtítulo ni contenido: se guardan vacíos
-      const datos = esBoletin ? { ...formulario, subtitulo: "", contenido: "" } : formulario;
+      let datos = esBoletin ? { ...formulario, subtitulo: "", contenido: "" } : { ...formulario };
+      // Evento: datetime-local (hora local) -> ISO con zona; otros tipos no envían fecha ni lugar de evento
+      if (esEvento) {
+        datos = { ...datos, fecha_evento: inputLocalAIso(formulario.fecha_evento), lugar: formulario.lugar.trim() };
+      } else {
+        delete datos.fecha_evento;
+        delete datos.lugar;
+      }
       if (noticiaEditar) {
         await actualizarNoticia(noticiaEditar.id, datos);
       } else {
@@ -70,28 +109,63 @@ export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) 
     }
   }
 
+  // Subida múltiple: secuencial, con progreso y error por archivo; respeta el máximo del tipo
   async function manejarSubidaImagen(evento) {
-    const archivo = evento.target.files[0];
-    if (!archivo) return;
+    const archivos = Array.from(evento.target.files || []);
+    if (inputArchivoRef.current) inputArchivoRef.current.value = "";
+    if (archivos.length === 0) return;
     if (!noticiaEditar) {
       setError("Guarda la noticia primero antes de agregar imágenes.");
       return;
     }
-    if (imagenes.length >= maxImagenes) {
+    const caben = maxImagenes - imagenes.length;
+    if (caben <= 0) {
       setError(`Límite de ${maxImagenes} ${maxImagenes === 1 ? "imagen" : "imágenes"} alcanzado.`);
       return;
     }
 
+    const aSubir = archivos.slice(0, caben);
+    const mensajes = [];
+    if (archivos.length > caben) {
+      mensajes.push(`Solo caben ${caben} más: se omitieron ${archivos.length - caben} archivo(s).`);
+    }
+
     setSubiendoImg(true);
     setError("");
+    for (let i = 0; i < aSubir.length; i++) {
+      setProgreso({ actual: i + 1, total: aSubir.length });
+      try {
+        const resp = await subirImagenNoticia(noticiaEditar.id, aSubir[i]);
+        setImagenes((prev) => [...prev, resp.datos]);
+      } catch (err) {
+        mensajes.push(`${aSubir[i].name}: ${err.message}`);
+      }
+    }
+    setProgreso(null);
+    setSubiendoImg(false);
+    if (mensajes.length) setError(mensajes.join(" "));
+  }
+
+  // Sube/baja una imagen: orden optimista. Las peticiones se serializan (los botones se deshabilitan
+  // mientras hay una en vuelo), así que `confirmado` es siempre el último orden aceptado por el
+  // servidor y es al que se vuelve, con aviso, si la petición falla.
+  async function moverImagen(indice, delta) {
+    const destino = indice + delta;
+    if (!noticiaEditar || reordenandoRef.current || destino < 0 || destino >= imagenes.length) return;
+    reordenandoRef.current = true;
+    setReordenando(true);
+    const confirmado = imagenes;
+    const nuevo = [...imagenes];
+    [nuevo[indice], nuevo[destino]] = [nuevo[destino], nuevo[indice]];
+    setImagenes(nuevo);
     try {
-      const resp = await subirImagenNoticia(noticiaEditar.id, archivo);
-      setImagenes((prev) => [...prev, resp.datos]);
+      await reordenarImagenesNoticia(noticiaEditar.id, nuevo.map((img) => img.id));
     } catch (err) {
-      setError(err.message);
+      setImagenes(confirmado);
+      setError(`No se pudo guardar el nuevo orden de las imágenes: ${err.message}`);
     } finally {
-      setSubiendoImg(false);
-      if (inputArchivoRef.current) inputArchivoRef.current.value = "";
+      reordenandoRef.current = false;
+      setReordenando(false);
     }
   }
 
@@ -149,6 +223,34 @@ export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) 
             </select>
           </div>
 
+          {esEvento && (
+            <>
+              <div className="campo">
+                <label htmlFor="fecha_evento">Fecha y hora del evento</label>
+                <input
+                  type="datetime-local"
+                  id="fecha_evento"
+                  name="fecha_evento"
+                  value={formulario.fecha_evento}
+                  onChange={manejarCambio}
+                  required
+                />
+              </div>
+              <div className="campo">
+                <label htmlFor="lugar">Lugar</label>
+                <input
+                  type="text"
+                  id="lugar"
+                  name="lugar"
+                  maxLength={255}
+                  value={formulario.lugar}
+                  onChange={manejarCambio}
+                  required
+                />
+              </div>
+            </>
+          )}
+
           {!esBoletin && (
           <div className="campo">
             <label htmlFor="contenido">Contenido</label>
@@ -202,36 +304,68 @@ export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) 
             {noticiaEditar && (
               <>
                 <div className="noticia-imagenes-grid">
-                  {imagenes.map((img) => (
-                    <div key={img.id} className="noticia-imagen-miniatura">
-                      <img
-                        src={`${urlImagenNoticia(img)}`}
-                        alt={img.nombre_archivo || "Imagen"}
-                      />
-                      <button
-                        type="button"
-                        className="noticia-imagen-eliminar"
-                        onClick={() => manejarEliminarImagen(img.id)}
-                        title="Eliminar imagen"
-                      >
-                        ✕
-                      </button>
+                  {imagenes.map((img, indice) => (
+                    <div key={img.id} className="noticia-imagen-item">
+                      <div className="noticia-imagen-miniatura">
+                        <img
+                          src={`${urlImagenNoticia(img)}`}
+                          alt={img.nombre_archivo || "Imagen"}
+                        />
+                        <button
+                          type="button"
+                          className="noticia-imagen-eliminar"
+                          onClick={() => manejarEliminarImagen(img.id)}
+                          title="Eliminar imagen"
+                          aria-label={`Eliminar imagen ${indice + 1}`}
+                        >
+                          ✕
+                        </button>
+                        {indice === 0 && imagenes.length > 1 && <span className="noticia-imagen-portada">Portada</span>}
+                      </div>
+                      {imagenes.length > 1 && (
+                        <div className="noticia-imagen-orden">
+                          <button
+                            type="button"
+                            onClick={() => moverImagen(indice, -1)}
+                            disabled={reordenando || subiendoImg || indice === 0}
+                            aria-label={`Subir la imagen ${indice + 1}`}
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => moverImagen(indice, 1)}
+                            disabled={reordenando || subiendoImg || indice === imagenes.length - 1}
+                            aria-label={`Bajar la imagen ${indice + 1}`}
+                          >
+                            ↓
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
 
                 {imagenes.length < maxImagenes && (
                   <label className="btn-subir-imagen">
-                    {subiendoImg ? "Subiendo..." : "+ Agregar imagen"}
+                    {subiendoImg
+                      ? `Subiendo ${progreso ? `${progreso.actual} de ${progreso.total}` : ""}...`
+                      : maxImagenes > 1 ? "+ Agregar imágenes" : "+ Agregar imagen"}
                     <input
                       ref={inputArchivoRef}
                       type="file"
+                      multiple={maxImagenes > 1}
                       accept=".jpg,.jpeg,.png,.gif,.webp"
                       style={{ display: "none" }}
                       onChange={manejarSubidaImagen}
                       disabled={subiendoImg || imagenes.length >= maxImagenes}
                     />
                   </label>
+                )}
+                {maxImagenes > 1 && imagenes.length < maxImagenes && (
+                  <p style={{ fontSize: "0.78rem", color: "#888", margin: "0.3rem 0 0" }}>
+                    Puedes seleccionar varias; quedan {maxImagenes - imagenes.length}. La primera es la portada.
+                  </p>
                 )}
                 {imagenes.length >= maxImagenes && (
                   <p style={{ fontSize: "0.78rem", color: "#888", margin: "0.3rem 0 0" }}>
