@@ -1,6 +1,6 @@
 import { urlImagenNoticia } from "../utils/storage";
 // modules/portal/frontend/components/ArticleModal.jsx
-import { useEffect } from 'react';
+import { useEffect, useId } from 'react';
 import { createPortal } from 'react-dom';
 import Icons from './Icons';
 import useFocoModal from '../hooks/useFocoModal';
@@ -23,6 +23,7 @@ import { eventoFinalizado, textoFechaLugar } from '../utils/tiposNoticia';
 export default function ArticleModal({ item, onClose }) {
   // Foco: entra al diálogo, Tab atrapado y devuelto a quien lo abrió al cerrar
   const dialogoRef = useFocoModal(Boolean(item?.noticia));
+  const tituloId = useId(); // id único por instancia para aria-labelledby
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -73,7 +74,7 @@ export default function ArticleModal({ item, onClose }) {
     </div>
   ) : (
     <div className="rayhsa-modal-overlay" onClick={onOverlay}>
-      <div className="rayhsa-modal" ref={dialogoRef} tabIndex={-1} role="dialog" aria-modal="true" style={{ position: 'relative' }}>
+      <div className="rayhsa-modal" ref={dialogoRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={tituloId} style={{ position: 'relative' }}>
         <button className="rayhsa-modal__close" onClick={onClose} aria-label="Cerrar">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
             <path d="M6 6l12 12M18 6 6 18" />
@@ -99,10 +100,12 @@ export default function ArticleModal({ item, onClose }) {
                 {finalizado && <span className="badge badge-finalizado">Finalizado</span>}
               </div>
             </div>
-            {/* Evento: el cuerpo desplazable es enfocable para alcanzarlo con Tab y desplazarlo con el teclado */}
+            {/* El cuerpo desplazable es enfocable para alcanzarlo con Tab y desplazarlo con el teclado */}
             <div
               className="rayhsa-modal__body"
-              {...(isEvento ? { tabIndex: 0, role: 'region', 'aria-label': 'Descripción del evento' } : {})}
+              tabIndex={0}
+              role="region"
+              aria-label={isEvento ? 'Descripción del evento' : 'Contenido de la noticia'}
             >
               <div className="rayhsa-modal__meta">
                 {meta.map((m, i) => (
@@ -111,7 +114,7 @@ export default function ArticleModal({ item, onClose }) {
                   </span>
                 ))}
               </div>
-              <h2 className="rayhsa-modal__titulo">{noticia.titulo}</h2>
+              <h2 id={tituloId} className="rayhsa-modal__titulo">{noticia.titulo}</h2>
               {noticia.subtitulo && <p className="rayhsa-modal__lead">{noticia.subtitulo}</p>}
               {noticia.contenido && (
                 <div className="rayhsa-modal__contenido">
@@ -142,7 +145,7 @@ export default function ArticleModal({ item, onClose }) {
               </span>
               {folio && <span className="rayhsa-modal__code">#{folio}</span>}
             </div>
-            <div className="rayhsa-modal__body">
+            <div className="rayhsa-modal__body" tabIndex={0} role="region" aria-label="Contenido del comunicado">
               {isUrgente && (
                 <div className="rayhsa-modal__urgente">
                   {Icons.bell} Este comunicado requiere acción de tu parte.
@@ -155,7 +158,7 @@ export default function ArticleModal({ item, onClose }) {
                   </span>
                 ))}
               </div>
-              <h2 className="rayhsa-modal__titulo">{noticia.titulo}</h2>
+              <h2 id={tituloId} className="rayhsa-modal__titulo">{noticia.titulo}</h2>
               {noticia.subtitulo && <p className="rayhsa-modal__lead">{noticia.subtitulo}</p>}
               {noticia.contenido && (
                 <div className="rayhsa-modal__contenido">

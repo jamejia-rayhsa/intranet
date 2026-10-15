@@ -510,6 +510,7 @@
   font: inherit;
   cursor: zoom-in;
 }
+.rayhsa .news-hero__slide[role="button"]:focus-visible { outline: 3px solid var(--color-acento); outline-offset: -3px; } /* dentro del slide (overflow hidden) */
 .rayhsa .news-hero__boletin-boton:focus-visible { outline: 3px solid var(--color-acento); outline-offset: 3px; }
 
 /* Tarjeta de evento: clic en toda la tarjeta; botón "Ver detalle" para teclado */
@@ -1232,7 +1233,7 @@
   min-width: 0;
   outline: none;
 }
-.carrusel-imagenes:focus-visible { box-shadow: 0 0 0 3px var(--color-acento); border-radius: 10px; }
+.carrusel-imagenes__pista:focus-visible { outline: 3px solid var(--color-acento); outline-offset: -3px; border-radius: 10px; }
 .carrusel-imagenes__pista {
   display: flex;
   overflow-x: auto;
@@ -1324,7 +1325,7 @@
   align-items: center;
   gap: 0.6rem;
   font-size: 0.78rem;
-  color: #718096;
+  color: var(--color-texto-medio); /* #4a5568 sobre blanco: ~7,5:1 (el gris anterior #718096 daba ~4,0:1) */
   margin-bottom: 0.65rem;
   flex-wrap: wrap;
 }

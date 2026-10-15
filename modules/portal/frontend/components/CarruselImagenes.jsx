@@ -62,10 +62,14 @@ export default function CarruselImagenes({ imagenes = [], alt = '', claseMarco =
       role="region"
       aria-roledescription="carrusel"
       aria-label="Imágenes del evento"
-      tabIndex={varias ? 0 : undefined}
       onKeyDown={alPulsarTecla}
     >
-      <div className="carrusel-imagenes__pista" ref={pistaRef}>
+      {/* La pista desplazable es enfocable (una sola parada de Tab); ←/→ burbujean al contenedor, que los atiende una vez */}
+      <div
+        className="carrusel-imagenes__pista"
+        ref={pistaRef}
+        {...(varias ? { tabIndex: 0, role: 'group', 'aria-label': 'Imágenes desplazables' } : {})}
+      >
         {imagenes.map((img, i) => (
           <div
             className="carrusel-imagenes__slide"

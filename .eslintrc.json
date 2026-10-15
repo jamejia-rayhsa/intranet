@@ -34,8 +34,10 @@
           "jsx": true
         }
       },
+      "plugins": ["react"],
       "rules": {
-        "no-undef": "off"
+        "no-undef": "off",
+        "react/jsx-uses-vars": "error"
       }
     }
   ]

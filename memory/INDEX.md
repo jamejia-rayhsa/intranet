@@ -121,3 +121,8 @@
 - [2026-10-15] coder → code-notes.md — Fase 4 noticias: correcciones de la revisión final
 - [2026-10-15] tester → tests.md — Fase 4 noticias: confirmación de las correcciones finales (6/6 PASS: orden estable, tope de limite/pagina, auditoría del POST, cuerpo enfocable, fecha_evento; Postgres real 49/49, Chromium + Firefox; jest 387/387, eslint 0 errores; los 2 PARA RESOLVER RESUELTOS, sin fallos)
 - [2026-10-15] orquestador → roadmap.md/decisions.md — Fase 4 noticias CERRADA y commiteada; plan completo, pendiente OK para publicar y desplegar
+- [2026-10-15] coder → code-notes.md — eslint-plugin-react y slides de Inicio accesibles por teclado
+- [2026-10-15] tester → tests.md — Slides de Inicio accesibles por teclado (y regresión): Tab/Enter/Espacio/clic y ←/→ OK en Chromium + Firefox (15 paradas, 1 apertura), regresión 19/19, jest 387/387, eslint 0 errores; 2 PARA RESOLVER menores (foco no sigue al slide activo; hallazgos axe); incidente: `npm i axe-core` en la raíz del repo, revertido
+- [2026-10-15] coder → code-notes.md — Foco con ←/→ en el carrusel de Inicio y hallazgos de axe
+- [2026-10-15] tester → tests.md — Confirmación del foco con ←/→ y de los hallazgos de axe (foco RESUELTO en Chromium + Firefox; CarruselImagenes y trampa de Tab en los 4 modales OK; axe: corregido lo pedido, quedan 3 hallazgos menores de contraste/nombre; jest 387/387, eslint 0 errores; repo sin axe-core)
+- [2026-10-15] orquestador → decisions.md/roadmap.md — eslint-plugin-react instalado y carrusel de Inicio accesible por teclado; axe restante como deuda (paleta previa)

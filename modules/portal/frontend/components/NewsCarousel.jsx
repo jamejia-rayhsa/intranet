@@ -6,6 +6,9 @@ import ImagenVertical from './ImagenVertical';
 import { urlImagenNoticia } from '../utils/storage';
 import { etiquetaTipo, esBoletin, esEvento, eventoFinalizado, textoFechaLugar } from '../utils/tiposNoticia';
 
+// Nombre accesible del tipo: "Evento", "Comunicado"...
+const etiquetaDe = (n) => (n.tipo === 'oferta_empleo' ? 'Oferta' : etiquetaTipo(n.tipo));
+
 function textoPlano(valor) {
   return String(valor || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -53,6 +56,19 @@ export default function NewsCarousel({ noticias = [], onOpen, verTodasTo = '/not
     };
   }, [actualizar]);
 
+  // Si el foco está dentro de un slide (o en el botón del boletín) y el slide visible cambia
+  // (teclas ← →, flechas, barras o deslizar), el foco sigue al nuevo slide activo. Si estaba en una flecha
+  // lateral o en una barra de progreso no se toca. preventScroll: el scroll-snap ya lleva el slide a su sitio.
+  useEffect(() => {
+    const pista = pistaRef.current;
+    const foco = document.activeElement;
+    if (!pista || !foco || !pista.contains(foco)) return;
+    const slide = pista.children[activo];
+    if (!slide || slide.contains(foco)) return;
+    const destino = slide.matches('[role="button"]') ? slide : slide.querySelector('button');
+    if (destino) destino.focus({ preventScroll: true });
+  }, [activo]);
+
   const irA = (indice) => {
     const el = pistaRef.current;
     if (!el || total === 0) return;
@@ -87,18 +103,34 @@ export default function NewsCarousel({ noticias = [], onOpen, verTodasTo = '/not
           const evento = esEvento(n);
           const tipo = n.tipo === 'comunicado' ? 'comunicado' : n.tipo === 'oferta_empleo' ? 'oferta' : 'noticia';
           return (
-            <article
+            <div
               className={`news-hero__slide ${boletin ? 'news-hero__slide--boletin' : ''}`.trim()}
               key={n.id}
-              onClick={boletin ? undefined : () => onOpen?.(n)}
               aria-roledescription="diapositiva"
-              aria-label={boletin ? `Boletín, ${i + 1} de ${total}` : `${i + 1} de ${total}`}
+              {...(boletin
+                ? { 'aria-label': `Boletín, ${i + 1} de ${total}` }
+                : {
+                    // Un único control por slide: el propio div actúa como botón (no hay controles anidados).
+                    // El clic y Enter/Espacio llaman a la misma función; el navegador no sintetiza un clic
+                    // desde teclado en un div, así que el detalle nunca se abre dos veces.
+                    role: 'button',
+                    // Solo el slide visible entra en el orden de Tab (los demás se alcanzan con ← →, flechas o barras)
+                    tabIndex: i === activo ? 0 : -1,
+                    // El nombre incluye lo que se ve: en un evento, su fecha y lugar
+                    'aria-label': `${etiquetaDe(n)}: ${n.titulo}${evento ? `, ${textoFechaLugar(n)}` : ''}, ${i + 1} de ${total}`,
+                    onClick: () => onOpen?.(n),
+                    onKeyDown: (e) => {
+                      if (e.target !== e.currentTarget) return;
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen?.(n); }
+                    },
+                  })}
             >
               {boletin ? (
                 // Boletín: solo la imagen, dentro de un botón real (operable con teclado) que la amplía
                 <button
                   type="button"
                   className="news-hero__boletin-boton imagen-vertical--carrusel"
+                  tabIndex={i === activo ? 0 : -1}
                   onClick={() => onOpen?.(n)}
                   aria-label="Ampliar boletín"
                 >
@@ -131,7 +163,7 @@ export default function NewsCarousel({ noticias = [], onOpen, verTodasTo = '/not
                   </div>
                 </ImagenVertical>
               )}
-            </article>
+            </div>
           );
         })}
       </div>
