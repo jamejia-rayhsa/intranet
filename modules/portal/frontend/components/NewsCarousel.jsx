@@ -2,21 +2,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import Icons from './Icons';
+import ImagenVertical from './ImagenVertical';
 import { urlImagenNoticia } from '../utils/storage';
-
-/**
- * NewsCarousel — carrusel de publicaciones (noticias y comunicados) a pantalla completa.
- *
- * Cada publicación ocupa todo el alto del área de contenido: la imagen de fondo y, al pie,
- * sobre un degradado, la etiqueta, la fecha, el título, el resumen y "Leer artículo".
- * La pista usa scroll-snap horizontal: en móvil se desliza con el dedo; en escritorio hay
- * flechas, barras de progreso clicables y las teclas ← →. Sin imagen se usa un fondo institucional.
- *
- * @param {Array} noticias — entidades crudas del backend (titulo, subtitulo, contenido, tipo, fecha_publicacion, imagenes)
- * @param {(noticia) => void} onOpen — se llama al hacer clic en una publicación
- * @param {string} [verTodasTo] — ruta del archivo completo (default /noticias)
- */
-const ETIQUETAS = { comunicado: 'Comunicado', oferta_empleo: 'Oferta' };
+import { etiquetaTipo, esBoletin } from '../utils/tiposNoticia';
 
 function textoPlano(valor) {
   return String(valor || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -28,6 +16,19 @@ function resumenDe(n) {
   return texto.length > 180 ? texto.slice(0, 180).trimEnd() + '…' : texto;
 }
 
+/**
+ * NewsCarousel — carrusel de publicaciones (noticias y comunicados) a pantalla completa.
+ *
+ * Cada publicación ocupa todo el alto del área de contenido: la imagen va en un marco vertical 2:3
+ * centrado (ImagenVertical, completa y sobre fondo desenfocado) y, al pie del marco, sobre un
+ * degradado, la etiqueta, la fecha, el título, el resumen y "Leer artículo".
+ * La pista usa scroll-snap horizontal: en móvil se desliza con el dedo; en escritorio hay
+ * flechas, barras de progreso clicables y las teclas ← →. Sin imagen se usa el placeholder institucional.
+ *
+ * @param {Array} noticias — entidades crudas del backend (titulo, subtitulo, contenido, tipo, fecha_publicacion, imagenes)
+ * @param {(noticia) => void} onOpen — se llama al hacer clic en una publicación
+ * @param {string} [verTodasTo] — ruta del archivo completo (default /noticias)
+ */
 export default function NewsCarousel({ noticias = [], onOpen, verTodasTo = '/noticias' }) {
   const pistaRef = useRef(null);
   const [activo, setActivo] = useState(0);
@@ -82,38 +83,51 @@ export default function NewsCarousel({ noticias = [], onOpen, verTodasTo = '/not
             ? new Date(n.fecha_publicacion).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })
             : null;
           const resumen = resumenDe(n);
+          const boletin = esBoletin(n);
           const tipo = n.tipo === 'comunicado' ? 'comunicado' : n.tipo === 'oferta_empleo' ? 'oferta' : 'noticia';
           return (
             <article
-              className="news-hero__slide"
+              className={`news-hero__slide ${boletin ? 'news-hero__slide--boletin' : ''}`.trim()}
               key={n.id}
-              onClick={() => onOpen?.(n)}
+              onClick={boletin ? undefined : () => onOpen?.(n)}
               aria-roledescription="diapositiva"
-              aria-label={`${i + 1} de ${total}`}
+              aria-label={boletin ? `Boletín, ${i + 1} de ${total}` : `${i + 1} de ${total}`}
             >
-              {imagen ? (
-                <img
-                  className="news-hero__imagen"
-                  src={urlImagenNoticia(imagen)}
-                  alt=""
-                  loading={i === 0 ? 'eager' : 'lazy'}
-                  decoding="async"
-                  draggable={false}
-                />
+              {boletin ? (
+                // Boletín: solo la imagen, dentro de un botón real (operable con teclado) que la amplía
+                <button
+                  type="button"
+                  className="news-hero__boletin-boton imagen-vertical--carrusel"
+                  onClick={() => onOpen?.(n)}
+                  aria-label="Ampliar boletín"
+                >
+                  <ImagenVertical
+                    src={urlImagenNoticia(imagen)}
+                    alt="Boletín"
+                    prioritaria={i === 0}
+                    className="imagen-vertical--carrusel"
+                  />
+                </button>
               ) : (
-                <div className="news-hero__sin-imagen" aria-hidden="true" />
+                <ImagenVertical
+                  src={imagen ? urlImagenNoticia(imagen) : ''}
+                  alt=""
+                  prioritaria={i === 0}
+                  className="imagen-vertical--carrusel"
+                >
+                  <div className="news-hero__velo" aria-hidden="true" />
+                  <div className="news-hero__info">
+                    <div className="news-hero__meta">
+                      <span className={`badge badge-${tipo}`}>{n.tipo === 'oferta_empleo' ? 'Oferta' : etiquetaTipo(n.tipo)}</span>
+                      {fecha && <span>{fecha}</span>}
+                      {n.tiempo_lectura && <span>{n.tiempo_lectura} min de lectura</span>}
+                    </div>
+                    <h3 className="news-hero__titulo">{n.titulo}</h3>
+                    {resumen && <p className="news-hero__resumen">{resumen}</p>}
+                    <span className="news-hero__cta">Leer artículo {Icons.arrUR}</span>
+                  </div>
+                </ImagenVertical>
               )}
-              <div className="news-hero__velo" aria-hidden="true" />
-              <div className="news-hero__info">
-                <div className="news-hero__meta">
-                  <span className={`badge badge-${tipo}`}>{ETIQUETAS[n.tipo] || n.tipo || 'Noticia'}</span>
-                  {fecha && <span>{fecha}</span>}
-                  {n.tiempo_lectura && <span>{n.tiempo_lectura} min de lectura</span>}
-                </div>
-                <h3 className="news-hero__titulo">{n.titulo}</h3>
-                {resumen && <p className="news-hero__resumen">{resumen}</p>}
-                <span className="news-hero__cta">Leer artículo {Icons.arrUR}</span>
-              </div>
             </article>
           );
         })}

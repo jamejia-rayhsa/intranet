@@ -4,6 +4,7 @@ import {
   eliminarNoticia,
 } from "../services/noticias.service";
 import NewsEditorModal from "../components/NewsEditorModal";
+import { etiquetaTipo } from "../utils/tiposNoticia";
 
 export default function PortalAdminNoticias() {
   const [noticias, setNoticias] = useState([]);
@@ -84,7 +85,7 @@ export default function PortalAdminNoticias() {
           {noticias.map((noticia) => (
             <tr key={noticia.id}>
               <td>{noticia.titulo}</td>
-              <td>{noticia.tipo}</td>
+              <td>{etiquetaTipo(noticia.tipo)}</td>
               <td>{noticia.publicada ? "Publicada" : "Borrador"}</td>
               <td>
                 {new Date(noticia.fecha_publicacion).toLocaleDateString(

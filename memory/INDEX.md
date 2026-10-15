@@ -74,3 +74,31 @@
 - [2026-10-14] orquestador → decisions.md — Noticias/eventos 2:3, boletín y carrusel: hallazgos y plan propuesto (pendiente de aprobación)
 - [2026-10-14] orquestador → tests.md/roadmap.md — Paso 0: agregados tester.md, tests.md y roadmap.md (CLAUDE.md sin cambios)
 - [2026-10-14] orquestador → decisions.md — Noticias/eventos: decisiones de producto del humano (fondo desenfocado, evento con fecha y lugar, boletín, 2:3 en todas las vistas)
+- [2026-10-14] orquestador → roadmap.md — GO del humano a la Fase 1 (presentación 2:3): delegada a coder y luego revisor
+- [2026-10-14] coder → code-notes.md — Fase 1 noticias: marco vertical 2:3 con fondo desenfocado
+- [2026-10-14] revisor → reviews.md — Fase 1 noticias: revisión del marco vertical 2:3 (APROBADO CON OBSERVACIONES)
+- [2026-10-14] coder → code-notes.md — Fase 1 noticias: correcciones de la revisión (H1, H5-H9)
+- [2026-10-14] orquestador → decisions.md — Fase 1 noticias: revisión aprobada con observaciones; tarjetas más angostas (decisión del humano); H3/H4 diferidos
+- [2026-10-14] coder → code-notes.md — Fase 1 noticias: tarjetas más angostas (minmax 200px, marco 200x300)
+- [2026-10-14] revisor → reviews.md — Fase 1 noticias: re-revisión (correcciones + tarjetas angostas) (APROBADO CON OBSERVACIONES)
+- [2026-10-14] coder → code-notes.md — Fase 1 noticias: segunda ronda de correcciones (cierre absoluto, @supports dvh, modal móvil)
+- [2026-10-14] revisor → reviews.md — Fase 1 noticias: confirmación de la segunda ronda (APROBADO CON OBSERVACIONES)
+- [2026-10-14] orquestador → roadmap.md/decisions.md — Fase 1 noticias lista para GO/NO-GO (revisión visual en staging pendiente)
+- [2026-10-14] coder → code-notes.md — Fase 1 noticias: modal desbordaba el ancho de la página (min-width:0 en el diálogo flex)
+- [2026-10-14] orquestador → code-notes.md — Fase 1 noticias: corregido desborde de ancho del modal (reportado por el humano al verlo en desarrollo)
+- [2026-10-14] tester → tests.md — Modal de noticia con imagen: medición real (Chromium 156 + Firefox 157, 632 mediciones): desborde de ancho NO reproducido; diagnóstico del coder (min-width:auto) refutado
+- [2026-10-14] tester → decisions.md — PARA RESOLVER: modal de noticia desborda el ancho (no reproducido; faltan datos del entorno del humano)
+- [2026-10-14] coder → code-notes.md — Fase 1 noticias: modal con alto máximo y marco reducido (corrección del diagnóstico anterior)
+- [2026-10-14] tester → tests.md — Modal de noticia: re-medición tras reducir el marco y limitar el alto (6/6 PASS, sin fallos; marco 373x560 a 1080)
+- [2026-10-14] orquestador → decisions.md — Fase 1: modal con imagen reducida para caber en la ventana (tester: 280/280 PASS; desborde de ancho no reproducido)
+- [2026-10-14] orquestador → roadmap.md — Fase 1 cerrada por el humano; GO a la Fase 2 (boletín): coder, luego revisor y tester en paralelo
+- [2026-10-14] coder → code-notes.md — Fase 2 noticias: categoría boletín
+- [2026-10-14] revisor → reviews.md — Fase 2 noticias: revisión de la categoría boletín (APROBADO CON OBSERVACIONES; sin críticos; H1 alto preexistente: GET /:id sirve borradores)
+- [2026-10-14] tester → tests.md — Fase 2 noticias: categoría boletín (componentes reales en Chromium 156 + Firefox 157, 72 combos de viewport; jest 263/263, eslint 0 errores; sin fallos funcionales, 1 FAIL cosmético: cursor zoom-in)
+- [2026-10-14] tester → decisions.md — PARA RESOLVER: cursor del slide de boletín (menor) y tarjeta de boletín estirada en /noticias (decisión de producto)
+- [2026-10-14] coder → code-notes.md — Fase 2 noticias: correcciones de la revisión
+- [2026-10-14] orquestador → decisions.md — Fase 2 boletín: revisión/pruebas sin críticos; decisiones del humano (borradores, API pública del boletín, tarjeta)
+- [2026-10-14] coder → code-notes.md — Fase 2 noticias: borradores, API pública del boletín y tarjeta
+- [2026-10-14] revisor → reviews.md — Fase 2 noticias: re-revisión (correcciones, borradores y API pública del boletín) (APROBADO CON OBSERVACIONES; sin críticos ni altos; 7 bajos)
+- [2026-10-14] tester → tests.md — Fase 2 noticias: re-prueba tras correcciones (7/7 PASS en Chromium 156 + Firefox 157; jest 275/275, eslint 0 errores; PARA RESOLVER cursor y tarjeta estirada RESUELTOS, sin fallos)
+- [2026-10-14] orquestador → roadmap.md/decisions.md — Fase 2 noticias (boletín) lista para GO/NO-GO; bajos diferidos a Fase 4

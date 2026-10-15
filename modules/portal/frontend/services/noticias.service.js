@@ -15,6 +15,11 @@ export async function obtenerNoticia(id) {
   return solicitar(`/noticias/${id}`);
 }
 
+// Detalle para el panel de administración (incluye borradores; requiere permiso Noticias:consulta)
+export async function obtenerNoticiaAdmin(id) {
+  return solicitar(`/noticias/admin/${id}`);
+}
+
 export async function crearNoticia(datos) {
   return solicitar("/noticias", {
     metodo: "POST",

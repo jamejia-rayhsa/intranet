@@ -3,6 +3,7 @@ import { urlImagenNoticia } from "../utils/storage";
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Icons from './Icons';
+import ImagenVertical from './ImagenVertical';
 
 
 /**
@@ -11,6 +12,7 @@ import Icons from './Icons';
  * Acepta dos formas de uso:
  *   1. `item={ kind: 'news', noticia }` — abre una noticia con sus imágenes y contenido.
  *   2. `item={ kind: 'comunicado', noticia }` — abre como comunicado con folio + banner urgente.
+ *   3. `item={ kind: 'boletin', noticia }` — visor: SOLO la imagen ampliada (sin título ni texto).
  *
  * Donde `noticia` es la entidad cruda de la API (`/api/noticias/:id`).
  */
@@ -30,6 +32,7 @@ export default function ArticleModal({ item, onClose }) {
   const { kind = 'news', noticia } = item;
   if (!noticia) return null;
 
+  const isBoletin = kind === 'boletin';
   const isNews = kind === 'news';
   const primeraImagen = noticia.imagenes?.[0];
   const onOverlay = (e) => { if (e.target === e.currentTarget) onClose(); };
@@ -44,7 +47,23 @@ export default function ArticleModal({ item, onClose }) {
   const folio = noticia.folio || noticia.codigo || (noticia.id ? `N-${String(noticia.id).padStart(3, '0')}` : null);
   const isUrgente = noticia.urgente || noticia.es_urgente;
 
-  const content = (
+  const content = isBoletin ? (
+    <div className="rayhsa-modal-overlay rayhsa-modal-overlay--boletin" onClick={onOverlay}>
+      <div className="rayhsa-modal rayhsa-modal--boletin" role="dialog" aria-modal="true" aria-label="Boletín" style={{ position: 'relative' }}>
+        <button className="rayhsa-modal__close" onClick={onClose} aria-label="Cerrar">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+            <path d="M6 6l12 12M18 6 6 18" />
+          </svg>
+        </button>
+        <ImagenVertical
+          src={primeraImagen ? urlImagenNoticia(primeraImagen) : ''}
+          alt="Boletín"
+          prioritaria
+          className="imagen-vertical--ampliada"
+        />
+      </div>
+    </div>
+  ) : (
     <div className="rayhsa-modal-overlay" onClick={onOverlay}>
       <div className="rayhsa-modal" role="dialog" aria-modal="true" style={{ position: 'relative' }}>
         <button className="rayhsa-modal__close" onClick={onClose} aria-label="Cerrar">
@@ -55,13 +74,15 @@ export default function ArticleModal({ item, onClose }) {
 
         {isNews ? (
           <>
-            <div className="rayhsa-modal__media" style={primeraImagen ? {
-              backgroundImage: `url(${urlImagenNoticia(primeraImagen)}), linear-gradient(135deg, #002E6D 0%, #001e47 100%)`,
-              backgroundSize: 'cover, cover',
-              backgroundPosition: 'center, center',
-            } : undefined}>
+            <div className="rayhsa-modal__media rayhsa-modal__media--vertical">
+              <ImagenVertical
+                src={primeraImagen ? urlImagenNoticia(primeraImagen) : ''}
+                alt={noticia.titulo || ''}
+                prioritaria
+                textoVacio="Sin imagen"
+                className="imagen-vertical--modal"
+              />
               <span className="badge badge-noticia">{noticia.tipo || 'Noticia'}</span>
-              {!primeraImagen && <span className="ph">Sin imagen</span>}
             </div>
             <div className="rayhsa-modal__body">
               <div className="rayhsa-modal__meta">

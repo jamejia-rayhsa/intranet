@@ -1691,3 +1691,312 @@ Sin fallos. Falla preexistente (no relacionada): 2 tests de empleado.controller.
 
 2 observaciones menores (Express 5 req.query mutation, tickets GET sin filtro propietario) no bloquean — son mejoras futuras. El código está listo para staging/prod.
 
+
+### [2026-10-14] [revisor] — Fase 1 noticias: revisión del marco vertical 2:3
+**VEREDICTO: APROBADO CON OBSERVACIONES.** Cumple las decisiones aprobadas (2:3 con máx. 500x750, contain sobre fondo desenfocado, las tres vistas, solo imagenes[0], sin tocar backend/BD/editor/servicios/deps). No hay hallazgos críticos ni violaciones de decisiones. Quedan un hallazgo medio con posible solapamiento de controles (no verificado en navegador), dos medios de densidad/rendimiento y observaciones bajas.
+
+**Verificado:** `npx eslint modules/portal/frontend` = 95 warnings, 0 errores (coincide con el coder). `npx vite build` (salida a scratch) = OK, 162 módulos. Sin grep de `news-hero__imagen`, `news-hero__sin-imagen` ni `noticia-imagen-preview` fuera de dist/ (dist no está rastreado). Cambios de código solo en modules/portal/frontend y ImagenVertical.jsx (nuevo); no hay cambios en backend, BD, NewsEditorModal ni package.json. Sin `div` por variable en las expresiones CSS (solo divisores literales 2 y 3).
+**No verificado:** renderizado real, solapamientos y tacto en navegador (≥1280, ~900, ≤480 px) se estimaron por cálculo de reglas CSS, no con captura.
+
+#### Hallazgos
+
+**H1 — Flechas del carrusel pueden quedar bajo el texto en móvil**
+**Archivo/línea:** modules/portal/frontend/styles/rayhsa-system.css:554 (z-index:2 de .news-hero__info) frente a :647-667 (.news-hero__flecha sin z-index) y :690 (padding lateral 0.75rem a ≤640px)
+**Problema:** En ≤640 px el marco ocupa casi todo el ancho y la flecha izquierda (left .5rem, 36 px) se solapa con el borde del marco; como la info tiene z-index 2 y las flechas z auto, en alturas bajas (p. ej. 360x568) el bloque de texto puede tapar la mitad inferior de la flecha y el clic iría a la diapositiva (abre el detalle). No verificado en navegador.
+**Severidad:** medio
+**Fix sugerido:** dar a .news-hero__flecha, .news-hero__barras y .news-hero__todas un z-index superior (3), o reservar en la info un margen inferior que deje libre la franja central; no cambiar la lógica JS.
+
+**H2 — Tarjetas de /noticias con imagen muy alta**
+**Archivo/línea:** modules/portal/frontend/styles/rayhsa-system.css:433-441 y :477-480 (.imagen-vertical--tarjeta sin tope de alto); components/NoticiaCard.jsx:27-31
+**Problema:** La tarjeta usa el alto por defecto de 750 px, así que el marco mide 1.5 veces el ancho de la tarjeta (≈ 400-470 px de imagen en escritorio, frente a 130 px antes), y las tarjetas sin imagen ocupan el mismo espacio con el 📄. Es consecuencia de la decisión aprobada (2:3 en tarjetas), pero cambia mucho la densidad de la cuadrícula.
+**Severidad:** medio
+**Fix sugerido:** confirmar con el usuario la altura aceptable; si quiere más compacto, `.imagen-vertical--tarjeta { --iv-alto-max: 360px; }` mantiene 2:3 y centrado, con un ancho de 240 px.
+
+**H3 — Coste del blur con listas largas**
+**Archivo/línea:** modules/portal/frontend/components/ImagenVertical.jsx:19-27 (segunda img de fondo) y modules/portal/frontend/styles/rayhsa-system.css:447-452 (filter: blur(22px) brightness(.8))
+**Problema:** Cada marco carga la imagen dos veces (la URL se repite; la caché del navegador evita la descarga doble, pero no la decodificación a tamaño completo) y aplica un filtro de blur a una capa a tamaño completo; con 50 tarjetas en /noticias son hasta 50 capas filtradas y 100 decodificaciones. No medido.
+**Severidad:** medio
+**Fix sugerido:** medir con Performance en /noticias con 50 publicaciones; si pesa, usar una versión reducida para el fondo o un fondo sólido/gradiente en tarjetas, y dejar el blur solo en carrusel y modal.
+
+**H4 — El lint no cumple "sin más warnings": +3 falsos positivos en archivos tocados**
+**Archivo/línea:** modules/portal/frontend/components/ArticleModal.jsx:6, components/NewsCarousel.jsx:5, components/NoticiaCard.jsx:2
+**Problema:** Verificado con `git show HEAD:... | npx eslint --stdin`: HEAD tenía 1 warning (NewsCarousel `Link`) y ahora hay 4 en esos archivos, tres nuevos `no-unused-vars` sobre `ImagenVertical` que sí se usa en JSX; el total pasa de 92 a 95. Es el mismo falso positivo que ya tiene `Link` en NewsCarousel.jsx:3, así que viene de la configuración de ESLint (sin reconocer el uso en JSX), no del código.
+**Severidad:** bajo
+**Fix sugerido:** no tocar el código; corregir la configuración de ESLint (regla react/jsx-uses-vars o plugin react) en una tarea aparte, o documentar en code-notes que los tres warnings son falsos positivos.
+
+**H5 — Modal: altura creciente y botón de cierre posiblemente fuera de vista**
+**Archivo/línea:** modules/portal/frontend/styles/rayhsa-system.css:1089-1095 (marco del modal) y :1080-1086 (badge); components/ArticleModal.jsx:52-53 (botón de cierre)
+**Problema:** En escritorio el marco añade hasta 60dvh a la altura del modal, y el overlay (overflow-y auto) se desplaza con todo el diálogo, así que el botón de cierre absoluto puede salir de la vista en pantallas bajas (Esc y clic fuera siguen funcionando). En móvil el badge queda sobre la esquina superior izquierda del marco, que ahora está dentro del padding. No verificado.
+**Severidad:** bajo
+**Fix sugerido:** fijar el botón de cierre (position sticky, o colocarlo en el encabezado del overlay) y revisar la posición del badge en móvil.
+
+**H6 — Marco del modal sin piso de altura**
+**Archivo/línea:** modules/portal/frontend/styles/rayhsa-system.css:1095 (.imagen-vertical--modal { --iv-alto-max: min(750px, 60dvh) })
+**Problema:** A diferencia del carrusel no tiene piso; en un móvil apaisado (~390 px de alto) el marco queda en ~234 px de alto y ~156 px de ancho.
+**Severidad:** bajo
+**Fix sugerido:** `max(300px, min(750px, 60dvh))` o similar, comprobando que la altura de body siga siendo desplazable.
+
+**H7 — Sin alternativa para navegadores sin dvh**
+**Archivo/línea:** modules/portal/frontend/styles/rayhsa-system.css:533, :678 y :1095
+**Problema:** `--iv-alto-max` solo usa `dvh` sin fallback `vh`; si el navegador no lo soporta la variable se invalida, el ancho cae a auto y el marco pierde el tope de 500 px (queda a 100% del ancho). Afecta solo a navegadores anteriores (aprox. antes de 2022).
+**Severidad:** bajo
+**Fix sugerido:** declarar antes la versión con `100vh` (cascada de fallback) o aceptar y documentarlo.
+
+**H8 — Cambio visual no pedido en el placeholder sin imagen**
+**Archivo/línea:** modules/portal/frontend/components/ImagenVertical.jsx:40 (📄); ArticleModal.jsx (se quitó `<span className="ph">Sin imagen</span>`)
+**Problema:** El carrusel sin imagen pasaba de gradiente sin icono a un 📄 de 3 rem, y el modal pierde el texto "Sin imagen". No está en las decisiones aprobadas.
+**Severidad:** bajo
+**Fix sugerido:** confirmar con el usuario; si no lo quiere, quitar el icono o usar solo el gradiente.
+
+**H9 — Comentario huérfano y hex redundantes**
+**Archivo/línea:** modules/portal/frontend/styles/globales.css:3126 (cabecera "NOTICIA CARD CON IMAGEN" sin contenido tras borrar el bloque); rayhsa-system.css:439-441 y :465-466 (fallbacks hex `#002E6D`, `#001e47` dentro de var())
+**Problema:** La cabecera de sección quedó sin bloque debajo, y las variables `--color-primario` y `--color-primario-oscuro` están en :root (globales.css), así que los fallbacks hex no hacen falta.
+**Severidad:** bajo
+**Fix sugerido:** borrar la línea 3126 y quitar los fallbacks hex (la regla de react.md pide variables globales).
+
+#### Verificado sin hallazgo
+- Decisiones: marco 2:3 con max-width 500 y max-height 750 (rayhsa-system.css:433-441); `object-fit: contain` en la imagen completa y `cover` solo en la capa desenfocada (:447-459); las tres vistas usan ImagenVertical; `imagenes[0]` en NewsCarousel.jsx:85, ArticleModal.jsx:34 y NoticiaCard.jsx:25.
+- Carrusel: scroll-snap, flechas, barras, teclado, "Ver todas" y clic de apertura sin cambios de JS (solo marcado y CSS). La diapositiva sigue con onClick y la barra de progreso no se solapa con el marco (padding superior 2.5rem; el marco se centra y su alto coincide con el espacio disponible).
+- Alturas: el cálculo de --iv-alto-max coincide con el alto interior del slide (desktop: 100dvh-56-64-56; móvil: 100dvh-56-32-48) y el piso de 364 px coincide con min-height 420 px del hero; sin división por variable.
+- Accesibilidad: capa de fondo con alt="" y aria-hidden; carrusel con alt=""; modal y tarjeta usan el título como alt.
+- Modal: el estilo del marco va sin scope .rayhsa (usa variables globales); `.rayhsa-modal__body` recibió min-height:0, así que sigue desplazable en móvil; el overlay conserva el cierre por clic y Esc.
+- Código muerto: sin usos de las clases eliminadas; App.jsx no usa los componentes tocados.
+
+### [2026-10-14] [revisor] — Fase 1 noticias: re-revisión (correcciones + tarjetas angostas)
+**VEREDICTO: APROBADO CON OBSERVACIONES.** Sin hallazgos críticos ni violaciones de decisiones. H1, H6 (piso), H8 y H9 quedan resueltos; H5 (cierre) queda sin resolver de forma fiable y el H7 (fallback vh) no funciona. El cambio de tarjetas angostas no rompe el carrusel ni el modal, aunque el marco de la tarjeta mide 168x252 en el ancho mínimo, no 200x300 como dice el comentario.
+
+**Verificado:** `npx eslint modules/portal/frontend` = 95 warnings, 0 errores (igual que antes, falsos positivos de no-unused-vars). `npx vite build` (salida a scratch) = OK, 162 módulos. Lectura de git diff HEAD y ImagenVertical.jsx.
+**No verificado:** renderizado real en navegador (desbordes, legibilidad a 168 px, cierre del modal, altura del modal en móvil bajo).
+
+#### Estado de hallazgos previos
+
+**H1 — flechas tapadas por el texto del carrusel: RESUELTO.** rayhsa-system.css:660 `.news-hero__flecha { z-index: 4 }` (por encima de `.news-hero__info` z 2, :554); barras y "Ver todas" con z 3 (:617, :641). El clic de las flechas no llega a la diapositiva (son hermanas en el DOM).
+
+**H5 — cierre y etiqueta del modal: NO RESUELTO (cierre) / RESUELTO (etiqueta).**
+- Etiqueta: rayhsa-system.css:1106-1113 pone el badge `position: static; order: -1` encima del marco. Correcto.
+- Cierre: rayhsa-system.css:1115-1119 `.rayhsa-modal-overlay:not(.is-mobile) .rayhsa-modal__close { position: fixed; top: 1rem; right: 1.25rem }`. Problemas: (a) `.rayhsa-modal-overlay` tiene `backdrop-filter` (rayhsa-system.css:~1000); según la especificación, backdrop-filter crea bloque contenedor para descendientes fixed, así que el botón podría desplazarse con el overlay y no quedar fijo (no verificado en el navegador objetivo). (b) Aunque fuera fixed, se ancla a la esquina de la ventana, no a la del diálogo: en escritorio (modal de 760 px centrado) queda flotando lejos del modal. (c) La clase `is-mobile` no se aplica en ningún JSX (grep vacío), así que la regla `:not(.is-mobile)` aplica siempre y las reglas móviles del cierre son código muerto.
+**Severidad:** medio
+**Archivo/línea:** modules/portal/frontend/styles/rayhsa-system.css:1115-1119 (y backdrop-filter del overlay, ~:1000)
+**Fix sugerido:** dejar el cierre `position: absolute` dentro de `.rayhsa-modal` (como antes) y sacar el `backdrop-filter` del propio overlay a un `::before` para que no cree bloque contenedor; o hacer el cierre `position: sticky; top: 1rem` en un encabezado del diálogo. Quitar la regla `:not(.is-mobile)` si no se usa.
+
+**H6 — piso del marco del modal: RESUELTO** (rayhsa-system.css:1122-1124, `max(300px, min(750px, 60dvh))`). **NUEVO (consecuencia, medio):** en móvil `.rayhsa-modal` ocupa 100vh con overflow hidden (rayhsa-system.css:~2093-2100, `.rayhsa-modal__media` 160px antes), y el marco con piso 300 más padding 40 px más la etiqueta (~36 px) ocupa ~376 px fijos (flex-shrink 0). En alturas bajas (apaisado ~390 px) el cuerpo queda a 0 px (min-height 0) y el pie de acciones (`.rayhsa-modal__acciones`, :1215) puede quedar cortado sin scroll. No verificado.
+**Archivo/línea:** modules/portal/frontend/styles/rayhsa-system.css:1122-1124 y :1095-1100 (`.rayhsa-modal__media--vertical`)
+**Severidad:** medio
+**Fix sugerido:** en ≤640 (o cuando el alto de la ventana sea menor que ~520 px) bajar el piso o usar `--iv-alto-max: 40dvh`, o hacer que `.rayhsa-modal__media` tenga `flex-shrink: 1; min-height: 0` y el cuerpo sea el único que se desplaza.
+
+**H7 — fallback vh/dvh: NO RESUELTO (ineficaz).** rayhsa-system.css:541-542 (carrusel), :689-690 (carrusel móvil) y :1123-1124 (modal) declaran dos veces `--iv-alto-max`, primero con `vh` y luego con `dvh`. Las propiedades personalizadas no se validan al parsear, así que el navegador sin dvh se queda con la última declaración (dvh), que queda inválida en tiempo de cómputo, y el ancho cae a auto. El truco de fallback solo funciona en propiedades normales.
+**Severidad:** bajo
+**Archivo/línea:** modules/portal/frontend/styles/rayhsa-system.css:541-542, :689-690, :1123-1124
+**Fix sugerido:** quitar las líneas con vh, y envolver el bloque con `@supports (height: 100dvh) { ... }` o aceptar que solo navegadores modernos tienen el tope.
+
+**H8 — texto "Sin imagen": RESUELTO** (ArticleModal.jsx:64 `textoVacio="Sin imagen"`; ImagenVertical.jsx:19, 40-41). El 📄 se mantiene en carrusel, modal y tarjetas; sigue siendo una decisión a confirmar con el usuario.
+**Severidad:** bajo
+
+**H9 — CSS huérfano y hex: RESUELTO.** Se eliminó la cabecera huérfana de globales.css:3126 y `.imagen-vertical` / `.imagen-vertical__vacia` usan las variables globales sin fallback hex (rayhsa-system.css:433-484).
+
+**H2 — tarjetas muy altas: RESUELTO por decisión** (rayhsa-system.css:484-487, `--iv-alto-max: 300px`, `.grid-noticias` minmax 200 px en globales.css:874). Ver punto 2 para el dimensionado real.
+
+**H3 y H4: DIFERIDOS** (según decisions.md).
+
+#### Punto 2 — tarjetas angostas
+
+**NUEVO (bajo, documental): dimensiones reales del marco.** El comentario dice "200x300" (rayhsa-system.css:485). Con `minmax(200px, 1fr)` la tarjeta mide 200 px y el padding es 1rem, así que el contenido mide 168 px. El marco tiene `width: min(500px, 100%, calc(300px*2/3)=200px)` y se queda en 168x252 en el ancho mínimo; solo llega a 200x300 cuando la columna pasa de ~232 px. **Fix sugerido:** corregir el comentario o dejarlo como "hasta 200 px".
+
+**NUEVO (bajo, no verificado): badge del encabezado sin ajuste de línea.** `.noticia-encabezado` (globales.css:907-912) es flex sin `flex-wrap`; el icono y la etiqueta "Oferta de Empleo" pueden no caber en 168 px y quedar apretados o desbordar. El cambio no lo tocó. **Fix sugerido:** `flex-wrap: wrap; gap: .4rem` en `.noticia-encabezado`.
+
+**Desbordes:** correctos. `.noticia-tarjeta` tiene `min-width: 0` y `overflow-wrap: anywhere` (globales.css:883-884); título con 3 líneas (:896-904), subtítulo con 2 (:918-926), resumen con 4 (:929-936) y `.noticia-pie` con wrap (:939-945). Sin división por variable.
+
+**Legibilidad:** título 1rem, resumen 0.85rem, pie 0.75rem (12 px). Es el mínimo aceptable pero no holgado; no verificado visualmente.
+
+**≤768 px:** la regla de `.grid-noticias` cambió de `1fr` a `repeat(auto-fill, minmax(200px, 1fr))` (globales.css:1256-1258). En tabletas pasa de una columna a 2-3 columnas, cambio no listado en las decisiones. **NUEVO (bajo):** confirmar que es intencional. ≤480 px: una columna (contenido ≈ 312 px), marco 200 px centrado sin desbordes.
+
+**Carrusel y modal sin regresiones en JS.** Las clases y variables cambiadas solo afectan a `.imagen-vertical`, `.news-hero*` y `.rayhsa-modal__*` (se revisaron usos en PortalNoticias.jsx:54, NoticiaCard.jsx, NewsCarousel.jsx:100, ArticleModal.jsx:64-65). El cambio `.news-hero__slide` a flex (padding 2.5rem 4.5rem 1rem) no altera la lógica de scroll-snap ni de clic.
+
+### [2026-10-14] [revisor] — Fase 1 noticias: confirmación de la segunda ronda
+**VEREDICTO: APROBADO CON OBSERVACIONES.** Los cuatro puntos quedan resueltos; solo quedan observaciones bajas (cierre que se desplaza con el diálogo y esquina del marco en móvil). Sin hallazgos críticos.
+
+**Verificado:** `npx eslint modules/portal/frontend` = 95 warnings, 0 errores. `npx vite build` (salida a scratch) = OK, 162 módulos. Lectura de CSS y JSX.
+**No verificado:** visibilidad y alcanzabilidad real en navegador; los cálculos de alturas son estimaciones.
+
+1. **H5 cierre del modal — RESUELTO (con observación bajo).** `.rayhsa-modal__close` es `position: absolute; z-index: 3` (rayhsa-system.css:1054-1068). `ArticleModal.jsx` pone `style={{ position: 'relative' }}` en `.rayhsa-modal` (línea del div role="dialog"), así que el cierre se ancla a la esquina del diálogo. Ya no hay `:not(.is-mobile)` ni fixed. Observaciones bajas: (a) el botón se desplaza con el diálogo al hacer scroll en el overlay, así que ya no está siempre a la vista en pantallas bajas (Esc y clic fuera siguen cerrando); (b) en móvil (rayhsa-system.css:2128, top/right .75rem) cubre una esquina del marco de imagen. **Severidad:** bajo. **Fix sugerido:** aceptar, o dejar el cierre `position: sticky` en un encabezado del diálogo si se quiere visible siempre.
+2. **H7 fallback vh/dvh — RESUELTO.** Base con `vh` y `@supports (height: 100dvh)` con `dvh` en carrusel (rayhsa-system.css:540-546), carrusel ≤768 (:693-699) y modal (:1124-1129). Sin duplicados contradictorios: cada bloque declara una sola versión válida por contexto y el orden de cascada es correcto (la regla móvil va después de la de escritorio; la de móvil del modal, :2132, después de la base).
+3. **Móvil del modal — RESUELTO por cálculo (no verificado).** Con `max(220px, min(750px, 45vh))` (:2132), el marco (más padding 40 px y la etiqueta ~48 px con margen) ocupa ~344 px a 568 px de alto. El pie de acciones (`flex-shrink: 0`, :2130 y :1226) ocupa ~70-110 px si los botones se parten en dos filas. El cuerpo (`flex: 1 1 auto; min-height: 0; overflow-y: auto`, :2129) recibe ~150 px y hace scroll. Con 667 y 800 px hay más margen. Los botones de acción quedan alcanzables en las tres alturas.
+4. **Bajos nuevos — RESUELTOS.** Comentario de tarjeta corregido (rayhsa-system.css:485: "168x252 en el ancho mínimo de columna"). `flex-wrap: wrap; gap: 0.25rem 0.5rem` en `.noticia-encabezado` (globales.css:907-912).
+
+**Sin cambios de este round:** H3 y H4 diferidos (decisions.md). Carrusel sin regresiones detectadas.
+
+### [2026-10-14] [revisor] — Fase 2 noticias: revisión de la categoría boletín
+**VEREDICTO: APROBADO CON OBSERVACIONES.** La UI cumple la decisión del humano (boletín sin título, subtítulo, contenido, fecha, autor ni etiqueta visibles; solo marco ImagenVertical; clic amplía; una imagen; sin imagen no se muestra; título interno solo en el editor/admin). No hay críticos ni violaciones de decisiones. Hay un hallazgo alto preexistente (GET /api/noticias/:id sirve borradores sin filtrar `publicada`) que el delta hereda y conviene decidir en el orquestador; el resto son medios/bajos.
+
+**Alcance revisado:** `git diff 94c10ba… 263671aa… -- modules` (12 archivos). Fase 1 no se re-revisó.
+
+**Verificado (ejecutado):**
+- `npx jest modules/portal`: 10 suites, 120 tests, todos pasan (incluye los 18 de noticia.controller.test.js).
+- `npx eslint modules/portal`: 0 errores, 100 warnings (coincide con el coder).
+- `npx vite build` a scratch: OK.
+- Migración: `noticias.tipo` es `VARCHAR(30)` sin CHECK (001-crear-tablas-portal.sql:60); no hace falta migración para `boletin`.
+
+**Verificado por lectura de código:**
+- Backend: `tipo` solo se valida contra lista blanca (`esTipoValido`, `Array.includes` estricto; arrays/objetos rechazados). `actualizar` solo pasa al modelo campos fijos (`Noticia.actualizar` construye `SET` con nombres fijos y valores parametrizados). No hay inyección ni forma de colar `tipo` por otro campo (el modelo ignora claves desconocidas).
+- Compatibilidad: `crear` sin tipo / con "" / con null cae al default del modelo (`tipo || "noticia"`); noticia/comunicado/oferta_empleo siguen válidos.
+- Límite: `subirImagen` consulta la publicación (404 si no existe), usa `limiteImagenes(tipo)` (boletín 1, resto 5). Compensación de Storage en INSERT fallido y auditoría de la ruta: sin cambios (ver hallazgo bajo de PUT sin auditoría, preexistente).
+- Frontend: `NoticiaCard` boletín es un `<button>` con `aria-label="Ampliar boletín"`; `ArticleModal` kind `boletin` va por `createPortal`, con Esc, clic fuera y botón de cierre; 2:3 con `--iv-alto-max` en `100vh - 2rem` y mejora `@supports (height:100dvh)` con `100dvh - 2rem`.
+- ESLint: los `no-unused-vars` reportados son falsos positivos de JSX (ver hallazgo bajo).
+
+**No verificado (sin navegador):** carrusel (flechas/barras/teclado sin solapes en el slide de boletín), visibilidad de la X sobre imágenes claras (`.rayhsa-modal__close`), `cursor: zoom-in`, desbordamiento horizontal por `100vw` con scrollbar visible, y el tamaño real del visor en 1440x900, 768x900, 360x568.
+
+#### Hallazgos
+
+**H1 — GET /:id público devuelve borradores (incluidos boletines no publicados) con título y contenido**
+**Archivo/línea:** modules/portal/backend/controllers/noticia.controller.js:60-66 (`obtener`) y modules/portal/backend/models/noticia.model.js:`obtenerPorId` (sin `WHERE publicada = true`); ruta pública modules/portal/backend/routes/noticia.routes.js:11 (`router.get("/:id", ...)` antes de `authenticateJWT`).
+**Problema:** cualquier visitante anónimo puede leer por id cualquier noticia, publicada o no (ids SERIAL, enumerables), y para un boletín eso expone el título interno, subtítulo, contenido y autor que el humano pidió que quedaran solo en el panel.
+**Severidad:** alto. Es PREEXISTENTE para todos los tipos (no lo introduce el delta), pero el boletín depende de que su título interno no salga; conviene decidirlo en el orquestador.
+**Fix sugerido:** en la ruta pública exigir `publicada = true` (o responder 404 si no lo está y no hay sesión con permiso de consulta); alternativa: separar `GET /:id` público (solo publicadas) de un `GET /:id` autenticado para el panel.
+
+**H2 — Respuestas públicas exponen titulo, subtitulo, contenido y autor de los boletines**
+**Archivo/línea:** modules/portal/backend/models/noticia.model.js:`obtenerPublicadas` (SELECT n.*, u.nombre, u.apellido) usado por controller `listarPublicadas` (noticia.controller.js:~14-30) y `obtener` (noticia.controller.js:60-66).
+**Problema:** el JSON de `/api/noticias/publicadas` y `/api/noticias/publicas` incluye `titulo` (interno) de cada boletín, aunque la UI no lo pinte; el HTML no lo expone (verificado: sin `document.title` ni meta con `titulo`; el `alt` del boletín es "Boletín").
+**Severidad:** medio. No es una violación visible de la decisión (la UI lo cumple), pero "título interno solo para el panel" se cumple solo en la interfaz, no en la API.
+**Fix sugerido:** en `listarPublicadas`/`obtener` públicos, para `tipo = 'boletin'` devolver `titulo`, `subtitulo`, `contenido`, `autor_*` en null (o proyectar campos según tipo). Alternativa: aceptarlo y documentarlo en decisions.md como límite conocido.
+
+**H3 — El editor envía subtitulo y contenido ocultos al guardar un boletín**
+**Archivo/línea:** modules/portal/frontend/components/NewsEditorModal.jsx:58 (`actualizarNoticia(noticiaEditar.id, formulario)` / `crearNoticia(formulario)`), campos ocultos en :139 y :161.
+**Problema:** al cambiar el tipo a boletín, el formulario conserva el `subtitulo` y `contenido` ya escritos (o heredados de una noticia convertida), y se envían y guardan aunque no se muestren; quedan en BD y salen por la API (ver H2).
+**Severidad:** medio.
+**Fix sugerido:** al guardar con `esBoletin`, enviar `{ ...formulario, subtitulo: "", contenido: "" }` (o null) explícitamente.
+
+**H4 — Clic para ampliar el boletín no es accesible por teclado en el carrusel**
+**Archivo/línea:** modules/portal/frontend/components/NewsCarousel.jsx:90-98 (`<article onClick>` sin tabIndex, role ni onKeyDown).
+**Problema:** la diapositiva es solo un `article` con onClick; en boletín no queda ningún elemento enfocable, así que quien navega con teclado no puede ampliar la imagen. El patrón viene de todas las diapositivas (preexistente), pero el boletín es el único caso sin ningún texto ni enlace alternativo.
+**Severidad:** medio.
+**Fix sugerido:** en la diapositiva de boletín envolver `ImagenVertical` en `<button type="button" aria-label="Ampliar boletín">` como hace NoticiaCard, o dar `role="button"`, `tabIndex={0}` y Enter/Espacio al article.
+
+**H5 — Filtro "Boletín" en /noticias se aplica después de paginar en servidor**
+**Archivo/línea:** modules/portal/frontend/pages/PortalNoticias.jsx:21-23 y :15 (`obtenerNoticiasPublicadas(pagina, 12)`).
+**Problema:** el filtro de tipo actúa en cliente sobre cada página de 12; con boletines dispersos aparecen páginas vacías, `paginas_totales` no corresponde al filtro y los boletines sin imagen dejan huecos. Preexistente (ya lo anotó el coder en code-notes), pero el filtro nuevo lo hace más visible.
+**Severidad:** medio.
+**Fix sugerido:** pasar `tipo` a `GET /api/noticias/publicadas` (filtro en SQL con parámetro) y paginar sobre el resultado filtrado.
+
+**H6 — Validación de tipo inconsistente entre crear y actualizar**
+**Archivo/línea:** modules/portal/backend/controllers/noticia.controller.js:81 (crear acepta `""`/null y usa default) frente a :103-105 (actualizar rechaza `null` y `""` con 400).
+**Problema:** el mismo valor se trata de forma distinta en cada operación. Ninguno produce datos incorrectos (en actualizar el 400 evita un `tipo = NULL` que dejaría la publicación sin tipo), pero es confuso para el cliente.
+**Severidad:** bajo.
+**Fix sugerido:** unificar la regla (p. ej. en ambos: `undefined` no valida; cualquier otro valor debe estar en la lista) o documentar la diferencia.
+
+**H7 — Límite de un boletín sin transacción ni bloqueo (condición de carrera)**
+**Archivo/línea:** modules/portal/backend/controllers/noticia.controller.js:148-152 (`contarImagenes` y después `subir`/`agregarImagen`).
+**Problema:** la comprobación `total >= maximo` y el INSERT no son atómicos; dos subidas simultáneas a un boletín pueden pasar ambas y quedar con 2 imágenes (y con 6 en otros tipos). Es un admin y poco probable, pero rompe "una sola imagen" a nivel de datos.
+**Severidad:** bajo.
+**Fix sugerido:** INSERT condicional (`INSERT ... SELECT ... WHERE (SELECT COUNT(*) ...) < $max`) o `SELECT ... FOR UPDATE` sobre la fila de `noticias` dentro de una transacción.
+
+**H8 — Reglas de boletín solo en UI (aceptado por decisión), con efectos de datos acotados**
+**Archivo/línea:** modules/portal/backend/controllers/noticia.controller.js:101-112 (`actualizar`: solo valida el valor de `tipo`) y :89-97 (`crear`: no revisa `publicada` ni número de imágenes).
+**Problema:** la API permite (a) convertir a boletín una noticia con varias imágenes y (b) publicar un boletín sin imagen. Efecto real: la UI pública muestra solo `imagenes[0]` y oculta los boletines sin imagen con `esMostrable`, así que no aparece ningún slide vacío; pero la BD queda inconsistente y el admin ve "Publicada" sin nada visible.
+**Severidad:** bajo (riesgo real acotado; decisión de no blindar en backend).
+**Fix sugerido:** si se quiere blindar: en `actualizar`, si `tipo === 'boletin'` contar imágenes (>1 → 400); en `crear`/`actualizar`, si `tipo === 'boletin' && publicada && sin imagen` → 400 con mensaje. Igual que la UI.
+
+**H9 — Tests: aserciones débiles y huecos de cobertura**
+**Archivo/línea:** modules/portal/backend/tests/noticia.controller.test.js:119 (`toContain('1')`); :57-63 ("sin tipo conserva el comportamiento actual" solo espera 201).
+**Problema:** `toContain('1')` pasaría con cualquier mensaje que tenga un "1"; el test de "sin tipo" no comprueba que el controlador no fije tipo (ni el default del modelo). Faltan casos: actualizar con `tipo: null`/`""` (400), exposición pública de boletines (H2) y el 404 de `obtener` público de borradores (H1). Los mocks sí cubren `config/database` y el Storage (cumple testing.md).
+**Severidad:** bajo.
+**Fix sugerido:** `toContain('Máximo permitido: 1')`; en el caso sin tipo `expect(Noticia.crear).toHaveBeenCalledWith(expect.objectContaining({ tipo: undefined }))`; añadir tests para H1/H2 cuando se corrijan.
+
+**H10 — Lista de tipos duplicada y helpers no usados**
+**Archivo/línea:** modules/portal/frontend/utils/tiposNoticia.js:5-12 (`TIPOS_NOTICIA`, `MAX_IMAGENES` exportado sin uso externo) espejo de modules/portal/backend/utils/tiposNoticia.js:6; modules/portal/frontend/components/NewsEditorModal.jsx:32 (`formulario.tipo === "boletin"` en vez de `esBoletin()` del util); NoticiaCard.jsx:4-12 (`iconosPorTipo`, `clasesPorTipo` siguen paralelos a la lista).
+**Problema:** el coder centralizó las etiquetas, pero la paridad backend/frontend depende de disciplina manual y no hay test que la compare; hay un helper duplicado.
+**Severidad:** bajo.
+**Fix sugerido:** usar `esBoletin` en NewsEditorModal; quitar la exportación de `MAX_IMAGENES` si no se usa; añadir un test de paridad entre ambas listas o generar una desde un JSON compartido.
+
+**H11 — Etiquetas del filtro cambiaron de plural a singular sin decisión**
+**Archivo/línea:** modules/portal/frontend/pages/PortalNoticias.jsx:44-48 (antes "Noticias", "Comunicados", "Ofertas de Empleo"; ahora vienen de `TIPOS_NOTICIA`: "Noticia", "Comunicado", "Oferta de Empleo").
+**Problema:** cambio visible no pedido en los decisions; no rompe nada.
+**Severidad:** bajo.
+**Fix sugerido:** confirmar con el humano o mantener los textos originales en el filtro.
+
+**H12 — Falsos positivos de ESLint confirmados; dos avisos son código muerto preexistente**
+**Archivo/línea:** ArticleModal.jsx:6 (ImagenVertical usado en :58/:78), NewsCarousel.jsx:3 (Link usado en :144) y :5 (ImagenVertical usado en :99/:106), NoticiaCard.jsx:2, PortalNoticias.jsx:3-4 (NoticiaCard y ArticleModal usados en :59 y :78), PortalAdminNoticias.jsx:6 (NewsEditorModal usado en :63), PortalHome.jsx:12-14 (usados en :77, :84, :95). Código muerto real: PortalHome.jsx:19 (`Hero`, solo en comentario de :74) y :48 (`usuario`, sin uso fuera del comentario).
+**Problema:** la configuración de ESLint no reconoce el uso de componentes en JSX, así que todos los "defined but never used" de componentes son falsos positivos. Los dos de PortalHome son código muerto preexistente, no del delta.
+**Severidad:** bajo.
+**Fix sugerido:** corregir la configuración (plugin react con `jsx-uses-vars`) en una tarea aparte; quitar `Hero` y `usuario` de PortalHome o documentarlos.
+
+**H13 — Cosmética y documentación**
+**Archivo/línea:** NewsEditorModal.jsx:8-10 (dos líneas en blanco tras quitar `MAX_IMAGENES`); NewsCarousel.jsx:9-21 (el bloque JSDoc del componente queda encima de `textoPlano`, no de `NewsCarousel`, preexistente); ArticleModal.jsx:12-17 (la descripción del kind boletín está bien, pero el hueco de focus no se documenta).
+**Problema:** restos de edición y JSDoc mal ubicado.
+**Severidad:** bajo.
+**Fix sugerido:** quitar la línea en blanco sobrante y mover el JSDoc a `export default function NewsCarousel`.
+
+**H14 — Auditoría de la ruta PUT sin cambios (preexistente)**
+**Archivo/línea:** modules/portal/backend/routes/noticia.routes.js:17-18 (solo POST lleva `auditoriaMiddleware`).
+**Problema:** un cambio de tipo a boletín (PUT) no queda auditado; el delta no lo empeora, pero el coder dijo "auditoría intacta", y así es, sin cubrir este caso.
+**Severidad:** bajo.
+**Fix sugerido:** añadir `auditoriaMiddleware("portal", "noticias", "UPDATE")` al PUT en una tarea aparte.
+
+**H15 — Visor del boletín: foco y ancho no verificados**
+**Archivo/línea:** modules/portal/frontend/components/ArticleModal.jsx:50-64 (dialog sin mover el foco al abrir ni restaurarlo al cerrar; mismo patrón que los demás modales); modules/portal/frontend/styles/rayhsa-system.css (`.imagen-vertical--ampliada` usa `100vw - 2rem`, que incluye la barra de desplazamiento si está visible).
+**Problema:** el diálogo no toma el foco (preexistente); el ancho con `100vw` puede desbordar horizontalmente con scrollbar visible. Ambos sin verificar en navegador.
+**Severidad:** bajo.
+**Fix sugerido:** enfocar el botón Cerrar al abrir y devolver el foco al disparador al cerrar; usar `100%` del contenedor en lugar de `100vw` si se confirma el desbordamiento.
+
+
+#### Verificado sin hallazgo
+- Decisión del humano en UI: carrusel (PortalHome.jsx:60-79 filtra con `esMostrable` antes de `slice`), tarjeta (NoticiaCard.jsx:25-42 sin texto), visor (ArticleModal.jsx:50-64, sin título ni meta), `alt="Boletín"` genérico, `aria-label` sin título, una sola imagen (subirImagen 1, UI bloquea), título interno etiquetado en el editor.
+- Backend: consultas parametrizadas, lista blanca de `tipo`, 404 nuevo en `subirImagen`, forma `{ exito, datos | mensaje }` intacta, compensación de Storage intacta.
+- Tests: 18 tests, nombres en español, `config/database` y Storage mockeados (testing.md cumplido), todos pasan.
+- Sin migración necesaria para `boletin` (VARCHAR(30) sin CHECK).
+
+### [2026-10-14] [revisor] — Fase 2 noticias: re-revisión (correcciones, borradores y API pública del boletín)
+**VEREDICTO: APROBADO CON OBSERVACIONES (solo bajos).** H1 (alto), H2/H3 (medios), H4 (medio), H6, H9, H10, H11 y H13 quedan RESUELTOS. No hay hallazgos críticos ni altos nuevos. Quedan 7 hallazgos bajos (nuevos o heredados) sin bloquear.
+
+**Verificado (ejecutado):** `npx jest modules/portal` 10 suites, 132 tests OK (30 en noticia.controller.test.js); `npx eslint modules/portal` 0 errores, 100 warnings (sin cambio); `npx vite build` a scratch OK. Nota: `git diff <árbol> -- modules` muestra como "deleted" los archivos nuevos sin rastrear (ImagenVertical.jsx, tiposNoticia.js, noticia.controller.test.js); están en el árbol de trabajo, no es una eliminación.
+
+**Verificado por lectura de código:** rutas, controlador, utils, tests, editor, carrusel, PortalNoticias, servicios y consumidores (grep de `noticia` en modules/: solo portal; rh, tickets y auditoría no consumen noticias).
+
+#### Por punto
+
+**1. H1 (alto) — RESUELTO.**
+- Orden de rutas (noticia.routes.js:12-14): `/publicas`, `/publicadas` y `/:id` (→ `obtenerPublica`) son públicas y van antes de `router.use(authenticateJWT)` (:16).
+- `GET /admin/:id` (:20) va después de `authenticateJWT` y exige `verificarPermiso("portal","Noticias","consulta")`. No choca con `/:id` porque tiene dos segmentos, y sin token no es alcanzable (el middleware va antes).
+- `obtenerPublica` (controller:63-72) responde 404 con el mismo mensaje para borrador e inexistente (test "mismo mensaje" en tests:204-212).
+- Otros caminos públicos: `listarPublicadas` filtra en SQL (`WHERE n.publicada = true`) y pasa por `paraPublico`. No hay otro endpoint público de noticias.
+- **NUEVO bajo:** `GET /api/noticias/admin` sin id cae en `/:id` público, `obtenerPorId('admin')` produce error de Postgres 22P02 y el controlador responde 500 con `error: error.message` a un anónimo. Preexistente (el `obtener` público ya hacía esto). Fix: validar id numérico (404) y no devolver `error.message` en rutas públicas.
+- **NUEVO bajo:** `modules/portal/config/portal.permissions.js:44-49` lista `GET /api/noticias/:id` como pública y no incluye `/admin/:id`; el archivo no se importa en ningún sitio, así que no afecta, pero está desactualizado. Fix: añadir la ruta o eliminar el archivo muerto.
+- Caché: `config/nginx/nginx.conf` y `nginx.staging.conf` no tienen `proxy_cache` para `/api`; no hay `Cache-Control` en las respuestas. Sin riesgo de caché compartida por configuración. No verificado en ejecución.
+
+**2. H2/H3 — RESUELTOS.**
+- `paraPublico` (backend/utils/tiposNoticia.js:29-33) es una lista blanca para boletín: `{id, tipo, fecha_publicacion, publicada, imagenes}`. No se filtran `titulo`, `subtitulo`, `contenido`, `autor_nombre`, `autor_apellido` ni los campos de `usuarios`. Se aplica en `listarPublicadas` (controller:23) y en `obtenerPublica` (controller:69).
+- Otros tipos: `paraPublico` devuelve el objeto tal cual (test tests:276-278). Sin cambios para noticia, comunicado ni oferta_empleo.
+- `listarTodas` (controller:~40) y `obtener` del panel (controller:76-84) siguen completos (tests:238-253).
+- Editor: NewsEditorModal.jsx:59 envía `{...formulario, subtitulo:"", contenido:""}` para boletín, en crear y en actualizar. Verificado.
+- Frontend: no lee `titulo` de un boletín en ningún camino (carrusel :88-108, NoticiaCard boletín, ArticleModal kind boletin), así que no hay regresión visual.
+- **NUEVO bajo:** en el boletín público, `imagenes[]` conserva `nombre_archivo` (nombre original del archivo), `ruta_archivo`, `noticia_id` y `orden`. El alcance de H2 es el título, así que no es una fuga de título, pero sí de metadatos. Fix: en `paraPublico`, mapear cada imagen a `{id, url, orden}`.
+
+**3. H4 — RESUELTO.**
+- NewsCarousel.jsx:92 quita `onClick` del article para boletín. :98-108 envuelve la imagen en `<button type="button" aria-label="Ampliar boletín" onClick={() => onOpen?.(n)}>`. El teclado (Enter/Espacio) dispara el click nativo.
+- Foco visible: rayhsa-system.css:513 (`:focus-visible` con outline 3px `--color-acento`). Las flechas siguen en `alPulsarTecla` del `section` (sin cambios).
+- **NUEVO bajo:** el área clicable del boletín queda reducida al botón; el padding de la diapositiva ya no abre el visor. Cosmético; la clase `imagen-vertical--carrusel` se aplica al botón y al `ImagenVertical` interior (duplicada, sin conflicto porque solo define `--iv-alto-max`). **No verificado en navegador:** foco y tamaño del botón.
+
+**4. Tests — 30 tests en noticia.controller.test.js; mocks de config/database, modelo y Storage; nombres en español; todos pasan.**
+- Mejoras confirmadas: mensaje exacto en tests:138; `tipo` undefined al modelo en tests:63; `it.each` de null y "" con `actualizar` sin `tipo` en tests:95-110; crear con null/"" en tests:103-110.
+- Casos de fuga cubiertos: borrador por id (tests:197), inexistente vs borrador (tests:204), campos exactos de boletín por id (tests:214-221), listado público (tests:225-235), panel completo (tests:239-253).
+- Ruta: tests:257-274 inspecciona `router.stack` (internos de Express 4). Pasa por la razón correcta (orden de capas y permiso del handler), pero es frágil y no verifica que `GET /:id` use `obtenerPublica` (si se revirtiera a `obtener` no falla). **Bajo.** Fix: comparar `handle === Controlador.obtenerPublica` y mover `jest.dontMock` a `afterEach`.
+- Huecos **bajos**: (a) el filtro `publicada = true` de `obtenerPublicadas` está en el modelo, que está mockeado, así que no se prueba; (b) no hay caso de boletín borrador por `obtenerPublica` (solo de noticia normal); (c) el test "sin tipo en el cuerpo" (tests:112-117) sigue siendo débil (solo `not 400`); (d) falta el caso de id no numérico (ver punto 1).
+
+**5. Riesgos nuevos.**
+- `obtenerNoticiaAdmin` (frontend services/noticias.service.js:19-21) no tiene consumidor (grep). **Bajo:** código muerto. Fix: usarlo en el editor o eliminarlo. Tampoco se usa el `obtenerNoticia` preexistente.
+- Permisos: `/admin/:id` usa `consulta`, igual que `listarTodas`, así que es coherente. Verificado por la estructura de rutas en test; **no verificado** con token real.
+- 404: no revela existencia de borradores (mismo mensaje). Los ids son SERIAL, así que un anónimo puede deducir cuántas publicadas hay enumerando, pero no su contenido. **Bajo** (riesgo aceptable).
+- Caché: sin hallazgos (ver punto 1).
+- Auditoría: el middleware de POST guarda `req.body` (incluido el título interno del boletín) en la tabla de auditoría. Es un destino interno; **bajo**, informativo para el orquestador.
+
+**Heredados sin cambio (preexistentes, no se reabren):** PUT /:id sin auditoría (noticia.routes.js:21); filtro de tipo en cliente tras paginar (H5 de la revisión anterior; el filtro ya usa plurales, pero sigue en cliente, así que sigue siendo medio y sin corregir); `usuario` y `Hero` muertos en PortalHome.
+
+**Lista de hallazgos nuevos o pendientes (todos bajos):**
+- Ruta `/admin` sin id → 500 con error de BD en pública (controller:63-72, routes:14).
+- `portal.permissions.js` desactualizado y sin uso (config:44-49).
+- `imagenes[]` del boletín público con nombre_archivo, ruta_archivo, noticia_id (utils/tiposNoticia.js:29-33).
+- Área clicable del boletín reducida al botón (NewsCarousel.jsx:92). No verificado.
+- `obtenerNoticiaAdmin` sin consumidor (noticias.service.js:19).
+- Tests: ruta frágil con `router.stack` y sin comparación de handler; falta el caso de boletín borrador y el caso del modelo (routes/tests:257-274).
+- Auditoría guarda el título interno del boletín en POST (interno).
+
+**Pendiente para el orquestador:** nada crítico ni alto. Si quiere cerrar los bajos de API, los dos de mayor valor son el 500 con `error.message` en rutas públicas y la lista blanca de campos de `imagenes` en `paraPublico`.

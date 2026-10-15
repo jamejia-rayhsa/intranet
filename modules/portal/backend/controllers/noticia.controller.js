@@ -1,7 +1,7 @@
 const Noticia = require("../models/noticia.model");
 const Storage = require("../services/storage.service");
 
-const MAX_IMAGENES = 5;
+const { esTipoValido, limiteImagenes, mensajeTipoInvalido, paraPublico } = require("../utils/tiposNoticia");
 
 // Borra el objeto de Storage; un fallo de limpieza no debe impedir borrar la fila.
 // Las rutas legadas (/uploads/...) aún no migradas no están en Storage.
@@ -14,11 +14,13 @@ async function limpiarObjeto(ruta) {
   }
 }
 
+const tipoVacio = (tipo) => tipo === undefined || tipo === null || tipo === "";
+
 const ControladorNoticia = {
   async listarPublicadas(req, res) {
     try {
       const { pagina = 1, limite = 10 } = req.query;
-      const noticias = await Noticia.obtenerPublicadas(pagina, limite);
+      const noticias = (await Noticia.obtenerPublicadas(pagina, limite)).map(paraPublico);
       const total = await Noticia.contarPublicadas();
 
       res.json({
@@ -57,6 +59,20 @@ const ControladorNoticia = {
     }
   },
 
+  // Público (sin auth): solo publicadas; borrador e inexistente responden igual (404). Boletín sin campos de texto.
+  async obtenerPublica(req, res) {
+    try {
+      const noticia = await Noticia.obtenerPorId(req.params.id);
+      if (!noticia || !noticia.publicada) {
+        return res.status(404).json({ exito: false, mensaje: "Noticia no encontrada" });
+      }
+      res.json({ exito: true, datos: paraPublico(noticia) });
+    } catch (error) {
+      res.status(500).json({ exito: false, mensaje: "Error al obtener noticia", error: error.message });
+    }
+  },
+
+  // Panel (autenticado, Noticias:consulta): cualquier noticia, borradores incluidos, con todos los campos
   async obtener(req, res) {
     try {
       const noticia = await Noticia.obtenerPorId(req.params.id);
@@ -77,6 +93,12 @@ const ControladorNoticia = {
         return res.status(400).json({ exito: false, mensaje: "El título de la noticia es obligatorio" });
       }
 
+      // Regla de tipo (crear y actualizar): ausente, null o "" = "no indicado" (crear: el modelo
+      // aplica el default "noticia"; actualizar: no se modifica). Cualquier otro valor debe ser válido.
+      if (!tipoVacio(tipo) && !esTipoValido(tipo)) {
+        return res.status(400).json({ exito: false, mensaje: mensajeTipoInvalido() });
+      }
+
       const noticia = await Noticia.crear({
         titulo,
         subtitulo,
@@ -95,7 +117,13 @@ const ControladorNoticia = {
 
   async actualizar(req, res) {
     try {
-      const noticia = await Noticia.actualizar(req.params.id, req.body);
+      const { tipo, ...resto } = req.body;
+      if (!tipoVacio(tipo) && !esTipoValido(tipo)) {
+        return res.status(400).json({ exito: false, mensaje: mensajeTipoInvalido() });
+      }
+      // tipo vacío = no cambiar: se omite para no escribir NULL en la columna
+      const datos = tipoVacio(tipo) ? resto : { ...resto, tipo };
+      const noticia = await Noticia.actualizar(req.params.id, datos);
       if (!noticia) {
         return res.status(404).json({ exito: false, mensaje: "Noticia no encontrada" });
       }
@@ -131,11 +159,17 @@ const ControladorNoticia = {
         return res.status(400).json({ exito: false, mensaje: "No se recibió ningún archivo" });
       }
 
+      const publicacion = await Noticia.obtenerPorId(id);
+      if (!publicacion) {
+        return res.status(404).json({ exito: false, mensaje: "Noticia no encontrada" });
+      }
+
+      const maximo = limiteImagenes(publicacion.tipo);
       const total = await Noticia.contarImagenes(id);
-      if (total >= MAX_IMAGENES) {
+      if (total >= maximo) {
         return res.status(400).json({
           exito: false,
-          mensaje: `Límite de imágenes alcanzado. Máximo permitido: ${MAX_IMAGENES}`,
+          mensaje: `Límite de imágenes alcanzado. Máximo permitido: ${maximo}`,
         });
       }
 

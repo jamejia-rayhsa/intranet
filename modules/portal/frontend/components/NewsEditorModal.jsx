@@ -1,13 +1,12 @@
 import { urlImagenNoticia } from "../utils/storage";
 import { useState, useRef } from "react";
+import { TIPOS_NOTICIA, limiteImagenes, esBoletin as esTipoBoletin } from "../utils/tiposNoticia";
 import {
   crearNoticia,
   actualizarNoticia,
   subirImagenNoticia,
   eliminarImagenNoticia,
 } from "../services/noticias.service";
-
-const MAX_IMAGENES = 5;
 
 export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) {
   const [formulario, setFormulario] = useState(
@@ -28,21 +27,40 @@ export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) 
   const [error, setError] = useState("");
   const inputArchivoRef = useRef(null);
 
+  // Boletín: solo imagen; el título es interno y no hay subtítulo ni contenido
+  const esBoletin = esTipoBoletin(formulario);
+  const maxImagenes = limiteImagenes(formulario.tipo);
+
   function manejarCambio(evento) {
     const { name, value, type, checked } = evento.target;
+    if (name === "tipo") setError(""); // el aviso anterior puede ya no aplicar al nuevo tipo
     setFormulario({ ...formulario, [name]: type === "checkbox" ? checked : value });
   }
 
   async function manejarEnvio(evento) {
     evento.preventDefault();
     setError("");
+
+    if (esBoletin && formulario.publicada && imagenes.length === 0) {
+      setError(
+        "Un boletín no se puede publicar sin imagen. Guarda el boletín, sube la imagen y luego márcalo como publicado.",
+      );
+      return;
+    }
+    if (esBoletin && imagenes.length > 1) {
+      setError("Un boletín admite una sola imagen. Elimina las demás antes de guardarlo como boletín.");
+      return;
+    }
+
     setCargando(true);
 
     try {
+      // Un boletín no usa subtítulo ni contenido: se guardan vacíos
+      const datos = esBoletin ? { ...formulario, subtitulo: "", contenido: "" } : formulario;
       if (noticiaEditar) {
-        await actualizarNoticia(noticiaEditar.id, formulario);
+        await actualizarNoticia(noticiaEditar.id, datos);
       } else {
-        await crearNoticia(formulario);
+        await crearNoticia(datos);
       }
       alGuardar();
     } catch (err) {
@@ -59,8 +77,8 @@ export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) 
       setError("Guarda la noticia primero antes de agregar imágenes.");
       return;
     }
-    if (imagenes.length >= MAX_IMAGENES) {
-      setError(`Límite de ${MAX_IMAGENES} imágenes alcanzado.`);
+    if (imagenes.length >= maxImagenes) {
+      setError(`Límite de ${maxImagenes} ${maxImagenes === 1 ? "imagen" : "imágenes"} alcanzado.`);
       return;
     }
 
@@ -96,7 +114,9 @@ export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) 
 
         <form onSubmit={manejarEnvio}>
           <div className="campo">
-            <label htmlFor="titulo">Título</label>
+            <label htmlFor="titulo">
+              {esBoletin ? "Título interno (no se muestra al público)" : "Título"}
+            </label>
             <input
               type="text"
               id="titulo"
@@ -107,6 +127,7 @@ export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) 
             />
           </div>
 
+          {!esBoletin && (
           <div className="campo">
             <label htmlFor="subtitulo">Subtítulo</label>
             <input
@@ -117,16 +138,18 @@ export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) 
               onChange={manejarCambio}
             />
           </div>
+          )}
 
           <div className="campo">
             <label htmlFor="tipo">Tipo</label>
             <select id="tipo" name="tipo" value={formulario.tipo} onChange={manejarCambio}>
-              <option value="noticia">Noticia</option>
-              <option value="comunicado">Comunicado</option>
-              <option value="oferta_empleo">Oferta de Empleo</option>
+              {TIPOS_NOTICIA.map((t) => (
+                <option key={t.valor} value={t.valor}>{t.etiqueta}</option>
+              ))}
             </select>
           </div>
 
+          {!esBoletin && (
           <div className="campo">
             <label htmlFor="contenido">Contenido</label>
             <textarea
@@ -137,6 +160,7 @@ export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) 
               rows={6}
             />
           </div>
+          )}
 
           <div className="campo">
             <label htmlFor="fecha_publicacion">Fecha de Publicación</label>
@@ -163,9 +187,9 @@ export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) 
           {/* Sección de imágenes — solo disponible al editar */}
           <div className="campo">
             <label>
-              Imágenes del carrusel{" "}
+              {esBoletin ? "Imagen del boletín" : "Imágenes del carrusel"}{" "}
               <span style={{ fontWeight: 400, color: "#666" }}>
-                ({imagenes.length}/{MAX_IMAGENES})
+                ({imagenes.length}/{maxImagenes})
               </span>
             </label>
 
@@ -196,7 +220,7 @@ export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) 
                   ))}
                 </div>
 
-                {imagenes.length < MAX_IMAGENES && (
+                {imagenes.length < maxImagenes && (
                   <label className="btn-subir-imagen">
                     {subiendoImg ? "Subiendo..." : "+ Agregar imagen"}
                     <input
@@ -205,9 +229,16 @@ export default function NewsEditorModal({ noticiaEditar, alCerrar, alGuardar }) 
                       accept=".jpg,.jpeg,.png,.gif,.webp"
                       style={{ display: "none" }}
                       onChange={manejarSubidaImagen}
-                      disabled={subiendoImg}
+                      disabled={subiendoImg || imagenes.length >= maxImagenes}
                     />
                   </label>
+                )}
+                {imagenes.length >= maxImagenes && (
+                  <p style={{ fontSize: "0.78rem", color: "#888", margin: "0.3rem 0 0" }}>
+                    {esBoletin
+                      ? "El boletín ya tiene su imagen. Elimínala para subir otra."
+                      : `Límite de ${maxImagenes} imágenes alcanzado.`}
+                  </p>
                 )}
                 <p style={{ fontSize: "0.78rem", color: "#888", margin: "0.3rem 0 0" }}>
                   Formatos: JPG, PNG, GIF, WebP · Máx. 5 MB por imagen

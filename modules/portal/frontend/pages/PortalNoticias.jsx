@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { obtenerNoticiasPublicadas } from '../services/noticias.service';
 import NoticiaCard from '../components/NoticiaCard';
+import ArticleModal from '../components/ArticleModal';
+import { TIPOS_NOTICIA, esMostrable } from '../utils/tiposNoticia';
 
 export default function PortalNoticias() {
   const [noticias, setNoticias] = useState([]);
@@ -8,6 +10,7 @@ export default function PortalNoticias() {
   const [pagina, setPagina] = useState(1);
   const [paginasTotales, setPaginasTotales] = useState(1);
   const [filtroTipo, setFiltroTipo] = useState('');
+  const [modalItem, setModalItem] = useState(null);
 
   useEffect(() => {
     async function cargarNoticias() {
@@ -15,7 +18,7 @@ export default function PortalNoticias() {
       try {
         const respuesta = await obtenerNoticiasPublicadas(pagina, 12);
         if (respuesta.exito) {
-          let filtradas = respuesta.datos.noticias;
+          let filtradas = respuesta.datos.noticias.filter(esMostrable); // boletín sin imagen no se muestra
           if (filtroTipo) {
             filtradas = filtradas.filter((n) => n.tipo === filtroTipo);
           }
@@ -39,9 +42,9 @@ export default function PortalNoticias() {
       <div className="noticias-filtros">
         <select value={filtroTipo} onChange={(e) => { setFiltroTipo(e.target.value); setPagina(1); }}>
           <option value="">Todos los tipos</option>
-          <option value="noticia">Noticias</option>
-          <option value="comunicado">Comunicados</option>
-          <option value="oferta_empleo">Ofertas de Empleo</option>
+          {TIPOS_NOTICIA.map((t) => (
+            <option key={t.valor} value={t.valor}>{t.plural}</option>
+          ))}
         </select>
       </div>
 
@@ -53,7 +56,11 @@ export default function PortalNoticias() {
         <>
           <div className="grid-noticias">
             {noticias.map((noticia) => (
-              <NoticiaCard key={noticia.id} noticia={noticia} />
+              <NoticiaCard
+                key={noticia.id}
+                noticia={noticia}
+                onAbrir={(n) => setModalItem({ kind: 'boletin', noticia: n })}
+              />
             ))}
           </div>
 
@@ -68,6 +75,7 @@ export default function PortalNoticias() {
           </div>
         </>
       )}
+      {modalItem && <ArticleModal item={modalItem} onClose={() => setModalItem(null)} />}
     </div>
   );
 }

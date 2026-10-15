@@ -871,8 +871,8 @@ button:disabled {
 
 .grid-noticias {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1.25rem;
 }
 
 /* Noticia Card */
@@ -880,7 +880,9 @@ button:disabled {
   background: var(--color-superficie);
   border-radius: var(--radio-borde);
   box-shadow: var(--sombra);
-  padding: 1.5rem;
+  padding: 1rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
   transition:
     transform 0.2s,
     box-shadow 0.2s;
@@ -894,10 +896,18 @@ button:disabled {
 .noticia-tarjeta h3 {
   margin-bottom: 0.5rem;
   color: var(--color-primario);
+  font-size: 1rem;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .noticia-encabezado {
   display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 0.75rem;
@@ -912,19 +922,29 @@ button:disabled {
   font-size: 0.9rem;
   margin-bottom: 0.75rem;
   font-style: italic;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .noticia-resumen {
-  font-size: 0.95rem;
+  font-size: 0.85rem;
   color: var(--color-texto);
   margin-bottom: 1rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .noticia-pie {
   display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
   justify-content: space-between;
   align-items: center;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: var(--color-texto-claro);
   padding-top: 0.75rem;
   border-top: 1px solid var(--color-borde);
@@ -1236,7 +1256,7 @@ button:disabled {
   }
 
   .grid-noticias {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   }
 
   .login-contenedor,
@@ -3122,21 +3142,6 @@ button:disabled {
   user-select: none;
 }
 .btn-subir-imagen:hover { background: var(--color-primario); }
-
-/* ========== NOTICIA CARD CON IMAGEN ========== */
-.noticia-imagen-preview {
-  width: 100%;
-  height: 130px;
-  overflow: hidden;
-  border-radius: 6px 6px 0 0;
-  margin-bottom: 0.5rem;
-}
-.noticia-imagen-preview img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
 
 /* Encuestas de satisfacción */
 .encuestas-encabezado {
