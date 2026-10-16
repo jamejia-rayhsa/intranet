@@ -13,6 +13,9 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-15] orquestador → decisions.md — Extensión de la Fase 4 aplicada: pool, JSON malformado, roles (delegación) y saldo
+- [2026-10-15] orquestador → decisions.md — GO a la Fase 5; Fase 4 cerrada (fa87d41)
+- [2026-10-15] orquestador → decisions.md — Decisiones del humano tras la Fase 4: jefe inmediato, timeouts del pool, JSON/roles, saldo por query
 - [2026-10-15] orquestador → decisions.md — Fase 4 lista para GO/NO-GO (días hábiles, cupo por departamento, calendario de ocupación)
 - [2026-10-15] revisor → reviews.md#re-revisión-fase-4 — Re-revisión Fase 4 (vacaciones): APROBADO CON OBSERVACIONES (sin críticos ni altos abiertos; 4 bajos y 2 medios pendientes)
 - [2026-10-15] revisor → reviews.md — Fase 4 vacaciones (días hábiles, cupo, ocupación): NO APROBADO (1 crítico escalado: periodo del body viola decisión; 1 alto: pool en transacción; 6 medios; 4 bajos)
@@ -154,3 +157,4 @@
 - [2026-10-15] tester → tests.md — Calendario laboral Fase 4: prueba integrada (Postgres 16 + supabase/postgres 17.6 desechables, backend real, build de Vite, Chromium + Firefox, 4 zonas horarias): reglas A 156/156 x5, seguridad C 49/49 x2, UI D sin fallos funcionales, regresión jest 602/602 y eslint 0 errores, migración 009 sobre datos antiguos OK; 1 FAIL ALTO (pool agotado con >= 11 simultáneas congela la API), 2 FAIL menores (saldo/doble envío sin departamento; periodo del cuerpo)
 - [2026-10-15] tester → decisions.md — PARA RESOLVER P1 (alto: interbloqueo del pool con >= 11 solicitudes simultáneas), P2 (periodo del cuerpo), P3 (sin departamento no se serializa), P4 (menores de UI)
 - [2026-10-15] [coder] Correcciones de la revisión de la Fase 4 (periodo del servidor, pool en transacción, candado por empleado, post-COMMIT, UI) -> code-notes.md
+- [2026-10-15] [coder] Extensión Fase 4: timeouts del pool, JSON malformado 400/413, delegación de permisos y roles, validación de periodo/ids en saldo -> code-notes.md

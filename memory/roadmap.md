@@ -52,10 +52,10 @@
 > Rama `feat/calendariolaboral-vacaciones`. Fases = PROPUESTA del orquestador; cada una cierra con GO del humano. Decisiones en decisions.md (2026-10-15).
 
 ## Estado global
-- **Fase actual:** 4 LISTA PARA GO/NO-GO (commit hecho en la rama). **Actualizado:** 2026-10-15
+- **Fase actual:** 5 EN CURSO (Fase 4 CERRADA, commit fa87d41). Extensión en curso: pool, JSON, roles, saldo; falta regla del jefe inmediato. **Actualizado:** 2026-10-15
 
 ## Fase 1 — Investigación — CERRADA (research.md 1545-1638)
 ## Fase 2 — Calendario laboral: BD, backend, permisos, auditoría, semilla de festivos MX — CERRADA (commit c5247eb)
 ## Fase 3 — Pantalla de administración del calendario (RH/Admin) — CERRADA (commit 07400d2)
-## Fase 4 — Días hábiles + bloqueo por departamento con cupo + fechas ocupadas en el selector — LISTA PARA GO/NO-GO (coder + revisor + tester; ver decisions.md)
-## Fase 5 — Revisión, pruebas y cierre — NO INICIADA
+## Fase 4 — Días hábiles + bloqueo por departamento con cupo + fechas ocupadas en el selector — CERRADA (commit fa87d41)
+## Fase 5 — Revisión, pruebas y cierre — EN CURSO (espera extensión + confirmación del jefe inmediato)

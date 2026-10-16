@@ -24,8 +24,16 @@ function validarParametro(nombre, patron, mensaje) {
   };
 }
 
-const validarId = (nombre = "id") =>
-  validarParametro(nombre, /^\d+$/, `Parametro ${nombre} no valido`);
+// Los ids son INTEGER (int4) en Postgres: un valor mayor haria fallar la consulta con 500
+const INT4_MAX = 2147483647;
+const esEnteroInt4 = (valor) => /^\d+$/.test(String(valor)) && Number(valor) <= INT4_MAX;
+
+const validarId = (nombre = "id") => (req, res, next) => {
+  if (!esEnteroInt4(req.params[nombre])) {
+    return res.status(400).json({ exito: false, mensaje: `Parametro ${nombre} no valido` });
+  }
+  next();
+};
 const validarPeriodo = (nombre = "periodo") =>
   validarParametro(nombre, /^\d{4}-\d{2}$/, "Periodo no valido (formato YYYY-MM)");
 
@@ -106,7 +114,7 @@ function empleadoPropioEnPeticion({ origen = "body", campo = "empleado_id", opci
     const valor = contenedor[campo];
     const recurso = `rh.${opcion}`;
     try {
-      if (valor !== undefined && valor !== null && valor !== "" && !/^\d+$/.test(String(valor))) {
+      if (valor !== undefined && valor !== null && valor !== "" && !esEnteroInt4(valor)) {
         return res.status(400).json({ exito: false, mensaje: `Parametro ${campo} no valido` });
       }
       if (await tienePermiso(req.user, "rh", opcionRH || opcion, tipoRH)) return next();

@@ -1,4 +1,6 @@
 const Permiso = require('../models/permiso.model');
+const { grupo } = require('../config/database');
+const Delegacion = require('../services/delegacionPermisos');
 
 const ControladorPermiso = {
   async listar(req, res) {
@@ -52,6 +54,18 @@ const ControladorPermiso = {
       res.json({ exito: true, mensaje: 'Permiso eliminado exitosamente' });
     } catch (error) {
       res.status(500).json({ exito: false, mensaje: 'Error al eliminar permiso', error: error.message });
+    }
+  },
+
+  async guardarPermisosModulo(req, res) {
+    try {
+      const { rol_id, modulo } = req.params;
+      await Delegacion.guardarPermisosDeModulo(grupo, req.user, rol_id, modulo, req.body && req.body.permisos);
+      res.json({ exito: true, mensaje: 'Permisos actualizados' });
+    } catch (error) {
+      if (Delegacion.responderErrorDelegacion(res, error)) return;
+      console.error('guardarPermisosModulo:', error.message);
+      res.status(500).json({ exito: false, mensaje: 'Error al guardar permisos' });
     }
   },
 

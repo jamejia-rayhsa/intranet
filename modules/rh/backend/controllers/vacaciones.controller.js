@@ -24,6 +24,10 @@ class ErrorVacaciones extends Error {
   }
 }
 
+// Rango del periodo consultable en GET /saldo (años respecto al actual)
+const PERIODOS_ATRAS = 10;
+const PERIODOS_ADELANTE = 2;
+
 const formatearFecha = (texto) => {
   const [anio, mes, dia] = texto.split("-");
   return `${dia}/${mes}/${anio}`;
@@ -162,8 +166,21 @@ const ControladorVacaciones = {
         empleado_id = empleadoUsuario.id;
       }
 
-      if (!periodo) {
-        periodo = new Date().getFullYear();
+      // `periodo` por query es SOLO una consulta de lectura del saldo de ese año. Crear y
+      // disponibilidad nunca lo toman del cliente: usan el año de fecha_inicial.
+      const anioActual = new Date().getFullYear();
+      if (periodo === undefined || periodo === "") {
+        periodo = anioActual;
+      } else if (
+        typeof periodo !== "string" ||
+        !/^\d{4}$/.test(periodo) ||
+        Number(periodo) < anioActual - PERIODOS_ATRAS ||
+        Number(periodo) > anioActual + PERIODOS_ADELANTE
+      ) {
+        return res.status(400).json({
+          exito: false,
+          mensaje: `El periodo debe ser un año entre ${anioActual - PERIODOS_ATRAS} y ${anioActual + PERIODOS_ADELANTE}`,
+        });
       }
 
       const saldo = await SolicitudVacaciones.calcularSaldo(

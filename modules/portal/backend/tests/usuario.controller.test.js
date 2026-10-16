@@ -16,6 +16,8 @@ const Usuario = require('../models/usuario.model');
 const supabaseAdmin = require('../services/supabaseAdmin.service');
 const controlador = require('../controllers/usuario.controller');
 
+const SUPER = { usuario_id: 1, rol_id: 1, rol_nombre: 'super_admin' };
+
 function mockRes() {
   return { status: jest.fn().mockReturnThis(), json: jest.fn() };
 }
@@ -75,7 +77,7 @@ describe('usuario.controller', () => {
       Usuario.buscarPorId.mockResolvedValue({ id: 3, auth_tipo: 'local', auth_uid: 'uid-3' });
       Usuario.actualizar.mockResolvedValue({});
       const res = mockRes();
-      await controlador.resetearPassword({ params: { id: 3 } }, res);
+      await controlador.resetearPassword({ user: SUPER, params: { id: 3 } }, res);
       const temporal = res.json.mock.calls[0][0].datos.contraseña_temporal;
       expect(temporal).toMatch(/^[A-Za-z0-9]{12,}$/);
       expect(supabaseAdmin.actualizarPassword).toHaveBeenCalledWith('uid-3', temporal);
@@ -85,7 +87,7 @@ describe('usuario.controller', () => {
     it('sin auth_uid responde 409 y no escribe en ningún lado', async () => {
       Usuario.buscarPorId.mockResolvedValue({ id: 4, auth_tipo: 'local', auth_uid: null });
       const res = mockRes();
-      await controlador.resetearPassword({ params: { id: 4 } }, res);
+      await controlador.resetearPassword({ user: SUPER, params: { id: 4 } }, res);
       expect(res.status).toHaveBeenCalledWith(409);
       expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
       expect(Usuario.actualizar).not.toHaveBeenCalled();
@@ -95,7 +97,7 @@ describe('usuario.controller', () => {
       Usuario.buscarPorId.mockResolvedValue({ id: 3, auth_tipo: 'local', auth_uid: 'uid-3' });
       supabaseAdmin.actualizarPassword.mockRejectedValue(new Error('gotrue caido'));
       const res = mockRes();
-      await controlador.resetearPassword({ params: { id: 3 } }, res);
+      await controlador.resetearPassword({ user: SUPER, params: { id: 3 } }, res);
       expect(res.status).toHaveBeenCalledWith(500);
       expect(Usuario.actualizar).not.toHaveBeenCalled();
     });
@@ -163,7 +165,7 @@ describe('usuario.controller', () => {
       Usuario.buscarPorId.mockResolvedValue({ id: 2, auth_uid: 'uid-2' });
       Usuario.actualizar.mockResolvedValue({ id: 2, hash_password: 'h', auth_uid: 'uid-2' });
       const res = mockRes();
-      await controlador.actualizar({ params: { id: 2 }, body: { contraseña: 'Nueva12345' } }, res);
+      await controlador.actualizar({ user: SUPER, params: { id: 2 }, body: { contraseña: 'Nueva12345' } }, res);
       expect(supabaseAdmin.actualizarPassword).toHaveBeenCalledWith('uid-2', 'Nueva12345');
       const datos = Usuario.actualizar.mock.calls[0][1];
       expect(datos).not.toHaveProperty('hash_password');
@@ -176,7 +178,7 @@ describe('usuario.controller', () => {
     it('con contraseña y sin auth_uid: 409 sin escribir', async () => {
       Usuario.buscarPorId.mockResolvedValue({ id: 2, auth_uid: null });
       const res = mockRes();
-      await controlador.actualizar({ params: { id: 2 }, body: { contraseña: 'Nueva12345' } }, res);
+      await controlador.actualizar({ user: SUPER, params: { id: 2 }, body: { contraseña: 'Nueva12345' } }, res);
       expect(res.status).toHaveBeenCalledWith(409);
       expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
       expect(Usuario.actualizar).not.toHaveBeenCalled();

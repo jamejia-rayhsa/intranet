@@ -1,4 +1,5 @@
 const Usuario = require("../models/usuario.model");
+const Delegacion = require("../services/delegacionPermisos");
 const { grupo } = require("../config/database");
 const supabaseAdmin = require("../services/supabaseAdmin.service");
 const sinSecretos = require("../utils/sinSecretos");
@@ -47,6 +48,16 @@ const ControladorUsuario = {
           exito: false,
           mensaje: "Correo, nombre y contraseña son obligatorios",
         });
+      }
+
+      // El rol inicial se valida ANTES de crear nada (ni GoTrue ni fila local)
+      if (rol_id) {
+        const cliente = await grupo.connect();
+        try {
+          await Delegacion.exigirRolAsignable(cliente, req.user, rol_id);
+        } finally {
+          cliente.release();
+        }
       }
 
       const existente = await Usuario.buscarPorCorreo(correo);
@@ -101,6 +112,7 @@ const ControladorUsuario = {
         mensaje: "Usuario creado exitosamente",
       });
     } catch (error) {
+      if (Delegacion.responderErrorDelegacion(res, error)) return;
       res.status(400).json({
         exito: false,
         mensaje: "Error al crear usuario",
@@ -119,6 +131,26 @@ const ControladorUsuario = {
         activo,
         requiere_cambio_password,
       } = req.body;
+
+      // Antes de escribir nada: el rol nuevo debe ser asignable por quien edita (y el usuario no puede
+      // ser un super_admin/rh_admin/tickets_admin si quien edita no es super_admin). Un rol_id ausente
+      // (undefined) ya NO borra el rol del usuario; para quitarlo se envía rol_id null o "".
+      if (contraseña) {
+        await Delegacion.validarUsuarioAdministrable(grupo, req.user, req.params.id);
+      }
+      if (rol_id !== undefined) {
+        const existe = await Delegacion.cambiarRolDeUsuario(
+          grupo,
+          req.user,
+          req.params.id,
+          rol_id || null,
+        );
+        if (!existe) {
+          return res
+            .status(404)
+            .json({ exito: false, mensaje: "Usuario no encontrado" });
+        }
+      }
 
       const datos = {};
       if (nombre !== undefined) datos.nombre = nombre;
@@ -155,22 +187,13 @@ const ControladorUsuario = {
           .json({ exito: false, mensaje: "Usuario no encontrado" });
       }
 
-      await grupo.query("DELETE FROM usuario_rol WHERE usuario_id = $1", [
-        req.params.id,
-      ]);
-      if (rol_id) {
-        await grupo.query(
-          "INSERT INTO usuario_rol (usuario_id, rol_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-          [req.params.id, rol_id],
-        );
-      }
-
       res.json({
         exito: true,
         datos: sinSecretos(usuario),
         mensaje: "Usuario actualizado exitosamente",
       });
     } catch (error) {
+      if (Delegacion.responderErrorDelegacion(res, error)) return;
       res.status(400).json({
         exito: false,
         mensaje: "Error al actualizar usuario",
@@ -189,6 +212,9 @@ const ControladorUsuario = {
           .status(404)
           .json({ exito: false, mensaje: "Usuario no encontrado" });
       }
+
+      // Resetear la contraseña equivale a tomar la cuenta: no sobre un rol privilegiado
+      await Delegacion.validarUsuarioAdministrable(grupo, req.user, id);
 
       if (usuario.auth_tipo !== "local") {
         return res.status(400).json({
@@ -215,6 +241,7 @@ const ControladorUsuario = {
         mensaje: "Contraseña reseteada exitosamente",
       });
     } catch (error) {
+      if (Delegacion.responderErrorDelegacion(res, error)) return;
       res.status(500).json({
         exito: false,
         mensaje: "Error al resetear contraseña",
@@ -267,24 +294,20 @@ const ControladorUsuario = {
         });
       }
 
-      const usuario = await Usuario.buscarPorId(id);
-      if (!usuario) {
+      // Valida (rol asignable por quien lo pide, usuario no privilegiado) y escribe en una transacción
+      const existe = await Delegacion.cambiarRolDeUsuario(grupo, req.user, id, rol_id);
+      if (!existe) {
         return res
           .status(404)
           .json({ exito: false, mensaje: "Usuario no encontrado" });
       }
-
-      await grupo.query("DELETE FROM usuario_rol WHERE usuario_id = $1", [id]);
-      await grupo.query(
-        "INSERT INTO usuario_rol (usuario_id, rol_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-        [id, rol_id],
-      );
 
       res.json({
         exito: true,
         mensaje: "Rol asignado exitosamente",
       });
     } catch (error) {
+      if (Delegacion.responderErrorDelegacion(res, error)) return;
       res.status(500).json({
         exito: false,
         mensaje: "Error al asignar rol",

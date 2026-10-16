@@ -69,6 +69,8 @@ Comprueba el resultado con `docker logs intranet_supabase_db_init | grep -E "apl
 
 Variables: plantilla en `.env.supabase.example` (se añaden al `.env.<entorno>`). `POSTGRES_DB` del backend debe ser `postgres`.
 
+**Pool de conexiones del backend** (`modules/portal/backend/config/database.js`, un solo pool que comparten portal, RH, tickets y auditoría). Variables opcionales: `PG_POOL_MAX` (10), `PG_POOL_IDLE_TIMEOUT_MS` (30000), `PG_POOL_CONNECTION_TIMEOUT_MS` (5000: con el pool agotado la petición falla a los 5 s con 500 genérico en vez de colgarse) y `PG_IDLE_IN_TRANSACTION_TIMEOUT_MS` (30000: Postgres cierra la sesión con una transacción abierta e inactiva). No hay `statement_timeout` global (reportes y auditoría pueden tardar). Una transacción no debe esperar a servicios externos (Storage, GoTrue, n8n) entre `BEGIN` y `COMMIT`.
+
 ## 3. Secretos
 
 ```bash
