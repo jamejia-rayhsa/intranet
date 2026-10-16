@@ -121,9 +121,28 @@ function crearPoolFalso() {
     throw new Error(`Consulta no soportada por el pool falso: ${q}`);
   }
 
+  // Bloqueo por fila de usuario (SELECT ... FOR UPDATE): una cola por id, se libera en COMMIT/ROLLBACK.
+  // Sin FOR UPDATE en la consulta NO se bloquea: así una mutación que lo quite hace fallar las pruebas de carrera.
+  pool.bloqueos = new Map();
+  async function adquirir(id) {
+    const previa = pool.bloqueos.get(id) || Promise.resolve();
+    let liberar;
+    const mia = new Promise((resolver) => {
+      liberar = resolver;
+    });
+    pool.bloqueos.set(id, previa.then(() => mia));
+    await previa;
+    return liberar;
+  }
+
   pool.connect = async () => {
     pool.conexiones++;
     let copia = null;
+    let liberarBloqueos = [];
+    const soltar = () => {
+      liberarBloqueos.forEach((f) => f());
+      liberarBloqueos = [];
+    };
     return {
       query: async (sql, params = []) => {
         const q = sql.trim();
@@ -134,16 +153,24 @@ function crearPoolFalso() {
         }
         if (q === 'COMMIT') {
           copia = null;
+          soltar();
           return { rows: [] };
         }
         if (q === 'ROLLBACK') {
           if (copia) pool.estado = copia;
           copia = null;
+          soltar();
           return { rows: [] };
+        }
+        if (/^SELECT id FROM usuarios WHERE id = \$1 FOR UPDATE/.test(q.replace(/\s+/g, ' '))) {
+          liberarBloqueos.push(await adquirir(Number(params[0])));
+          // Con el bloqueo obtenido, el punto de reversa es el estado vigente (otra transacción pudo confirmar)
+          if (copia) copia = JSON.parse(JSON.stringify(pool.estado));
         }
         return ejecutar(pool.estado, sql, params);
       },
       release: () => {
+        soltar();
         pool.liberadas++;
       },
     };
@@ -160,6 +187,7 @@ function crearPoolFalso() {
     pool.estado.rop.some((f) => f.rol_id === rol && f.opcion_id === opcion && f.tipo === tipo);
   pool.reiniciar = () => {
     pool.estado = estadoInicial();
+    pool.bloqueos = new Map();
     pool.consultas = [];
     pool.conexiones = 0;
     pool.liberadas = 0;

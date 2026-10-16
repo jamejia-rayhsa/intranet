@@ -91,4 +91,12 @@ describe("SolicitudVacaciones: el jefe que cuenta es el VIGENTE del empleado (JO
     await expect(SolicitudVacaciones.jefeVigenteDeEmpleado(5, cliente)).resolves.toBeNull();
     await expect(SolicitudVacaciones.jefeVigenteDeEmpleado(null, cliente)).resolves.toBeNull();
   });
+
+  it("jefeVigenteDeEmpleado bloquea la fila con FOR SHARE solo si se pide", async () => {
+    const cliente = { query: jest.fn(async () => ({ rows: [{ jefe_inmediato_id: 9 }] })) };
+    await SolicitudVacaciones.jefeVigenteDeEmpleado(5, cliente);
+    expect(cliente.query.mock.calls[0][0]).not.toMatch(/FOR SHARE/);
+    await SolicitudVacaciones.jefeVigenteDeEmpleado(5, cliente, true);
+    expect(cliente.query.mock.calls[1][0]).toMatch(/WHERE id = \$1 FOR SHARE$/);
+  });
 });

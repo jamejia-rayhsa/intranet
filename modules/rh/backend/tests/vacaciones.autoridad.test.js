@@ -198,10 +198,11 @@ describe("Vacaciones - autoridad para aprobar y rechazar", () => {
         orden.push("solicitud");
         return filaBloqueada(solicitud(5, 8));
       });
-      Solicitud.jefeVigenteDeEmpleado.mockImplementation(async (empleadoId, c) => {
+      Solicitud.jefeVigenteDeEmpleado.mockImplementation(async (empleadoId, c, bloquear) => {
         orden.push("jefe");
         expect(c).toBe(cliente);
         expect(empleadoId).toBe(5);
+        expect(bloquear).toBe(true); // FOR SHARE: un cambio de jefe concurrente espera al COMMIT
         return 8;
       });
       expect((await aprobar()).status).toBe(200);
@@ -336,6 +337,17 @@ describe("Vacaciones - autoridad para aprobar y rechazar", () => {
     });
     it("solicitante comun: nada", async () => {
       expect(await puede(50)).toEqual([false, false, false, false, false]);
+    });
+    it("el listado decide RH por permiso (como responder), no por el nombre del rol: rh_admin sin Empleados:edicion ve solo su equipo", async () => {
+      como(110);
+      mockUser = { usuario_id: 110, rol_id: 2, rol_nombre: "rh_admin" };
+      Solicitud.listar.mockResolvedValue([]);
+      Solicitud.contar.mockResolvedValue(0);
+      const res = await request(app).get("/vacaciones");
+      expect(res.body.datos.es_admin).toBe(false);
+      const filtros = Solicitud.listar.mock.calls[0][0];
+      expect(filtros.ver_todo).toBeUndefined();
+      expect(filtros.empleado_o_jefe_id).toBe(11);
     });
   });
 });

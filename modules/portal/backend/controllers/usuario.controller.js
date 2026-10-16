@@ -118,30 +118,11 @@ const ControladorUsuario = {
         requiere_cambio_password,
       } = req.body;
 
-      // Antes de escribir nada: el rol nuevo debe ser asignable por quien edita (y el usuario no puede
-      // ser un super_admin/rh_admin/tickets_admin si quien edita no es super_admin). Un rol_id ausente
-      // (undefined) ya NO borra el rol del usuario; para quitarlo se envía rol_id null o "".
-      // Cualquier cambio (activo, nombre, contraseña, rol) sobre un usuario con rol privilegiado es solo
-      // de super_admin; la contraseña (tomar la cuenta) además exige poseer los permisos de su rol.
-      if (contraseña) {
-        await Delegacion.validarCuentaTomable(grupo, req.user, req.params.id);
-      } else {
-        await Delegacion.validarUsuarioAdministrable(grupo, req.user, req.params.id);
-      }
-      if (rol_id !== undefined) {
-        const existe = await Delegacion.cambiarRolDeUsuario(
-          grupo,
-          req.user,
-          req.params.id,
-          rol_id || null,
-        );
-        if (!existe) {
-          return res
-            .status(404)
-            .json({ exito: false, mensaje: "Usuario no encontrado" });
-        }
-      }
-
+      // Validación y escritura en UNA transacción con el usuario bloqueado (FOR UPDATE): la regla se
+      // evalúa contra el estado FINAL (roles tras el cambio) y el actual, sin ventana frente a un ascenso
+      // concurrente. Si el estado final es tomable solo por super_admin: 403 sin NINGÚN cambio (ni rol,
+      // ni contraseña, ni llamada a GoTrue). Un rol_id ausente (undefined) no borra el rol; para
+      // quitarlo se envía null o "".
       const datos = {};
       if (nombre !== undefined) datos.nombre = nombre;
       if (apellido !== undefined) datos.apellido = apellido;
@@ -154,28 +135,38 @@ const ControladorUsuario = {
 
       // TODO(supabase): este endpoint no permite cambiar correo; si se agrega,
       // sincronizarlo en GoTrue (el contrato de supabaseAdmin aun no lo ofrece).
-      if (contraseña) {
-        const actual = await Usuario.buscarPorId(req.params.id);
-        if (!actual) {
-          return res
-            .status(404)
-            .json({ exito: false, mensaje: "Usuario no encontrado" });
-        }
-        if (!actual.auth_uid) {
-          return res.status(409).json({
-            exito: false,
-            mensaje: "El usuario no tiene cuenta en Supabase Auth",
-          });
-        }
-        await supabaseAdmin.actualizarPassword(actual.auth_uid, contraseña);
-      }
-
-      // Sin otros campos (p. ej. solo rol_id) no hay UPDATE que hacer: se devuelve el usuario tal cual
-      const usuario =
-        Object.keys(datos).length > 0
-          ? await Usuario.actualizar(req.params.id, datos)
-          : await Usuario.buscarPorId(req.params.id);
-      if (!usuario) {
+      const { encontrado, valor: usuario } = await Delegacion.operarSobreUsuario(
+        grupo,
+        req.user,
+        req.params.id,
+        {
+          rolId: rol_id === undefined ? undefined : rol_id || null,
+          tomaCuenta: Boolean(contraseña),
+          escribir: async (cliente) => {
+            let authUid = null;
+            if (contraseña) {
+              const actual = await Usuario.buscarPorId(req.params.id, cliente);
+              if (!actual) return null;
+              if (!actual.auth_uid) {
+                throw new Delegacion.ErrorDelegacion(
+                  409,
+                  "El usuario no tiene cuenta en Supabase Auth",
+                );
+              }
+              authUid = actual.auth_uid;
+            }
+            // Sin otros campos (p. ej. solo rol_id) no hay UPDATE que hacer: se devuelve el usuario tal cual
+            const guardado =
+              Object.keys(datos).length > 0
+                ? await Usuario.actualizar(req.params.id, datos, cliente)
+                : await Usuario.buscarPorId(req.params.id, cliente);
+            // GoTrue AL FINAL, antes del COMMIT: si falla, la BD se revierte completa
+            if (authUid) await supabaseAdmin.actualizarPassword(authUid, contraseña);
+            return guardado;
+          },
+        },
+      );
+      if (!encontrado || !usuario) {
         return res
           .status(404)
           .json({ exito: false, mensaje: "Usuario no encontrado" });
@@ -196,35 +187,38 @@ const ControladorUsuario = {
   async resetearPassword(req, res) {
     try {
       const { id } = req.params;
-      const usuario = await Usuario.buscarPorId(id);
+      const contraseñaTemporal = generarContraseñaTemporal();
 
-      if (!usuario) {
+      // Resetear la contraseña equivale a tomar la cuenta: solo si el actor posee los permisos del rol.
+      // Valida y escribe bajo el bloqueo del usuario; GoTrue va al final, antes del COMMIT.
+      const { encontrado } = await Delegacion.operarSobreUsuario(grupo, req.user, id, {
+        tomaCuenta: true,
+        escribir: async (cliente) => {
+          const usuario = await Usuario.buscarPorId(id, cliente);
+          if (!usuario) return null;
+          if (usuario.auth_tipo !== "local") {
+            throw new Delegacion.ErrorDelegacion(
+              400,
+              "Solo se puede resetear contraseña de usuarios locales",
+            );
+          }
+          if (!usuario.auth_uid) {
+            throw new Delegacion.ErrorDelegacion(
+              409,
+              "El usuario no tiene cuenta en Supabase Auth",
+            );
+          }
+          await Usuario.actualizar(id, { requiere_cambio_password: true }, cliente);
+          // La contraseña vive solo en GoTrue
+          await supabaseAdmin.actualizarPassword(usuario.auth_uid, contraseñaTemporal);
+          return true;
+        },
+      });
+      if (!encontrado) {
         return res
           .status(404)
           .json({ exito: false, mensaje: "Usuario no encontrado" });
       }
-
-      // Resetear la contraseña equivale a tomar la cuenta: solo si el actor posee los permisos del rol
-      await Delegacion.validarCuentaTomable(grupo, req.user, id);
-
-      if (usuario.auth_tipo !== "local") {
-        return res.status(400).json({
-          exito: false,
-          mensaje: "Solo se puede resetear contraseña de usuarios locales",
-        });
-      }
-
-      const contraseñaTemporal = generarContraseñaTemporal();
-      if (!usuario.auth_uid) {
-        return res.status(409).json({
-          exito: false,
-          mensaje: "El usuario no tiene cuenta en Supabase Auth",
-        });
-      }
-
-      // La contraseña vive solo en GoTrue
-      await supabaseAdmin.actualizarPassword(usuario.auth_uid, contraseñaTemporal);
-      await Usuario.actualizar(id, { requiere_cambio_password: true });
 
       res.json({
         exito: true,
@@ -244,10 +238,21 @@ const ControladorUsuario = {
       // autoriza por la fila local, asi que una identidad huerfana en GoTrue
       // recibe 403; invertirlo seria irrecuperable si fallara el borrado local.
       // Un fallo de limpieza en GoTrue se registra y no bloquea la respuesta.
-      await Delegacion.validarUsuarioAdministrable(grupo, req.user, req.params.id);
-      const previo = await Usuario.buscarPorId(req.params.id);
-      const usuario = await Usuario.eliminar(req.params.id);
-      if (!usuario) {
+      // Valida (no privilegiado) y borra bajo el mismo bloqueo del usuario
+      const { encontrado, valor } = await Delegacion.operarSobreUsuario(
+        grupo,
+        req.user,
+        req.params.id,
+        {
+          escribir: async (cliente) => {
+            const previo = await Usuario.buscarPorId(req.params.id, cliente);
+            const usuario = await Usuario.eliminar(req.params.id, cliente);
+            return { previo, usuario };
+          },
+        },
+      );
+      const previo = valor && valor.previo;
+      if (!encontrado || !valor.usuario) {
         return res
           .status(404)
           .json({ exito: false, mensaje: "Usuario no encontrado" });

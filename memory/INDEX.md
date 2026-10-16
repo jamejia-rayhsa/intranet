@@ -13,6 +13,7 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-15] revisor → reviews.md#re-revision-final-tras-correcciones-fase-5 — Re-revisión final (Fase 5): RECHAZADO (1 crítico: PUT con contraseña+rol_id toma la cuenta; medios abiertos)
 - [2026-10-15] orquestador → decisions.md — Decisiones tras la revisión final: asignar roles no privilegiados, borrar roles solo super_admin, jefe vigente
 - [2026-10-15] revisor → reviews.md — Revisión final de la rama (Fase 5): RECHAZADO (1 crítico: rh_admin asigna super_admin por el alta de empleado; 2 altos)
 - [2026-10-15] orquestador → decisions.md — Regla de quién autoriza vacaciones: jefe inmediato, RH y super_admin; nunca lo propio
@@ -165,3 +166,4 @@
 - [2026-10-15] tester → tests.md — Prueba final de la rama (Fase 5): migración real x2 sobre datos antiguos, E2E UI 61/61 x6 (Chromium+Firefox, 4 zonas), autoridad API+UI, pool/JSON/timeouts, axe, responsive, jest 764/764 y eslint 0 errores; 4 FAIL (F-A..F-D) y menores
 - [2026-10-15] tester → decisions.md — PARA RESOLVER F-A (crítico: rh_admin crea super_admin por alta de empleado), F-B/F-C (altos: portal_admin borra/desactiva super_admin y toma cuentas), F-D (el HEAD usa snapshot del jefe, no jefe vigente), F-E (menores)
 - [2026-10-15] [coder] Correcciones de la revisión final (F-A..F-E: alta de empleado con roles, usuarios privilegiados, toma de cuenta, jefe vigente, UNIQUE usuario_id) -> code-notes.md
+- [2026-10-15] [coder] Segunda ronda de la revisión final (E1 atómico con FOR UPDATE y estado final, permisos de roles privilegiados solo super, esAdmin por permiso, jefe FOR SHARE) -> code-notes.md

@@ -439,10 +439,8 @@ const ControladorVacaciones = {
     try {
       const { pagina = 1, limite = 20, estatus, periodo, busqueda } = req.query;
 
-      const rolNombre = req.user.rol_nombre;
-      const esAdmin =
-        ["super_admin", "rh_admin"].includes(rolNombre) ||
-        (await tienePermiso(req.user, "rh", "Empleados", "edicion"));
+      // Misma función central que `responder` (RH = Empleados:edicion; tienePermiso ya cubre a super_admin)
+      const esAdmin = await tienePermiso(req.user, "rh", "Empleados", "edicion");
 
       const empleadoUsuario = await Empleado.obtenerPorUsuarioId(req.user.usuario_id);
 
@@ -557,8 +555,14 @@ const ControladorVacaciones = {
 
         // Con la fila ya bloqueada: la ruta pudo decidir con datos anteriores. Autoriza el jefe VIGENTE
         // del empleado (SELECT con `cliente`, dentro de la transacción); el jefe guardado en la
-        // solicitud es solo histórico.
-        const jefeVigenteId = await SolicitudVacaciones.jefeVigenteDeEmpleado(actual.empleado_id, cliente);
+        // solicitud es solo histórico. FOR SHARE sobre la fila del empleado: un cambio de jefe concurrente
+        // espera al COMMIT (orden: candado empleado -> solicitud -> fila empleado -> departamento; las
+        // demás rutas no bloquean la fila del empleado, así que no hay ciclo).
+        const jefeVigenteId = await SolicitudVacaciones.jefeVigenteDeEmpleado(
+          actual.empleado_id,
+          cliente,
+          true,
+        );
         const motivoDenegado = motivoSinAutoridad(
           { ...actual, jefe_vigente_id: jefeVigenteId },
           empleadoAutoriza,

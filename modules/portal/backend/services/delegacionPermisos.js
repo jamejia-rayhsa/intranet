@@ -129,8 +129,13 @@ async function guardarPermisosDeModulo(pool, actor, rolId, modulo, permisos) {
     if (rol.rows.length === 0) throw new ErrorDelegacion(404, "Rol no encontrado");
 
     const superAdmin = esSuperAdmin(actor);
-    if (!superAdmin && rol.rows[0].nombre === "super_admin") {
-      throw new ErrorDelegacion(403, "Solo un super_admin puede modificar el rol super_admin");
+    // Los permisos de los roles privilegiados (otorgar O quitar) son solo de super_admin: quitar
+    // rh/Calendario a rh_admin degradaría a un rol de confianza aunque no escale privilegios
+    if (!superAdmin && esNombrePrivilegiado(rol.rows[0].nombre)) {
+      throw new ErrorDelegacion(
+        403,
+        `Solo un super_admin puede modificar los permisos del rol ${rol.rows[0].nombre}`,
+      );
     }
 
     const opciones = await cliente.query(
@@ -248,13 +253,45 @@ async function exigirUsuarioNoPrivilegiado(cliente, actor, usuarioId) {
 }
 
 /**
- * Cambia el rol de un usuario (un solo rol: se reemplaza el anterior) en una transacción.
- * `nuevoRolId` null/"" = quitar el rol. Valida antes de escribir.
- * @returns {Promise<boolean>} false si el usuario no existe
+ * Los permisos de TODOS los roles `rolIds` deben ser poseídos por el actor (toma de cuenta); si no, 403.
+ * No aplica a super_admin (quien llama ya lo descartó).
  */
-async function cambiarRolDeUsuario(pool, actor, usuarioId, nuevoRolId) {
-  const quitar = nuevoRolId === null || nuevoRolId === "";
-  if (!quitar && !esEnteroInt4(nuevoRolId)) throw new ErrorDelegacion(400, "rol_id no válido");
+async function exigirPermisosPoseidos(cliente, actor, rolIds) {
+  const { claves: clavesActor } = await permisosDeRol(cliente, actor && actor.rol_id);
+  for (const rolId of rolIds) {
+    const { detalle } = await permisosDeRol(cliente, rolId);
+    const ajenos = detalle.filter((f) => !posee(clavesActor, f.opcion_id, f.tipo));
+    if (ajenos.length > 0) {
+      throw new ErrorDelegacion(
+        403,
+        `No puedes cambiar la contraseña de este usuario: su rol incluye permisos que tú no posees (${ajenos
+          .slice(0, 5)
+          .map(etiqueta)
+          .join(", ")}${ajenos.length > 5 ? ", ..." : ""}); solo un super_admin puede hacerlo`,
+      );
+    }
+  }
+}
+
+/**
+ * Operación ATÓMICA sobre un usuario (cambio de rol, edición, contraseña, borrado): valida y escribe en
+ * UNA transacción con el usuario bloqueado (SELECT ... FOR UPDATE). Así un ascenso concurrente de rol
+ * no se cuela entre la validación y la escritura, y un PUT {contraseña, rol_id} se valida contra el
+ * ESTADO FINAL (roles resultantes) además del actual.
+ *
+ * @param {object} opciones
+ * @param {undefined|null|""|number|string} opciones.rolId - undefined = no cambia el rol; null/"" = quitarlo
+ * @param {boolean} opciones.tomaCuenta - la operación cambia credenciales: exige poseer los permisos de los
+ *   roles actuales Y finales (no super_admin)
+ * @param {(cliente)=>Promise<any>} [opciones.escribir] - escrituras extra, con el MISMO cliente y tras
+ *   validar y cambiar el rol. Si lanza, todo se revierte. Pensada para llamar a GoTrue AL FINAL: un fallo
+ *   de GoTrue revierte la BD; el único riesgo residual es que falle el COMMIT después de GoTrue.
+ * @returns {Promise<{encontrado:boolean, valor?:any}>}
+ */
+async function operarSobreUsuario(pool, actor, usuarioId, { rolId, tomaCuenta = false, escribir } = {}) {
+  const cambiaRol = rolId !== undefined;
+  const quitar = rolId === null || rolId === "";
+  if (cambiaRol && !quitar && !esEnteroInt4(rolId)) throw new ErrorDelegacion(400, "rol_id no válido");
   if (!esEnteroInt4(usuarioId)) throw new ErrorDelegacion(400, "id de usuario no válido");
 
   const cliente = await pool.connect();
@@ -263,32 +300,45 @@ async function cambiarRolDeUsuario(pool, actor, usuarioId, nuevoRolId) {
     const usuario = await cliente.query("SELECT id FROM usuarios WHERE id = $1 FOR UPDATE", [usuarioId]);
     if (usuario.rows.length === 0) {
       await cliente.query("ROLLBACK");
-      return false;
+      return { encontrado: false };
     }
+
+    // Estado actual, leído con el usuario ya bloqueado
+    const actuales = await cliente.query("SELECT rol_id FROM usuario_rol WHERE usuario_id = $1", [usuarioId]);
+    const rolesActuales = actuales.rows.map((f) => Number(f.rol_id));
+    await exigirUsuarioNoPrivilegiado(cliente, actor, usuarioId);
+
     // Mismo rol que ya tiene: no cambia nada (editar el nombre de un usuario conserva su rol)
-    if (!quitar) {
-      const actuales = await cliente.query("SELECT rol_id FROM usuario_rol WHERE usuario_id = $1", [usuarioId]);
-      if (actuales.rows.length === 1 && Number(actuales.rows[0].rol_id) === Number(nuevoRolId)) {
-        await cliente.query("COMMIT");
-        return true;
+    const sinCambio =
+      cambiaRol && !quitar && rolesActuales.length === 1 && rolesActuales[0] === Number(rolId);
+    const hayCambioDeRol = cambiaRol && !sinCambio;
+
+    if (hayCambioDeRol) {
+      // Un no super_admin no cambia ni quita su propio rol (se auto-elevaría con un rol con más permisos)
+      if (!esSuperAdmin(actor) && actor && Number(actor.usuario_id) === Number(usuarioId)) {
+        throw new ErrorDelegacion(403, "No puedes cambiar tu propio rol: pídelo a un super_admin");
+      }
+      if (!quitar) await exigirRolAsignable(cliente, actor, Number(rolId));
+    }
+
+    const rolesFinales = !hayCambioDeRol ? rolesActuales : quitar ? [] : [Number(rolId)];
+    if (tomaCuenta && !esSuperAdmin(actor)) {
+      await exigirPermisosPoseidos(cliente, actor, [...new Set([...rolesActuales, ...rolesFinales])]);
+    }
+
+    if (hayCambioDeRol) {
+      await cliente.query("DELETE FROM usuario_rol WHERE usuario_id = $1", [usuarioId]);
+      if (!quitar) {
+        await cliente.query(
+          "INSERT INTO usuario_rol (usuario_id, rol_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+          [usuarioId, Number(rolId)],
+        );
       }
     }
-    await exigirUsuarioNoPrivilegiado(cliente, actor, usuarioId);
-    // Un no super_admin no cambia ni quita su propio rol (se auto-elevaría con un rol con más permisos)
-    if (!esSuperAdmin(actor) && actor && Number(actor.usuario_id) === Number(usuarioId)) {
-      throw new ErrorDelegacion(403, "No puedes cambiar tu propio rol: pídelo a un super_admin");
-    }
-    if (!quitar) await exigirRolAsignable(cliente, actor, Number(nuevoRolId));
 
-    await cliente.query("DELETE FROM usuario_rol WHERE usuario_id = $1", [usuarioId]);
-    if (!quitar) {
-      await cliente.query(
-        "INSERT INTO usuario_rol (usuario_id, rol_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-        [usuarioId, Number(nuevoRolId)],
-      );
-    }
+    const valor = escribir ? await escribir(cliente) : undefined;
     await cliente.query("COMMIT");
-    return true;
+    return { encontrado: true, valor };
   } catch (error) {
     await cliente.query("ROLLBACK").catch(() => {});
     throw error;
@@ -298,8 +348,20 @@ async function cambiarRolDeUsuario(pool, actor, usuarioId, nuevoRolId) {
 }
 
 /**
+ * Cambia el rol de un usuario (un solo rol: se reemplaza el anterior) en una transacción.
+ * `nuevoRolId` null/"" = quitar el rol. Valida antes de escribir.
+ * @returns {Promise<boolean>} false si el usuario no existe
+ */
+async function cambiarRolDeUsuario(pool, actor, usuarioId, nuevoRolId) {
+  if (nuevoRolId === undefined) throw new ErrorDelegacion(400, "rol_id no válido");
+  const { encontrado } = await operarSobreUsuario(pool, actor, usuarioId, { rolId: nuevoRolId });
+  return encontrado;
+}
+
+/**
  * Comprobación de solo lectura para editar, desactivar o borrar a un usuario: un no super_admin no
  * puede hacerlo sobre un usuario con rol privilegiado (tampoco sobre sí mismo si lo es).
+ * Ojo: para escribir use operarSobreUsuario (valida y escribe bajo el mismo bloqueo).
  */
 async function validarUsuarioAdministrable(pool, actor, usuarioId) {
   if (esSuperAdmin(actor)) return;
@@ -315,6 +377,7 @@ async function validarUsuarioAdministrable(pool, actor, usuarioId) {
 /**
  * Cambiar o resetear la contraseña de un usuario equivale a tomar su cuenta: además de no ser
  * privilegiado, los permisos de TODOS sus roles deben ser poseídos por el actor. Si no, solo super_admin.
+ * Solo lectura: para escribir use operarSobreUsuario({ tomaCuenta: true }).
  */
 async function validarCuentaTomable(pool, actor, usuarioId) {
   if (esSuperAdmin(actor)) return;
@@ -323,20 +386,11 @@ async function validarCuentaTomable(pool, actor, usuarioId) {
   try {
     await exigirUsuarioNoPrivilegiado(cliente, actor, usuarioId);
     const roles = await cliente.query("SELECT rol_id FROM usuario_rol WHERE usuario_id = $1", [usuarioId]);
-    const { claves: clavesActor } = await permisosDeRol(cliente, actor && actor.rol_id);
-    for (const { rol_id: rolId } of roles.rows) {
-      const { detalle } = await permisosDeRol(cliente, rolId);
-      const ajenos = detalle.filter((f) => !posee(clavesActor, f.opcion_id, f.tipo));
-      if (ajenos.length > 0) {
-        throw new ErrorDelegacion(
-          403,
-          `No puedes cambiar la contraseña de este usuario: su rol incluye permisos que tú no posees (${ajenos
-            .slice(0, 5)
-            .map(etiqueta)
-            .join(", ")}${ajenos.length > 5 ? ", ..." : ""}); solo un super_admin puede hacerlo`,
-        );
-      }
-    }
+    await exigirPermisosPoseidos(
+      cliente,
+      actor,
+      roles.rows.map((f) => f.rol_id),
+    );
   } finally {
     cliente.release();
   }
@@ -362,6 +416,7 @@ module.exports = {
   exigirRolAsignable,
   exigirUsuarioNoPrivilegiado,
   cambiarRolDeUsuario,
+  operarSobreUsuario,
   validarUsuarioAdministrable,
   validarCuentaTomable,
   validarRolesAsignables,

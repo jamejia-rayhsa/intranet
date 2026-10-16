@@ -90,7 +90,7 @@ async function consulta(dueno, sql, p = []) {
     const fila = estado.solicitudes.find((x) => x.id === Number(p[0]));
     return { rows: fila ? [{ empleado_id: fila.empleado_id }] : [] };
   }
-  if (/^SELECT jefe_inmediato_id FROM empleados WHERE id = \$1$/.test(s)) {
+  if (/^SELECT jefe_inmediato_id FROM empleados WHERE id = \$1( FOR SHARE)?$/.test(s)) {
     // jefe VIGENTE del empleado (autoriza la aprobación); por defecto ninguno
     const jefe = (estado.jefesVigentes || {})[p[0]];
     return { rows: [{ jefe_inmediato_id: jefe === undefined ? null : jefe }] };

@@ -55,10 +55,12 @@ const SolicitudVacaciones = {
 
   // Jefe inmediato VIGENTE del empleado (empleados.jefe_inmediato_id hoy), o null. Lectura sin bloqueo:
   // quien autoriza es el jefe vigente al momento de responder, no el guardado en la solicitud.
-  async jefeVigenteDeEmpleado(empleadoId, cliente = grupo) {
+  // `bloquear`: FOR SHARE sobre la fila del empleado (dentro de una transacción) para que un cambio
+  // de jefe concurrente espere al COMMIT y la decisión use el jefe que de verdad queda vigente.
+  async jefeVigenteDeEmpleado(empleadoId, cliente = grupo, bloquear = false) {
     if (empleadoId === null || empleadoId === undefined) return null;
     const resultado = await cliente.query(
-      "SELECT jefe_inmediato_id FROM empleados WHERE id = $1",
+      `SELECT jefe_inmediato_id FROM empleados WHERE id = $1${bloquear ? " FOR SHARE" : ""}`,
       [empleadoId],
     );
     return resultado.rows[0] ? resultado.rows[0].jefe_inmediato_id : null;

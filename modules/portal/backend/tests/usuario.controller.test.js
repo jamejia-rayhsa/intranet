@@ -1,4 +1,8 @@
-jest.mock('../config/database', () => ({ grupo: { query: jest.fn() } }));
+const { crearPoolFalso } = require('./fakeDelegacion');
+
+const mockPool = crearPoolFalso();
+// El pool falso atiende las transacciones de delegacionPermisos (usuarios 10..17); `query` suelto lo usa crear()
+jest.mock('../config/database', () => ({ grupo: mockPool }));
 jest.mock('../models/usuario.model', () => ({
   buscarPorCorreo: jest.fn(),
   buscarPorId: jest.fn(),
@@ -16,7 +20,7 @@ const Usuario = require('../models/usuario.model');
 const supabaseAdmin = require('../services/supabaseAdmin.service');
 const controlador = require('../controllers/usuario.controller');
 
-const SUPER = { usuario_id: 1, rol_id: 1, rol_nombre: 'super_admin' };
+const SUPER = { usuario_id: 11, rol_id: 1, rol_nombre: 'super_admin' };
 
 function mockRes() {
   return { status: jest.fn().mockReturnThis(), json: jest.fn() };
@@ -25,6 +29,7 @@ function mockRes() {
 describe('usuario.controller', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPool.reiniciar();
     supabaseAdmin.actualizarPassword.mockReset();
     supabaseAdmin.eliminarUsuario.mockReset();
     jest.spyOn(console, 'warn').mockImplementation(() => {});
@@ -75,32 +80,41 @@ describe('usuario.controller', () => {
 
   describe('resetearPassword', () => {
     it('escribe solo en GoTrue y marca requiere_cambio_password', async () => {
-      Usuario.buscarPorId.mockResolvedValue({ id: 3, auth_tipo: 'local', auth_uid: 'uid-3' });
+      Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_tipo: 'local', auth_uid: 'uid-3' });
       Usuario.actualizar.mockResolvedValue({});
       const res = mockRes();
-      await controlador.resetearPassword({ user: SUPER, params: { id: 3 } }, res);
+      await controlador.resetearPassword({ user: SUPER, params: { id: 14 } }, res);
       const temporal = res.json.mock.calls[0][0].datos.contraseña_temporal;
       expect(temporal).toMatch(/^[A-Za-z0-9]{12,}$/);
       expect(supabaseAdmin.actualizarPassword).toHaveBeenCalledWith('uid-3', temporal);
-      expect(Usuario.actualizar).toHaveBeenCalledWith(3, { requiere_cambio_password: true });
+      expect(Usuario.actualizar).toHaveBeenCalledWith(14, { requiere_cambio_password: true }, expect.anything());
+      expect(mockPool.consultas).toContain('COMMIT');
     });
 
     it('sin auth_uid responde 409 y no escribe en ningún lado', async () => {
-      Usuario.buscarPorId.mockResolvedValue({ id: 4, auth_tipo: 'local', auth_uid: null });
+      Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_tipo: 'local', auth_uid: null });
       const res = mockRes();
-      await controlador.resetearPassword({ user: SUPER, params: { id: 4 } }, res);
+      await controlador.resetearPassword({ user: SUPER, params: { id: 14 } }, res);
       expect(res.status).toHaveBeenCalledWith(409);
       expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
       expect(Usuario.actualizar).not.toHaveBeenCalled();
     });
 
-    it('si GoTrue falla no toca la BD local', async () => {
-      Usuario.buscarPorId.mockResolvedValue({ id: 3, auth_tipo: 'local', auth_uid: 'uid-3' });
+    it('si GoTrue falla la BD local se revierte (GoTrue va al final, antes del COMMIT)', async () => {
+      Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_tipo: 'local', auth_uid: 'uid-3' });
       supabaseAdmin.actualizarPassword.mockRejectedValue(new Error('gotrue caido'));
       const res = mockRes();
-      await controlador.resetearPassword({ user: SUPER, params: { id: 3 } }, res);
+      await controlador.resetearPassword({ user: SUPER, params: { id: 14 } }, res);
       expect(res.status).toHaveBeenCalledWith(500);
-      expect(Usuario.actualizar).not.toHaveBeenCalled();
+      expect(mockPool.consultas).toContain('ROLLBACK');
+      expect(mockPool.consultas).not.toContain('COMMIT');
+    });
+
+    it('usuario inexistente: 404 sin tocar GoTrue', async () => {
+      const res = mockRes();
+      await controlador.resetearPassword({ user: SUPER, params: { id: 999 } }, res);
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
     });
 
     it('contraseñas temporales distintas entre llamadas', () => {
@@ -118,10 +132,10 @@ describe('usuario.controller', () => {
   });
   describe('eliminar', () => {
     it('elimina local y luego GoTrue cuando hay auth_uid', async () => {
-      Usuario.buscarPorId.mockResolvedValue({ id: 7, auth_uid: 'uid-7' });
-      Usuario.eliminar.mockResolvedValue({ id: 7 });
+      Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_uid: 'uid-7' });
+      Usuario.eliminar.mockResolvedValue({ id: 14 });
       const res = mockRes();
-      await controlador.eliminar({ user: SUPER, params: { id: 7 } }, res);
+      await controlador.eliminar({ user: SUPER, params: { id: 14 } }, res);
       expect(Usuario.eliminar.mock.invocationCallOrder[0]).toBeLessThan(
         supabaseAdmin.eliminarUsuario.mock.invocationCallOrder[0],
       );
@@ -130,20 +144,20 @@ describe('usuario.controller', () => {
     });
 
     it('sin auth_uid no llama a GoTrue', async () => {
-      Usuario.buscarPorId.mockResolvedValue({ id: 8, auth_uid: null });
-      Usuario.eliminar.mockResolvedValue({ id: 8 });
+      Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_uid: null });
+      Usuario.eliminar.mockResolvedValue({ id: 14 });
       const res = mockRes();
-      await controlador.eliminar({ user: SUPER, params: { id: 8 } }, res);
+      await controlador.eliminar({ user: SUPER, params: { id: 14 } }, res);
       expect(supabaseAdmin.eliminarUsuario).not.toHaveBeenCalled();
       expect(res.json.mock.calls[0][0].exito).toBe(true);
     });
 
     it('fallo de GoTrue responde exito y avisa sin datos sensibles', async () => {
-      Usuario.buscarPorId.mockResolvedValue({ id: 9, auth_uid: 'uid-secreto-9', hash_password: 'HASH' });
-      Usuario.eliminar.mockResolvedValue({ id: 9 });
+      Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_uid: 'uid-secreto-9', hash_password: 'HASH' });
+      Usuario.eliminar.mockResolvedValue({ id: 14 });
       supabaseAdmin.eliminarUsuario.mockRejectedValue(new Error('gotrue caido'));
       const res = mockRes();
-      await controlador.eliminar({ user: SUPER, params: { id: 9 } }, res);
+      await controlador.eliminar({ user: SUPER, params: { id: 14 } }, res);
       expect(res.status).not.toHaveBeenCalled();
       expect(res.json.mock.calls[0][0].exito).toBe(true);
       const aviso = console.warn.mock.calls.flat().join(' ');
@@ -155,7 +169,7 @@ describe('usuario.controller', () => {
       Usuario.buscarPorId.mockResolvedValue(undefined);
       Usuario.eliminar.mockResolvedValue(undefined);
       const res = mockRes();
-      await controlador.eliminar({ user: SUPER, params: { id: 1 } }, res);
+      await controlador.eliminar({ user: SUPER, params: { id: 14 } }, res);
       expect(res.status).toHaveBeenCalledWith(404);
       expect(supabaseAdmin.eliminarUsuario).not.toHaveBeenCalled();
     });
@@ -163,12 +177,13 @@ describe('usuario.controller', () => {
 
   describe('actualizar', () => {
     it('con contraseña: solo GoTrue, sin hash local', async () => {
-      Usuario.buscarPorId.mockResolvedValue({ id: 2, auth_uid: 'uid-2' });
-      Usuario.actualizar.mockResolvedValue({ id: 2, hash_password: 'h', auth_uid: 'uid-2' });
+      Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_uid: 'uid-2' });
+      Usuario.actualizar.mockResolvedValue({ id: 14, hash_password: 'h', auth_uid: 'uid-2' });
       const res = mockRes();
-      await controlador.actualizar({ user: SUPER, params: { id: 2 }, body: { contraseña: 'Nueva12345' } }, res);
+      await controlador.actualizar({ user: SUPER, params: { id: 14 }, body: { contraseña: 'Nueva12345' } }, res);
       expect(supabaseAdmin.actualizarPassword).toHaveBeenCalledWith('uid-2', 'Nueva12345');
       const datos = Usuario.actualizar.mock.calls[0][1];
+      expect(mockPool.consultas).toContain('COMMIT');
       expect(datos).not.toHaveProperty('hash_password');
       expect(datos.requiere_cambio_password).toBe(true);
       const respuesta = res.json.mock.calls[0][0].datos;
@@ -177,18 +192,18 @@ describe('usuario.controller', () => {
     });
 
     it('con contraseña y sin auth_uid: 409 sin escribir', async () => {
-      Usuario.buscarPorId.mockResolvedValue({ id: 2, auth_uid: null });
+      Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_uid: null });
       const res = mockRes();
-      await controlador.actualizar({ user: SUPER, params: { id: 2 }, body: { contraseña: 'Nueva12345' } }, res);
+      await controlador.actualizar({ user: SUPER, params: { id: 14 }, body: { contraseña: 'Nueva12345' } }, res);
       expect(res.status).toHaveBeenCalledWith(409);
       expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
       expect(Usuario.actualizar).not.toHaveBeenCalled();
     });
 
     it('sin contraseña no consulta ni toca GoTrue', async () => {
-      Usuario.actualizar.mockResolvedValue({ id: 2 });
+      Usuario.actualizar.mockResolvedValue({ id: 14 });
       const res = mockRes();
-      await controlador.actualizar({ user: SUPER, params: { id: 2 }, body: { nombre: 'X' } }, res);
+      await controlador.actualizar({ user: SUPER, params: { id: 14 }, body: { nombre: 'X' } }, res);
       expect(Usuario.buscarPorId).not.toHaveBeenCalled();
       expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
     });

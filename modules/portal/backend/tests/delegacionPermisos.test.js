@@ -66,6 +66,7 @@ const put = (rol, modulo, permisos) =>
 beforeEach(() => {
   mockPool.reiniciar();
   jest.clearAllMocks();
+  supabaseAdmin.actualizarPassword.mockReset();
   Rol.obtenerPorId.mockImplementation(async (id) => mockPool.estado.roles.find((r) => r.id === Number(id)));
   Usuario.buscarPorId.mockImplementation(async (id) => ({ id: Number(id), auth_uid: `uid-${id}`, auth_tipo: 'local' }));
   jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -123,16 +124,32 @@ describe('PUT /permisos/rol/:rol_id/modulo/:modulo: delegación', () => {
       expect(JSON.stringify(mockPool.estado)).toBe(antes);
     });
 
-    it('puede quitar permisos que sí posee (rh/Calendario edicion de rh_admin)', async () => {
-      const r = await put(IDS.rhAdmin, 'rh', [
+    it('puede quitar permisos que sí posee de un rol NO privilegiado (rh/Calendario edicion)', async () => {
+      const completo = [{ opcion_id: 5, tipos: ['consulta', 'edicion'] }];
+      expect((await put(IDS.libre, 'rh', completo)).status).toBe(200);
+      expect(mockPool.tiene(IDS.libre, 5, 'edicion')).toBe(true);
+      const r = await put(IDS.libre, 'rh', [{ opcion_id: 5, tipos: ['consulta'] }]);
+      expect(r.status).toBe(200);
+      expect(mockPool.tiene(IDS.libre, 5, 'edicion')).toBe(false);
+      expect(mockPool.tiene(IDS.libre, 5, 'consulta')).toBe(true);
+    });
+
+    it.each([
+      ['rh_admin', IDS.rhAdmin],
+      ['tickets_admin', IDS.ticketsAdmin],
+    ])('E10a: no puede quitar NI otorgar permisos del rol privilegiado %s: 403 y nada cambia', async (nombre, rol) => {
+      const antes = JSON.stringify(mockPool.estado);
+      // quitar rh/Calendario (lo posee) a rh_admin; otorgar portal/Roles (lo posee) a ambos
+      const quitar = await put(rol, 'rh', [
         { opcion_id: 3, tipos: ['consulta', 'edicion'] },
         { opcion_id: 4, tipos: ['consulta', 'edicion'] },
         { opcion_id: 5, tipos: ['consulta'] },
       ]);
-      expect(r.status).toBe(200);
-      expect(mockPool.tiene(IDS.rhAdmin, 5, 'edicion')).toBe(false);
-      expect(mockPool.tiene(IDS.rhAdmin, 5, 'consulta')).toBe(true);
-      expect(mockPool.tiene(IDS.rhAdmin, 3, 'edicion')).toBe(true);
+      expect(quitar.status).toBe(403);
+      expect(quitar.body.mensaje).toContain(nombre);
+      const otorgar = await put(rol, 'portal', [{ opcion_id: 1, tipos: ['consulta'] }]);
+      expect(otorgar.status).toBe(403);
+      expect(JSON.stringify(mockPool.estado)).toBe(antes);
     });
 
     it('conserva su gestión legítima del portal: otorga portal/Usuarios a otro rol', async () => {
@@ -431,6 +448,164 @@ describe('POST /usuarios/:id/rol y PUT /usuarios/:id: asignación de roles', () 
 
     it('editar el nombre (sin contraseña) de un usuario con más permisos sigue permitido', async () => {
       expect((await request(app).put(`/api/usuarios/${USUARIOS.rhEmpleado}`).send({ nombre: 'Nuevo' })).status).toBe(200);
+    });
+
+    describe('E1: contraseña + rol_id en una sola petición se valida contra el estado FINAL', () => {
+      const cambiosEscritos = () =>
+        Usuario.actualizar.mock.calls.length + supabaseAdmin.actualizarPassword.mock.calls.length;
+
+      it('PUT {contraseña, rol_id: rh_empleado} sobre un usuario sin permisos: 403 y NINGÚN cambio (rol, contraseña ni GoTrue)', async () => {
+        const antes = JSON.stringify(mockPool.estado);
+        const r = await request(app)
+          .put(`/api/usuarios/${USUARIOS.libre}`)
+          .send({ contraseña: 'Nueva12345', rol_id: IDS.rhEmpleado });
+        expect(r.status).toBe(403);
+        expect(r.body.mensaje).toMatch(/permisos que tú no posees/);
+        expect(JSON.stringify(mockPool.estado)).toBe(antes);
+        expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.libre]);
+        expect(cambiosEscritos()).toBe(0);
+        expect(mockPool.consultas).not.toContain('COMMIT');
+      });
+
+      it('también cuando el estado ACTUAL es el tomable: de rh_empleado a un rol sin permisos con contraseña, 403 sin cambios', async () => {
+        const r = await request(app)
+          .put(`/api/usuarios/${USUARIOS.rhEmpleado}`)
+          .send({ contraseña: 'Nueva12345', rol_id: IDS.libre });
+        expect(r.status).toBe(403);
+        expect(mockPool.rolDe(USUARIOS.rhEmpleado)).toEqual([IDS.rhEmpleado]);
+        expect(cambiosEscritos()).toBe(0);
+      });
+
+      it('rol_id privilegiado con contraseña: 403 sin cambios', async () => {
+        const r = await request(app)
+          .put(`/api/usuarios/${USUARIOS.libre}`)
+          .send({ contraseña: 'Nueva12345', rol_id: IDS.super });
+        expect(r.status).toBe(403);
+        expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.libre]);
+        expect(cambiosEscritos()).toBe(0);
+      });
+
+      it('si el estado final es tomable (rol sin permisos, o quitarlo) sí se aplica rol y contraseña', async () => {
+        const a = await request(app)
+          .put(`/api/usuarios/${USUARIOS.libre}`)
+          .send({ contraseña: 'Nueva12345', rol_id: IDS.auditor });
+        expect(a.status).toBe(200);
+        expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.auditor]);
+        expect(supabaseAdmin.actualizarPassword).toHaveBeenCalledWith('uid-14', 'Nueva12345');
+        const b = await request(app)
+          .put(`/api/usuarios/${USUARIOS.libre}`)
+          .send({ contraseña: 'Otra123456', rol_id: null });
+        expect(b.status).toBe(200);
+        expect(mockPool.rolDe(USUARIOS.libre)).toEqual([]);
+      });
+
+      it('super_admin sí puede cambiar rol y contraseña a la vez, también con un rol privilegiado', async () => {
+        comoSuperAdmin();
+        const r = await request(app)
+          .put(`/api/usuarios/${USUARIOS.libre}`)
+          .send({ contraseña: 'Nueva12345', rol_id: IDS.rhAdmin });
+        expect(r.status).toBe(200);
+        expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.rhAdmin]);
+        expect(supabaseAdmin.actualizarPassword).toHaveBeenCalledTimes(1);
+      });
+
+      it('si GoTrue falla se revierte TODO (rol incluido): GoTrue va después de las escrituras y antes del COMMIT', async () => {
+        supabaseAdmin.actualizarPassword.mockRejectedValue(new Error('gotrue caido'));
+        const r = await request(app)
+          .put(`/api/usuarios/${USUARIOS.libre}`)
+          .send({ contraseña: 'Nueva12345', rol_id: IDS.auditor, nombre: 'N' });
+        expect(r.status).toBe(400);
+        expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.libre]);
+        expect(mockPool.consultas).toContain('ROLLBACK');
+        expect(mockPool.consultas).not.toContain('COMMIT');
+        expect(Usuario.actualizar.mock.invocationCallOrder[0]).toBeLessThan(
+          supabaseAdmin.actualizarPassword.mock.invocationCallOrder[0],
+        );
+      });
+
+      it('usuario sin auth_uid con contraseña + rol_id: 409 y el rol NO cambia', async () => {
+        Usuario.buscarPorId.mockImplementation(async (id) => ({ id: Number(id), auth_uid: null, auth_tipo: 'local' }));
+        const r = await request(app)
+          .put(`/api/usuarios/${USUARIOS.libre}`)
+          .send({ contraseña: 'Nueva12345', rol_id: IDS.auditor });
+        expect(r.status).toBe(409);
+        expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.libre]);
+        expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('TOCTOU: ascenso concurrente de rol frente a reset, cambio de contraseña y borrado', () => {
+      const Delegacion = require('../services/delegacionPermisos');
+      // Tiempo real: la petición HTTP de supertest necesita E/S para llegar al bloqueo
+      const esperar = (ms = 80) => new Promise((r) => setTimeout(r, ms));
+
+      // Un super_admin asciende al usuario 14 a rh_admin y retiene el bloqueo hasta abrir la compuerta
+      function ascenderRetenido() {
+        let abrir;
+        const compuerta = new Promise((r) => {
+          abrir = r;
+        });
+        const hecho = Delegacion.operarSobreUsuario(
+          mockPool,
+          { usuario_id: 11, rol_id: IDS.super, rol_nombre: 'super_admin' },
+          USUARIOS.libre,
+          { rolId: IDS.rhAdmin, escribir: () => compuerta },
+        );
+        return { abrir, hecho };
+      }
+
+      it.each([
+        ['reset de contraseña', (id) => request(app).post(`/api/usuarios/${id}/reset-password`)],
+        ['PUT con contraseña', (id) => request(app).put(`/api/usuarios/${id}`).send({ contraseña: 'Nueva12345' })],
+        ['PUT con nombre', (id) => request(app).put(`/api/usuarios/${id}`).send({ nombre: 'X' })],
+        ['DELETE', (id) => request(app).delete(`/api/usuarios/${id}`)],
+      ])('%s espera al ascenso en curso y se rechaza con 403 sin escribir', async (_n, peticion) => {
+        const { abrir, hecho } = ascenderRetenido();
+        await esperar();
+        let terminada = false;
+        const resp = peticion(USUARIOS.libre).then((r) => {
+          terminada = true;
+          return r;
+        });
+        await esperar();
+        expect(terminada).toBe(false); // bloqueada por FOR UPDATE, no validó con el rol viejo
+        abrir();
+        await hecho;
+        const r = await resp;
+        expect(r.status).toBe(403);
+        expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.rhAdmin]);
+        expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
+        expect(Usuario.actualizar).not.toHaveBeenCalled();
+        expect(Usuario.eliminar).not.toHaveBeenCalled();
+      });
+
+      it('en el otro orden (reset en curso) el ascenso espera: no hay escritura intercalada', async () => {
+        let abrir;
+        supabaseAdmin.actualizarPassword.mockImplementation(
+          () =>
+            new Promise((r) => {
+              abrir = r;
+            }),
+        );
+        const reset = request(app).post(`/api/usuarios/${USUARIOS.libre}/reset-password`).then((r) => r);
+        for (let k = 0; k < 40 && !abrir; k++) await esperar(25);
+        expect(abrir).toBeDefined(); // el reset ya tiene el bloqueo y está esperando a GoTrue
+        let ascendio = false;
+        const asc = Delegacion.operarSobreUsuario(
+          mockPool,
+          { usuario_id: 11, rol_id: IDS.super, rol_nombre: 'super_admin' },
+          USUARIOS.libre,
+          { rolId: IDS.rhAdmin },
+        ).then(() => {
+          ascendio = true;
+        });
+        await esperar();
+        expect(ascendio).toBe(false);
+        abrir();
+        expect((await reset).status).toBe(200);
+        await asc;
+        expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.rhAdmin]);
+      });
     });
   });
 
