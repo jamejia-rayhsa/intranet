@@ -2533,3 +2533,17 @@ Hallazgos abiertos:
 - **BAJO** `vacaciones.controller.js:561`: el jefe vigente se lee sin bloqueo y no está serializado con el candado del empleado (ventana de ms). Fix: `FOR SHARE` sobre el empleado o documentarlo.
 - **BAJO** tests: `usuario.controller.test.js` no cubre PUT con contraseña+rol_id (por eso pasó el crítico). `empleados-usuario-unico-migracion.test.js` valida por regex, no el SQL real. `PortalAdminRoles.jsx` sin prueba de componente.
 **Siguiente paso:** corregir el crítico y repetir E1 (debe dar 403). Decidir los medios 2-3 con el humano.
+
+### [2026-10-15] [revisor] — Re-revisión de la segunda ronda (Fase 5)
+**Veredicto:** CONDICIONADO. E1 crítico CERRADO (verificado). Sin críticos abiertos; 2 altos que requieren decisión humana antes de mergear. Alcance: `git diff 975a04c..7267d5f` (14 archivos), solo lectura. `npx jest` portal+rh: 30 suites / 715 tests OK (no se ejecutó Postgres/GoTrue real).
+**Cerrado:** PUT {contraseña,rol_id} y contraseña+activo, reset, DELETE y asignarRol validan roles ACTUALES ∪ FINALES bajo el mismo `FOR UPDATE` (`usuario.controller.js:138`, `delegacionPermisos.js:300-345`); tests `delegacionPermisos.test.js:453-535` y TOCTOU `:537-611`.
+**Sin hallazgo:** `guardarPermisosDeModulo` (super intacto; rh/Calendario otorgable a no privilegiados); rh_admin conserva Empleados:edicion (`init.sql:431-440`); el FOR SHARE del empleado no crea ciclo (orden advisory → solicitud → empleado → departamento en todas las rutas RH).
+**Abiertos:**
+- **ALTO** `usuario.controller.js:47-50,91-96`: portal_admin crea una cuenta propia con contraseña elegida y un rol no privilegiado con más permisos (test `:353` lo fija como 201) y entra con `signInWithPassword`. No viola la letra de la decisión 1, pero elude la regla de posesión (F1). Escalar al humano. Fix: exigir en `crear` que el actor posea los permisos del rol, o limitarlo a super_admin.
+- **ALTO** `usuario.controller.js:138-168,194-216` + `delegacionPermisos.js:300-345`: GoTrue (timeout 10 s) corre con la transacción y el FOR UPDATE abiertos. Con `PG_POOL_MAX=10`, 10 operaciones lentas agotan el pool de todo el portal (regresión frente a 975a04c, donde GoTrue iba fuera de tx). Fix: sacar GoTrue de la tx con compensación, o bajar el timeout y limitar la concurrencia; prueba de carga con GoTrue lento.
+- **MEDIO** `delegacionPermisos.js:336-343`: si el COMMIT falla tras aceptar GoTrue, la contraseña cambia y la BD revierte (riesgo documentado). Fix: aceptarlo explícitamente o reconciliar; en reset la temporal se pierde.
+- **MEDIO** `auth.middleware.js:69-78`: `req.user` toma un rol arbitrario (`LIMIT 1` sin ORDER BY) si hay varios roles (posibles por alta con `roles[]`). La delegación (`actor.rol_id`, `esSuperAdmin`) depende de ello y no hay tests multirrol. Fix: unión de roles y ORDER BY determinista.
+- **BAJO** `delegacionPermisos.js:340-345`: si el ROLLBACK falla, el cliente vuelve al pool sin `release(error)` (sí lo hace `enTransaccion`). Fix: `release(error)`.
+- **BAJO** `rh/migrations/002` (`solicitudes_vacaciones.autoriza_id`, NO ACTION): DELETE de un usuario que autoriza, concurrente con una aprobación, puede dar deadlock (Postgres aborta una). Error benigno; documentar.
+- **BAJO** tests: TOCTOU con `setTimeout` de 80 ms (flaky en CI lento); `fakeDelegacion.js` acoplado al SQL exacto de `FOR UPDATE`.
+- **Pendiente previo:** E6 (rh_admin crea cuentas con portal_admin, `empleado.controller.js:110-114`), sin decisión.

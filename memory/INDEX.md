@@ -13,6 +13,8 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-15] orquestador → decisions.md — Fase 5 condicionada tras la 2.ª re-revisión: 2 altos de usuarios/roles pendientes del humano
+- [2026-10-15] revisor → reviews.md#re-revision-de-la-segunda-ronda-fase-5 — Re-revisión de la segunda ronda (Fase 5): CONDICIONADO (E1 cerrado; 2 altos: alta de cuentas propias y GoTrue dentro de transacción)
 - [2026-10-15] revisor → reviews.md#re-revision-final-tras-correcciones-fase-5 — Re-revisión final (Fase 5): RECHAZADO (1 crítico: PUT con contraseña+rol_id toma la cuenta; medios abiertos)
 - [2026-10-15] orquestador → decisions.md — Decisiones tras la revisión final: asignar roles no privilegiados, borrar roles solo super_admin, jefe vigente
 - [2026-10-15] revisor → reviews.md — Revisión final de la rama (Fase 5): RECHAZADO (1 crítico: rh_admin asigna super_admin por el alta de empleado; 2 altos)
