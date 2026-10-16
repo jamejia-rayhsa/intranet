@@ -13,6 +13,10 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-15] orquestador → decisions.md — Fase 4 lista para GO/NO-GO (días hábiles, cupo por departamento, calendario de ocupación)
+- [2026-10-15] revisor → reviews.md#re-revisión-fase-4 — Re-revisión Fase 4 (vacaciones): APROBADO CON OBSERVACIONES (sin críticos ni altos abiertos; 4 bajos y 2 medios pendientes)
+- [2026-10-15] revisor → reviews.md — Fase 4 vacaciones (días hábiles, cupo, ocupación): NO APROBADO (1 crítico escalado: periodo del body viola decisión; 1 alto: pool en transacción; 6 medios; 4 bajos)
+- [2026-10-15] orquestador → decisions.md — GO a la Fase 4 y diseño de días hábiles + cupo por departamento
 - [2026-10-15] orquestador → decisions.md — Fase 3 lista para GO/NO-GO (pantalla del calendario laboral y cupo en Departamentos)
 - [2026-10-15] revisor → reviews.md — Calendario laboral Fase 3: revisión (APROBADO CON OBSERVACIONES; sin críticos; medios: super_admin sin rol_nombre, contraste otro mes 4,02:1, sin pruebas de componente)
 - [2026-10-15] orquestador → decisions.md — GO a la Fase 3 (pantalla del calendario); F1 y JSON malformado quedan como deuda
@@ -145,3 +149,8 @@
 - [2026-10-15] tester → tests.md — Calendario laboral Fase 3: pantalla /rh/calendario y cupo en Departamentos integrados (Postgres 16 + backend real + build de Vite; Chromium 156 + Firefox 157; 8+4 combinaciones de zona horaria 32/32; 403 empleado; axe); sin fallos funcionales, 5 menores (responsive 721–799 px, texto sin espacios, columna de Departamentos a 768, contraste, label-in-name)
 - [2026-10-15] tester → decisions.md — PARA RESOLVER: F1–F5 menores de la Fase 3 del calendario (responsive y accesibilidad) y si la API debe ocultar inactivos a empleados
 - [2026-10-15] [coder] Correcciones de la revisión de la Fase 3 del calendario (super_admin, contraste, util de permisos con tests, F1-F5, API oculta inactivos a no editores) -> code-notes.md
+- [2026-10-15] [coder] Fase 4 backend del calendario: días hábiles, cupo transaccional, aprobación con revalidación y endpoints disponibilidad/ocupación -> code-notes.md
+- [2026-10-15] [coder] Fase 4 frontend: formulario de vacaciones (días hábiles del backend, calendario de ocupación, 409 al aprobar) -> code-notes.md
+- [2026-10-15] tester → tests.md — Calendario laboral Fase 4: prueba integrada (Postgres 16 + supabase/postgres 17.6 desechables, backend real, build de Vite, Chromium + Firefox, 4 zonas horarias): reglas A 156/156 x5, seguridad C 49/49 x2, UI D sin fallos funcionales, regresión jest 602/602 y eslint 0 errores, migración 009 sobre datos antiguos OK; 1 FAIL ALTO (pool agotado con >= 11 simultáneas congela la API), 2 FAIL menores (saldo/doble envío sin departamento; periodo del cuerpo)
+- [2026-10-15] tester → decisions.md — PARA RESOLVER P1 (alto: interbloqueo del pool con >= 11 solicitudes simultáneas), P2 (periodo del cuerpo), P3 (sin departamento no se serializa), P4 (menores de UI)
+- [2026-10-15] [coder] Correcciones de la revisión de la Fase 4 (periodo del servidor, pool en transacción, candado por empleado, post-COMMIT, UI) -> code-notes.md

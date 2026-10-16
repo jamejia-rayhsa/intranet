@@ -5,7 +5,25 @@ import {
   obtenerSaldo,
   crearSolicitud,
   listarSolicitudes,
+  consultarDisponibilidad,
 } from "../services/vacaciones.service";
+import CalendarioOcupacion from "../components/CalendarioOcupacion";
+import {
+  rangoCompleto,
+  anioDeTexto,
+  notaCruceDeAnio,
+  regresoValido,
+  resumirDisponibilidad,
+  envioBloqueado,
+  textoDiasHabiles,
+  fechaLegible,
+  siguienteSeleccion,
+  mensajeErrorRed,
+  MENSAJE_ERROR_DISPONIBILIDAD,
+} from "../utils/calendarioLaboral";
+
+// Espera tras el último cambio de fechas antes de consultar la disponibilidad
+const RETARDO_DISPONIBILIDAD_MS = 350;
 
 const ESTATUS_CONFIG = {
   pendiente: { etiqueta: "Pendiente", color: "var(--color-advertencia)" },
@@ -47,7 +65,7 @@ const estiloLabel = {
   fontSize: "0.85rem",
   fontWeight: 600,
   marginBottom: "0.3rem",
-  color: "var(--color-texto-claro)",
+  color: "var(--color-texto-medio)",
 };
 
 const estiloBotonPrimario = {
@@ -59,6 +77,34 @@ const estiloBotonPrimario = {
   fontWeight: 600,
   fontSize: "0.9rem",
   cursor: "pointer",
+};
+
+const estiloAviso = {
+  margin: "0.5rem 0 0",
+  padding: "0.6rem 0.9rem",
+  borderRadius: "0.4rem",
+  fontSize: "0.88rem",
+  overflowWrap: "anywhere",
+};
+
+const estiloResumen = {
+  background: "var(--color-fondo)",
+  border: "1px solid var(--color-borde)",
+  borderRadius: "0.5rem",
+  padding: "0.75rem 1rem",
+  display: "flex",
+  gap: "0.5rem 2rem",
+  flexWrap: "wrap",
+};
+
+const estiloBotonSecundario = {
+  background: "var(--color-superficie)",
+  border: "1px solid var(--color-borde)",
+  borderRadius: "0.4rem",
+  padding: "0.2rem 0.7rem",
+  cursor: "pointer",
+  fontSize: "0.85rem",
+  color: "inherit",
 };
 
 function BadgeEstatus({ estatus }) {
@@ -103,11 +149,11 @@ function TarjetaSaldo({ titulo, valor, subtitulo }) {
       >
         {valor}
       </div>
-      <div style={{ fontSize: "0.88rem", fontWeight: 600, color: "var(--color-texto-claro)", marginTop: "0.25rem" }}>
+      <div style={{ fontSize: "0.88rem", fontWeight: 600, color: "var(--color-texto-medio)", marginTop: "0.25rem" }}>
         {titulo}
       </div>
       {subtitulo && (
-        <div style={{ fontSize: "0.75rem", color: "var(--color-texto-claro)", opacity: 0.7 }}>
+        <div style={{ fontSize: "0.75rem", color: "var(--color-texto-medio)" }}>
           {subtitulo}
         </div>
       )}
@@ -147,6 +193,8 @@ export default function VacacionesPage() {
 
   const [enviando, setEnviando] = useState(false);
   const [mensajeFormulario, setMensajeFormulario] = useState(null);
+  const [disp, setDisp] = useState({ estado: "ocioso", resumen: null, error: "" });
+  const [versionDisp, setVersionDisp] = useState(0);
 
   const cargarSaldo = useCallback(async () => {
     setCargandoSaldo(true);
@@ -177,19 +225,59 @@ export default function VacacionesPage() {
     cargarHistorial();
   }, [cargarSaldo, cargarHistorial]);
 
-  const diasSolicitados = (() => {
-    if (!formulario.fecha_inicial || !formulario.fecha_final) return 0;
-    const inicio = new Date(formulario.fecha_inicial);
-    const fin = new Date(formulario.fecha_final);
-    if (fin < inicio) return 0;
-    return Math.round((fin - inicio) / (1000 * 60 * 60 * 24)) + 1;
-  })();
+  // Días hábiles, cupo y conflictos los calcula el backend (única fuente de la regla). El efecto espera
+  // a que el usuario termine de elegir fechas y descarta las respuestas de peticiones ya obsoletas.
+  useEffect(() => {
+    if (!rangoCompleto(formulario.fecha_inicial, formulario.fecha_final)) {
+      setDisp({ estado: "ocioso", resumen: null, error: "" });
+      return undefined;
+    }
+    let vigente = true;
+    setDisp((d) => ({ estado: "cargando", resumen: d.resumen, error: "" }));
+    const temporizador = setTimeout(async () => {
+      try {
+        const respuesta = await consultarDisponibilidad({
+          fecha_inicial: formulario.fecha_inicial,
+          fecha_final: formulario.fecha_final,
+        });
+        if (!vigente) return;
+        if (respuesta && respuesta.exito === true && respuesta.datos) {
+          setDisp({ estado: "listo", resumen: resumirDisponibilidad(respuesta.datos), error: "" });
+        } else {
+          setDisp({ estado: "error", resumen: null, error: (respuesta && respuesta.mensaje) || MENSAJE_ERROR_DISPONIBILIDAD });
+        }
+      } catch (error) {
+        if (!vigente) return;
+        setDisp({ estado: "error", resumen: null, error: mensajeErrorRed(error, MENSAJE_ERROR_DISPONIBILIDAD) });
+      }
+    }, RETARDO_DISPONIBILIDAD_MS);
+    return () => {
+      vigente = false;
+      clearTimeout(temporizador);
+    };
+  }, [formulario.fecha_inicial, formulario.fecha_final, versionDisp]);
 
-  const diasQueQuedan =
-    saldo ? Math.max(0, saldo.dias_pendientes - diasSolicitados) : null;
+  // El saldo mostrado sigue al año de la fecha inicial elegida (el servidor siempre usa ese año)
+  useEffect(() => {
+    const anio = anioDeTexto(formulario.fecha_inicial);
+    if (anio !== null) setPeriodo(anio);
+  }, [formulario.fecha_inicial]);
+
+  const resumen = disp.resumen;
+  const bloqueado = envioBloqueado(disp, enviando) || !saldo || cargandoSaldo;
+  const notaCruce = notaCruceDeAnio(formulario.fecha_inicial, formulario.fecha_final);
+  const opcionesPeriodo = [...new Set([anioActual - 1, anioActual, anioActual + 1, periodo])].sort();
+
+  function elegirDesdeCalendario(fecha) {
+    setFormulario((f) => {
+      const { inicio, fin } = siguienteSeleccion({ inicio: f.fecha_inicial, fin: f.fecha_final }, fecha);
+      return { ...f, fecha_inicial: inicio, fecha_final: fin };
+    });
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (envioBloqueado(disp, enviando) || !saldo || cargandoSaldo) return;
     setMensajeFormulario(null);
 
     if (!formulario.fecha_inicial || !formulario.fecha_final) {
@@ -197,31 +285,31 @@ export default function VacacionesPage() {
       return;
     }
 
-    if (new Date(formulario.fecha_final) < new Date(formulario.fecha_inicial)) {
+    if (formulario.fecha_final < formulario.fecha_inicial) {
       setMensajeFormulario({ tipo: "error", texto: "La fecha final no puede ser anterior a la inicial" });
       return;
     }
 
-    if (saldo && diasSolicitados > saldo.dias_pendientes) {
-      setMensajeFormulario({
-        tipo: "error",
-        texto: `No hay suficientes días disponibles. Disponibles: ${saldo.dias_pendientes}, solicitados: ${diasSolicitados}`,
-      });
+    if (!regresoValido(formulario.fecha_final, formulario.fecha_regreso)) {
+      setMensajeFormulario({ tipo: "error", texto: "La fecha de regreso no puede ser anterior a la fecha final" });
       return;
     }
 
+    // Saldo, traslape y cupo los valida el backend (y los anticipa /disponibilidad)
     setEnviando(true);
     try {
-      await crearSolicitud({
-        ...formulario,
-        periodo,
-      });
+      // Sin `periodo`: el servidor lo deriva del año de la fecha inicial
+      await crearSolicitud({ ...formulario });
       setMensajeFormulario({ tipo: "exito", texto: "Solicitud enviada exitosamente. Tu jefe inmediato recibirá una notificación." });
       setFormulario({ fecha_inicial: "", fecha_final: "", fecha_regreso: "", observaciones: "" });
+      setVersionDisp((v) => v + 1);
       await cargarSaldo();
       await cargarHistorial();
     } catch (error) {
-      setMensajeFormulario({ tipo: "error", texto: error.message || "Error al enviar solicitud" });
+      // 400 (validación, saldo, 0 hábiles) y 409 (traslape, cupo): se muestra el mensaje del servidor
+      // y se refresca la disponibilidad (otra persona pudo ocupar el cupo mientras tanto)
+      setMensajeFormulario({ tipo: "error", texto: mensajeErrorRed(error, "Error al enviar solicitud") });
+      setVersionDisp((v) => v + 1);
     } finally {
       setEnviando(false);
     }
@@ -232,19 +320,20 @@ export default function VacacionesPage() {
       <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginBottom: "0.25rem" }}>
         Vacaciones
       </h1>
-      <p style={{ color: "var(--color-texto-claro)", marginBottom: "1.5rem", fontSize: "0.9rem" }}>
+      <p style={{ color: "var(--color-texto-medio)", marginBottom: "1.5rem", fontSize: "0.9rem" }}>
         Gestiona tus solicitudes de vacaciones y consulta tu saldo disponible.
       </p>
 
       {/* Selector de periodo */}
       <div style={{ marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
-        <label style={{ fontWeight: 600, fontSize: "0.9rem" }}>Periodo:</label>
+        <label htmlFor="vac-periodo" style={{ fontWeight: 600, fontSize: "0.9rem" }}>Ver periodo (solo consulta):</label>
         <select
+          id="vac-periodo"
           value={periodo}
           onChange={(e) => setPeriodo(parseInt(e.target.value))}
           style={{ ...estiloInput, width: "auto" }}
         >
-          {[anioActual - 1, anioActual, anioActual + 1].map((a) => (
+          {opcionesPeriodo.map((a) => (
             <option key={a} value={a}>{a}</option>
           ))}
         </select>
@@ -254,7 +343,7 @@ export default function VacacionesPage() {
       <div style={estiloSeccion}>
         <div style={estiloTituloSeccion}>Saldo de vacaciones — {periodo}</div>
         {cargandoSaldo ? (
-          <p style={{ color: "var(--color-texto-claro)" }}>Calculando saldo...</p>
+          <p style={{ color: "var(--color-texto-medio)" }}>Calculando saldo...</p>
         ) : saldo ? (
           <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
             <TarjetaSaldo titulo="Días del periodo" valor={saldo.dias_periodo} subtitulo={`Antigüedad: ${saldo.antiguedad} año(s)`} />
@@ -269,11 +358,12 @@ export default function VacacionesPage() {
       {/* Sección 2 — Formulario de solicitud */}
       <div style={estiloSeccion}>
         <div style={estiloTituloSeccion}>Nueva solicitud de vacaciones</div>
-        <form onSubmit={handleSubmit}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "1rem", marginBottom: "1rem" }}>
+        <form onSubmit={handleSubmit} noValidate>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(200px, 100%), 1fr))", gap: "1rem", marginBottom: "1rem" }}>
             <div>
-              <label style={estiloLabel}>Fecha inicial *</label>
+              <label htmlFor="vac-fecha-inicial" style={estiloLabel}>Fecha inicial *</label>
               <input
+                id="vac-fecha-inicial"
                 type="date"
                 style={estiloInput}
                 value={formulario.fecha_inicial}
@@ -282,8 +372,9 @@ export default function VacacionesPage() {
               />
             </div>
             <div>
-              <label style={estiloLabel}>Fecha final *</label>
+              <label htmlFor="vac-fecha-final" style={estiloLabel}>Fecha final *</label>
               <input
+                id="vac-fecha-final"
                 type="date"
                 style={estiloInput}
                 value={formulario.fecha_final}
@@ -293,8 +384,9 @@ export default function VacacionesPage() {
               />
             </div>
             <div>
-              <label style={estiloLabel}>Fecha de regreso</label>
+              <label htmlFor="vac-fecha-regreso" style={estiloLabel}>Fecha de regreso</label>
               <input
+                id="vac-fecha-regreso"
                 type="date"
                 style={estiloInput}
                 value={formulario.fecha_regreso}
@@ -304,9 +396,24 @@ export default function VacacionesPage() {
             </div>
           </div>
 
+          {notaCruce && (
+            <p style={{ ...estiloAviso, background: "var(--color-info-suave)", color: "#0c4a6e", margin: "0 0 1rem" }}>{notaCruce}</p>
+          )}
+
           <div style={{ marginBottom: "1rem" }}>
-            <label style={estiloLabel}>Observaciones</label>
+            <CalendarioOcupacion
+              inicio={formulario.fecha_inicial}
+              fin={formulario.fecha_final}
+              cupo={resumen ? resumen.cupo : undefined}
+              version={versionDisp}
+              onElegir={elegirDesdeCalendario}
+            />
+          </div>
+
+          <div style={{ marginBottom: "1rem" }}>
+            <label htmlFor="vac-observaciones" style={estiloLabel}>Observaciones</label>
             <textarea
+              id="vac-observaciones"
               style={{ ...estiloInput, minHeight: "80px", resize: "vertical" }}
               value={formulario.observaciones}
               onChange={(e) => setFormulario((f) => ({ ...f, observaciones: e.target.value }))}
@@ -314,48 +421,77 @@ export default function VacacionesPage() {
             />
           </div>
 
-          {formulario.fecha_inicial && formulario.fecha_final && diasSolicitados > 0 && (
-            <div
-              style={{
-                background: "var(--color-fondo)",
-                border: "1px solid var(--color-borde)",
-                borderRadius: "0.5rem",
-                padding: "0.75rem 1rem",
-                marginBottom: "1rem",
-                display: "flex",
-                gap: "2rem",
-                flexWrap: "wrap",
-              }}
-            >
-              <span style={{ fontSize: "0.9rem" }}>
-                <strong>Días a disfrutar:</strong> {diasSolicitados}
-              </span>
-              {saldo && (
-                <span
-                  style={{
-                    fontSize: "0.9rem",
-                    color: diasQueQuedan < 0 ? "var(--color-error)" : "var(--color-exito)",
-                    fontWeight: 600,
-                  }}
-                >
-                  Días que quedarían: {diasQueQuedan}
+          <div aria-live="polite" style={{ marginBottom: "1rem" }}>
+            {disp.estado === "cargando" && (
+              <p style={{ margin: 0, color: "var(--color-texto-medio)", fontSize: "0.9rem" }}>Calculando días hábiles…</p>
+            )}
+            {disp.estado === "error" && (
+              <p role="alert" style={{ ...estiloAviso, background: "var(--color-error-suave)", color: "#7f1d1d" }}>
+                {disp.error}{" "}
+                <button type="button" style={estiloBotonSecundario} onClick={() => setVersionDisp((v) => v + 1)}>Reintentar</button>
+              </p>
+            )}
+            {disp.estado === "listo" && resumen && (
+              <div style={estiloResumen}>
+                <span style={{ fontSize: "0.9rem" }}>
+                  <strong>Días hábiles a descontar:</strong> {resumen.dias}
                 </span>
-              )}
-            </div>
-          )}
+                {resumen.quedarian !== null && (
+                  <span
+                    style={{
+                      fontSize: "0.9rem",
+                      color: resumen.quedarian < 0 ? "#7f1d1d" : "#14532d",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Saldo restante: {resumen.quedarian} {resumen.quedarian === 1 ? "día" : "días"}
+                  </span>
+                )}
+              </div>
+            )}
+            {disp.estado === "listo" && resumen && resumen.noHabiles.length > 0 && (
+              <div style={{ ...estiloAviso, background: "var(--color-info-suave)", color: "#0c4a6e" }}>
+                <strong>Días no hábiles en tu rango (no se descuentan):</strong>
+                <ul style={{ margin: "0.25rem 0 0", paddingLeft: "1.2rem" }}>
+                  {resumen.noHabiles.map((d) => (
+                    <li key={`${d.fecha}-${d.tipo}`}>
+                      {fechaLegible(d.fecha)} — {d.nombre} ({d.etiquetaTipo})
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {disp.estado === "listo" && resumen && resumen.eventos.length > 0 && (
+              <div style={{ ...estiloAviso, background: "var(--color-info-suave)", color: "#0c4a6e" }}>
+                <strong>Eventos en tu rango (solo informativo, no bloquean):</strong>
+                <ul style={{ margin: "0.25rem 0 0", paddingLeft: "1.2rem" }}>
+                  {resumen.eventos.map((e) => (
+                    <li key={`${e.fecha}-${e.nombre}`}>{fechaLegible(e.fecha)} — {e.nombre}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {disp.estado === "listo" && resumen && resumen.conflicto && (
+              <p role="alert" style={{ ...estiloAviso, background: "var(--color-error-suave)", color: "#7f1d1d", fontWeight: 600 }}>
+                {resumen.conflicto.mensaje}
+              </p>
+            )}
+            {disp.estado === "listo" && resumen && !resumen.conflicto && resumen.dias > 0 && (
+              <span className="sr-only-cal">{`Se descontarán ${textoDiasHabiles(resumen.dias)}.`}</span>
+            )}
+          </div>
 
           {mensajeFormulario && (
             <div
+              role={mensajeFormulario.tipo === "exito" ? "status" : "alert"}
               style={{
                 padding: "0.75rem 1rem",
                 borderRadius: "0.5rem",
                 marginBottom: "1rem",
-                background:
-                  mensajeFormulario.tipo === "exito"
-                    ? "var(--color-exito)"
-                    : "var(--color-error)",
+                background: mensajeFormulario.tipo === "exito" ? "#14532d" : "#991b1b",
                 color: "#fff",
                 fontSize: "0.9rem",
+                overflowWrap: "anywhere",
               }}
             >
               {mensajeFormulario.texto}
@@ -364,15 +500,20 @@ export default function VacacionesPage() {
 
           <button
             type="submit"
-            disabled={enviando || !saldo}
+            disabled={bloqueado}
             style={{
               ...estiloBotonPrimario,
-              cursor: enviando ? "not-allowed" : "pointer",
-              opacity: enviando ? 0.7 : 1,
+              cursor: bloqueado ? "not-allowed" : "pointer",
+              opacity: bloqueado ? 0.6 : 1,
             }}
           >
             {enviando ? "Enviando..." : "Solicitar vacaciones"}
           </button>
+          {!enviando && disp.estado === "ocioso" && (
+            <span style={{ marginLeft: "0.75rem", fontSize: "0.82rem", color: "var(--color-texto-medio)" }}>
+              Elige las fechas inicial y final para continuar.
+            </span>
+          )}
         </form>
       </div>
 
@@ -380,9 +521,9 @@ export default function VacacionesPage() {
       <div style={estiloSeccion}>
         <div style={estiloTituloSeccion}>Mis solicitudes</div>
         {cargandoHistorial ? (
-          <p style={{ color: "var(--color-texto-claro)" }}>Cargando historial...</p>
+          <p style={{ color: "var(--color-texto-medio)" }}>Cargando historial...</p>
         ) : historial.length === 0 ? (
-          <p style={{ color: "var(--color-texto-claro)", fontSize: "0.9rem" }}>No hay solicitudes para este periodo.</p>
+          <p style={{ color: "var(--color-texto-medio)", fontSize: "0.9rem" }}>No hay solicitudes para este periodo.</p>
         ) : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.88rem" }}>
@@ -392,7 +533,7 @@ export default function VacacionesPage() {
                   <th style={{ padding: "0.5rem 0.75rem" }}>Fecha solicitud</th>
                   <th style={{ padding: "0.5rem 0.75rem" }}>Periodo</th>
                   <th style={{ padding: "0.5rem 0.75rem" }}>Fechas</th>
-                  <th style={{ padding: "0.5rem 0.75rem" }}>Días</th>
+                  <th style={{ padding: "0.5rem 0.75rem" }}>Días hábiles</th>
                   <th style={{ padding: "0.5rem 0.75rem" }}>Estatus</th>
                   <th style={{ padding: "0.5rem 0.75rem" }}>Motivo rechazo</th>
                 </tr>
@@ -421,6 +562,11 @@ export default function VacacionesPage() {
               </tbody>
             </table>
           </div>
+        )}
+        {historial.length > 0 && (
+          <p style={{ margin: "0.75rem 0 0", fontSize: "0.8rem", color: "var(--color-texto-medio)" }}>
+            Los días se cuentan como días hábiles (sin fines de semana, días oficiales ni descansos otorgados). Las solicitudes registradas antes de este cambio conservan los días naturales con que se capturaron.
+          </p>
         )}
         <div style={{ textAlign: "right", marginTop: "0.75rem" }}>
           <a

@@ -80,9 +80,11 @@
   grid-template-columns: repeat(7, minmax(0, 1fr));
 }
 .calendario__encabezado {
-  padding: 0.5rem 0.25rem;
+  padding: 0.5rem 0.1rem;
   text-align: center;
-  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  font-size: clamp(0.66rem, 3.2vw, 0.8rem);
   font-weight: 700;
   color: var(--color-texto-medio);
   background: var(--color-superficie-alt);

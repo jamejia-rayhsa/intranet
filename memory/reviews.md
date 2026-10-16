@@ -2320,3 +2320,104 @@ Sin fallos. Falla preexistente (no relacionada): 2 tests de empleado.controller.
 **Problema:** dos RH editando la misma fecha se pisan sin aviso: el PUT envía todos los campos y el backend no compara `fecha_actualizacion` previa.
 **Severidad:** bajo
 **Fix sugerido:** enviar `fecha_actualizacion` previa y, en el backend, comparar en el UPDATE (WHERE fecha_actualizacion = $n) y responder 409 con "La fecha cambió mientras la editabas"; o dejarlo documentado como aceptado (tabla con pocos editores).
+
+### [2026-10-15] [revisor] — Fase 4 vacaciones (días hábiles, cupo por departamento, calendario de ocupación): VEREDICTO NO APROBADO
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:190-223; modules/rh/frontend/pages/VacacionesPage.jsx:286 (y hallazgos siguientes)
+**Problema:** revisión contra decisions.md (2026-10-15, GO Fase 4) y code-notes.md (Fase 4 backend y frontend). Hay 1 crítico (violación de decisión: el periodo lo fija el cliente) que se escala al orquestador, 1 alto (agotamiento del pool dentro de transacción), 6 medios y 4 bajos. Lo verificado y correcto: conteo por día hábil con fechas texto y Date.UTC; límites inclusivos; cupo 1/2; exclusión de la propia solicitud al aprobar; departamento NULL sin cupo ni bloqueo; orden de bloqueos sin ciclo (responder: solicitud -> departamento; crear: solo departamento; nada toma departamento -> solicitud); guardia de estado en SQL y en controlador; COMMIT/ROLLBACK/release en enTransaccion; RECHAZO_CUPO se audita después del ROLLBACK y sin nombres de compañeros; sin IDOR en /disponibilidad y /ocupacion (empleadoPropioEnPeticion, 403 ajeno); sin sinks de HTML crudo en los archivos nuevos; sin new Date(texto) con getters locales en el código nuevo. Tests: 4 suites (112 tests) pasan al ejecutarlas.
+**Severidad:** crítico (por el hallazgo de periodo; ver siguiente entrada)
+**Fix sugerido:** corregir el crítico y el alto antes de publicar; los medios pueden diferirse con decisión explícita del orquestador.
+
+### [2026-10-15] [revisor] — Vacaciones: el periodo lo fija el cliente y descuenta de otro saldo (viola decisión de periodo)
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:190 y :223 (`parseInt(periodo) || anioDeFecha(fecha_inicial)`), :111 (revalidación usa `solicitud.periodo`), :323; modules/rh/frontend/pages/VacacionesPage.jsx:286 (`periodo` del selector enviado en el body)
+**Problema:** el periodo de la solicitud sale del body y no del año de `fecha_inicial`; con body `periodo` distinto, el saldo y el periodo guardado son los de ese año (2026-12-28 con periodo 2027 o 2035 descuenta de otro saldo, y 2035 da más días por antigüedad). La vista previa (/disponibilidad) usa el año de fecha_inicial, así que el servidor y la pantalla no coinciden. decisions.md (2026-10-15, puntos 4 y 5) fija "el periodo sigue siendo el año de fecha_inicial". El origen es HEAD (líneas 88-89), pero Fase 4 lo conserva y lo usa para el saldo y la revalidación al aprobar.
+**Severidad:** crítico — violación de decisión (escalado al orquestador)
+**Fix sugerido:** calcular `periodo = anioDeFecha(fecha_inicial)` en crear y revalidar, e ignorar o rechazar (400) un body.periodo distinto; en la UI, quitar el selector del envío y basar el saldo mostrado y el gate de Enviar en el año de fecha_inicial. Pruebas: periodo del body distinto -> el saldo y el periodo guardado son los del año de fecha_inicial; solicitud 2026-12-28..2027-01-04 con body periodo 2035 no usa el saldo de 2035.
+
+### [2026-10-15] [revisor] — Vacaciones: lectura de empleado sin la transacción dentro de BEGIN agota el pool y puede colgar el portal
+**Archivo/línea:** modules/rh/backend/models/solicitudVacaciones.model.js:111 (`Empleado.obtenerPorId` dentro de calcularSaldo sin `cliente`); llamadas en modules/rh/backend/controllers/vacaciones.controller.js:109 (revalidarAprobacion) y :269 (crear); pool sin límites en modules/portal/backend/config/database.js:3
+**Problema:** dentro de la transacción (un cliente del pool) calcularSaldo pide una segunda conexión del pool para leer el empleado. Con 10 transacciones simultáneas del mismo departamento (9 esperando el FOR UPDATE y 1 con el lock), la que tiene el lock no consigue conexión y todo queda esperando sin límite (el pool por defecto tiene 10 y no hay connectionTimeoutMillis), con lo que también se bloquea el resto del portal. Los tests no lo detectan porque Empleado está mockeado.
+**Severidad:** alto
+**Fix sugerido:** pasar `cliente` a `Empleado.obtenerPorId` (o leer el empleado antes del BEGIN y pasar sus datos); definir `max` y `connectionTimeoutMillis` en el pool. Prueba: Postgres real con pool de 2 conexiones y dos aprobaciones concurrentes del mismo departamento, sin Empleado mockeado.
+
+### [2026-10-15] [revisor] — Vacaciones: responder devuelve 500 después de confirmar la aprobación
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:496 (`await Empleado.obtenerPorId(anterior.empleado_id)` fuera del try de notificación)
+**Problema:** tras el COMMIT, si esa lectura falla, el controlador responde 500 "Error al responder solicitud" aunque la aprobación ya quedó guardada; un reintento devuelve 409 y se pierden la notificación y la auditoría de UPDATE.
+**Severidad:** medio
+**Fix sugerido:** meter la lectura dentro del try de notificación (o devolver el resultado confirmado aunque falle la notificación) y garantizar que la auditoría del UPDATE se intente siempre tras el COMMIT. Prueba: fallo simulado en Empleado.obtenerPorId tras el COMMIT -> 200 y auditoría registrada.
+
+### [2026-10-15] [revisor] — Vacaciones: RH puede aprobar o rechazar su propia solicitud (preexistente, sin decisión explícita)
+**Archivo/línea:** modules/rh/backend/routes/vacaciones.routes.js:65-76 (accesoEmpleado deja pasar a RH antes de `permitirDueno: false`); modules/rh/backend/controllers/vacaciones.controller.js:464-494 (responder no compara solicitante y aprobador); modules/rh/backend/controllers/vacaciones.controller.js:408-411 y modules/rh/frontend/pages/VacacionesListadoPage.jsx (puede_responder = esAdmin también sobre la propia)
+**Problema:** un usuario con permiso de RH puede aprobar su propia solicitud, consumiendo cupo y saldo sin revisión de otra persona. El comentario de la ruta dice "nunca el propio solicitante (salvo RH)", pero no hay decisión en decisions.md que lo permita explícitamente. No se modificó en esta fase; es preexistente.
+**Severidad:** medio
+**Fix sugerido:** decidir con el orquestador. Si no se permite: responder 403 en el controlador cuando `anterior.empleado_id` es el empleado del aprobador (también para RH), y poner puede_responder = false en el listado para la propia solicitud. Prueba de regresión correspondiente.
+
+### [2026-10-15] [revisor] — Vacaciones: crear sin serialización por empleado cuando no hay departamento, y lectura del departamento fuera de la transacción
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:225 (empleado leído fuera de la transacción), :243-249 (lock solo si hay departamento), :260-276 (traslape y saldo sin lock de empleado)
+**Problema:** dos creaciones simultáneas del mismo empleado sin departamento pueden pasar traslape y saldo a la vez (el code-notes lo marca como límite aceptado, no verificado). Además, el departamento se lee antes de la transacción y se guarda en el INSERT aunque haya cambiado antes del lock, así que el cupo puede aplicarse al departamento equivocado. Lo mismo afecta el saldo entre aprobaciones de dos departamentos distintos del mismo empleado.
+**Severidad:** medio
+**Fix sugerido:** dentro de la transacción, bloquear la fila del empleado (`SELECT ... FROM empleados WHERE id = $1 FOR UPDATE`) como primer paso de crear, releer departamento_id después de ese bloqueo y usar ese valor para el lock y el INSERT. El orden empleado -> departamento no crea ciclo con solicitud -> departamento mientras nadie tome departamento -> empleado.
+
+### [2026-10-15] [revisor] — Vacaciones: pruebas que no detectan regresiones de periodo, guardias SQL ni pool
+**Archivo/línea:** modules/rh/backend/tests/vacaciones.diasHabilesCupo.test.js:85, :103 (simulador con regex sobre el texto SQL), :161 (guardia del simulador), :415-416 y :498 (orden de bloqueos), :165 (SQL no simulado); modules/rh/backend/tests/acceso-empleados-permisos-vacaciones.test.js (controlador mockeado)
+**Problema:** (a) el simulador bloquea solo si el SQL coincide con la regex; un cambio inocuo del texto (alias, espacios) hace fallar los tests por "SQL no simulado" y no por la regla, y quitar FOR UPDATE se detecta por accidente. (b) La guardia `AND estatus = 'pendiente'` del UPDATE de responder no se prueba aislada: el precheck del controlador (línea 474) la oculta. (c) Empleado está mockeado, así que no se prueba el pool dentro de la transacción (alto anterior). (d) Ningún test envía body.periodo distinto del año de fecha_inicial, por eso el crítico no se detecta. (e) El SQL real de ocupacionPorDia, listar, responder y del cupo se verificó con un harness fuera del repo, sin prueba automática de regresión. (f) La prueba de propiedad de /disponibilidad y /ocupacion mockea el controlador, así que no comprueba que el controlador use el empleado validado.
+**Severidad:** medio
+**Fix sugerido:** añadir: test de periodo del body ignorado; test de guardia SQL (UPDATE con estatus ya cambiado devuelve 409 aunque el precheck pase); test que cubra el pool con Empleado real o con Postgres en CI; y, para el SQL, pruebas de integración con Postgres marcadas en el repo (o registrarlas como deuda en blockers.md).
+
+### [2026-10-15] [revisor] — Frontend de vacaciones: sin pruebas de componente para el estado de Enviar y las carreras
+**Archivo/línea:** modules/rh/tests/vacacionesOcupacion.util.test.js (solo funciones puras); modules/rh/frontend/pages/VacacionesPage.jsx:227-255 (debounce y bandera vigente), :258 (bloqueado), :267-301 (handleSubmit); modules/rh/frontend/components/CalendarioOcupacion.jsx:53-77 (descarte de respuestas obsoletas)
+**Problema:** la regla de habilitar Enviar, la carrera de disponibilidad, la respuesta 409 al enviar y el descarte de respuestas viejas del calendario solo se comprobaron con un harness de Chromium que no está en el repo. Una regresión en el componente no la detecta ninguna prueba automática.
+**Severidad:** medio
+**Fix sugerido:** añadir pruebas con React Testing Library (servicio mockeado, reloj falso) para: Enviar deshabilitado en ocioso/cargando/error/conflicto; respuesta obsoleta descartada; 409 muestra el mensaje del servidor y refresca la disponibilidad.
+
+### [2026-10-15] [revisor] — Vacaciones: contraste insuficiente en las tarjetas de saldo (preexistente)
+**Archivo/línea:** modules/rh/frontend/pages/VacacionesPage.jsx:149 (título, `--color-texto-claro`) y :153 (subtítulo, `--color-texto-claro` con `opacity: 0.7`)
+**Problema:** #718096 sobre blanco da 4,02:1 (por debajo de 4,5:1). Con opacity 0.7 el subtítulo queda en ~2,5:1. Es preexistente en HEAD, pero Fase 4 toca esta página y el code-notes solo corrigió la etiqueta de los campos.
+**Severidad:** medio
+**Fix sugerido:** usar `--color-texto-medio` (#4a5568, ~7,5:1 sobre blanco) en título y subtítulo y quitar `opacity`. Verificar con axe o con el cálculo WCAG.
+
+### [2026-10-15] [revisor] — Vacaciones: cambios de contrato respecto a HEAD (códigos 400 -> 409 y 400 -> 500)
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:267 (traslape, antes 400), :474-475 y :491 (no pendiente, antes 400 en HEAD línea 315), :258 (0 días hábiles, 400 nuevo), :369 y :538 (errores genéricos de crear y responder: HEAD devolvía 400, ahora 500)
+**Problema:** los clientes que solo leen `mensaje` no se ven afectados (VacacionesPage y VacacionesListadoPage tratan 400 y 409 igual), pero el cambio de códigos no está en decisions.md y un error interno ahora es 500, no 400.
+**Severidad:** bajo
+**Fix sugerido:** documentar el cambio en code-notes.md o decisions.md (es intencional según el diseño); no requiere cambio de código salvo que otro consumidor dependa del 400.
+
+### [2026-10-15] [revisor] — Vacaciones: saldo y cruce de año (decisión aceptada, falta nota al usuario)
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:223 (periodo = año de inicio); modules/rh/backend/models/solicitudVacaciones.model.js:99-107 (calcularDisfrutados suma dias_a_disfrutar, incluidos los días naturales de solicitudes antiguas); modules/rh/frontend/pages/VacacionesPage.jsx:548 (nota solo sobre días naturales)
+**Problema:** una solicitud del 28-dic-2026 al 4-ene-2027 descuenta sus días del periodo 2026, y las solicitudes antiguas en días naturales siguen restando del saldo. Ambos puntos están en decisions.md, pero la UI no informa del cruce de año.
+**Severidad:** bajo
+**Fix sugerido:** mostrar una nota cuando el rango cruza el año ("los días se descuentan del periodo 2026"). Sin cambio de código backend.
+
+### [2026-10-15] [revisor] — Vacaciones: handleSubmit no valida el estado de envío ni la fecha de regreso
+**Archivo/línea:** modules/rh/frontend/pages/VacacionesPage.jsx:267-301 (no usa envioBloqueado); :371-379 y modules/rh/backend/controllers/vacaciones.controller.js:204-209 (fecha_regreso solo se valida en formato, no que sea posterior a fecha_final)
+**Problema:** handleSubmit depende solo del atributo disabled del botón; una llamada directa o un envío durante un conflicto pasaría al servidor. La fecha de regreso puede ser anterior a la fecha final sin error.
+**Severidad:** bajo
+**Fix sugerido:** `if (envioBloqueado(disp, enviando)) return;` al inicio de handleSubmit; en el backend, rechazar fecha_regreso < fecha_final con 400.
+
+### [2026-10-15] [revisor] — Vacaciones: marca de cupo lleno sin texto visible en contenedores estrechos
+**Archivo/línea:** modules/rh/frontend/styles/vacacionesOcupacion.css:45-47 (el texto "Cupo lleno" se oculta bajo 34rem); modules/rh/frontend/components/CalendarioOcupacion.jsx:186-190
+**Problema:** en anchos menores el día lleno solo muestra el símbolo ⛔ y el fondo; el nombre accesible sí incluye el texto y la leyenda lo explica, pero un usuario que no conozca el símbolo no lo identifica sin abrir la leyenda. No es una falla de contraste ni de nombre accesible.
+**Severidad:** bajo
+**Fix sugerido:** mostrar siempre el texto corto "Lleno" dentro de la celda, o un título visible en el detalle del mes; revisar con el tester en 320-720 px.
+
+### [2026-10-15] [revisor] — Re-revisión Fase 4
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:190-235, 241-345, 486-542; modules/rh/frontend/pages/VacacionesPage.jsx:199-209, 230-264, 302
+**Problema:** re-revisión focalizada de las correcciones (periodo, pool, candado por empleado, responder tras COMMIT, contrato). Sin críticos ni altos abiertos.
+**Severidad:** bajo (máximo de los hallazgos nuevos)
+**Fix sugerido:** ver lista de abajo.
+**Veredicto:** APROBADO CON OBSERVACIONES
+
+Verificado (lectura de código + `npx jest` de vacaciones, acceso-empleados, diasHabiles y vacacionesOcupacion: 143/143 OK):
+- (1) periodo: crear no lee body.periodo (controller:235, 333); revalidarAprobacion usa el periodo guardado (:111); disponibilidad y ocupación derivan de fecha_inicial (:603); el POST del front no envía periodo (VacacionesPage:302).
+- (2) pool: dentro de enTransaccion todo usa `cliente` (crear :243-343; responder :488-514; revalidarAprobacion :93-126; calcularSaldo/Empleado.obtenerPorId con cliente en solicitudVacaciones.model.js:133-146). Post-COMMIT usa `grupo` fuera de transacción (controller:523, 545). disponibilidad y ocupación no abren transacción.
+- (3) candado: `pg_advisory_xact_lock(4217, empleado)` solo en crear y aprobar. Orden empleado -> solicitud -> departamento en ambos; rechazar toma solo la solicitud; disponibilidad y ocupación no bloquean. Sin ciclos. `grep pg_advisory` no encuentra otro uso en el repo. Se libera en COMMIT/ROLLBACK (xact).
+- (4) responder: notificación y auditoría post-COMMIT en try propio. fecha_regreso >= fecha_final validado en backend (controller:204-216) y front (regresoValido). empleado_id de crear validado (controller:229-232).
+- (5) contrato: forma de las respuestas idéntica a HEAD; los códigos de error cambian como están documentados en code-notes; el front lee `mensaje`.
+
+Hallazgos abiertos:
+- bajo — controller:152, 165-172: GET /vacaciones/saldo acepta `periodo` del query. Es solo lectura y no alimenta escrituras, pero contradice el criterio "ningún camino toma periodo del cliente". Fix: decisión del orquestador; o documentar /saldo como consulta libre.
+- bajo — VacacionesPage.jsx:199-209 y :327-335: cargarSaldo no tiene la guarda `vigente` que sí tiene la disponibilidad; con el selector, la tarjeta puede mostrar otro periodo que el "Saldo restante" del formulario. Fix: guarda vigente y etiquetar el periodo de la tarjeta. La nota de code-notes "saldo mostrado = el que usa el servidor" solo vale sin tocar el selector.
+- bajo — controller:68 y :170: RH con empleado_id fuera de int4 (p. ej. 99999999999) pasa el middleware y pg lanza out-of-range: 500 en /saldo, /disponibilidad y /ocupacion (crear da 400). Fix: validar 1..2147483647 igual que crear.
+- bajo — solicitudVacaciones.model.js:25-28: si ROLLBACK falla, release() devuelve la conexión sin release(error). Fix: cliente.release(error) en ese caso.
+- medio, pendiente (no nuevo) — modules/portal/backend/config/database.js:3-9: pool sin max, connectionTimeoutMillis ni idle_in_transaction_session_timeout. Dentro del módulo el riesgo queda mitigado; la espera por conexión sigue sin límite para todo el portal. Requiere decisión del orquestador (dependencia compartida).
+- medio, pendiente (no nuevo) — routes/vacaciones.routes.js:65-76: RH puede aprobar o rechazar lo propio. Sigue sin decisión explícita.
+- bajo — vacaciones.pool.test.js: la prueba de "una sola conexión" cubre solo crear; responder no tiene aserción de pool.

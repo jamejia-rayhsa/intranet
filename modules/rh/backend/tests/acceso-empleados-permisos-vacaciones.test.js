@@ -26,7 +26,7 @@ jest.mock("../controllers/empleadoHijo.controller", () => {
 });
 jest.mock("../controllers/permisos.controller", () => ({ listar: ok, obtener: ok, crear: ok, responder: ok }));
 jest.mock("../controllers/vacaciones.controller", () => ({
-  obtenerSaldo: ok, listar: ok, obtener: ok, crear: ok, responder: ok,
+  obtenerSaldo: ok, listar: ok, obtener: ok, crear: ok, responder: ok, disponibilidad: ok, ocupacion: ok,
 }));
 
 const { tienePermiso } = require("../../../portal/backend/middleware/permisos.middleware");
@@ -140,6 +140,17 @@ describe("RH: empleados, permisos de ausencia y vacaciones por propietario", () 
       comoRH();
       expect((await request(app).get("/vacaciones/saldo?empleado_id=6")).status).toBe(200);
     });
+    it.each(["disponibilidad", "ocupacion"])(
+      "%s: antes de /:id; empleado_id ajeno 403, propio y sin id ok, RH ok",
+      async (ruta) => {
+        comoEmpleado(5);
+        expect((await request(app).get(`/vacaciones/${ruta}`)).status).toBe(200);
+        expect((await request(app).get(`/vacaciones/${ruta}?empleado_id=5`)).status).toBe(200);
+        expect((await request(app).get(`/vacaciones/${ruta}?empleado_id=6`)).status).toBe(403);
+        comoRH();
+        expect((await request(app).get(`/vacaciones/${ruta}?empleado_id=6`)).status).toBe(200);
+      },
+    );
     it("crear: por otro empleado 403; propio ok; RH ok", async () => {
       comoEmpleado(5);
       expect((await request(app).post("/vacaciones").send({ empleado_id: 6 })).status).toBe(403);

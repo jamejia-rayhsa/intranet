@@ -1,0 +1,250 @@
+// Pruebas de la lógica pura del formulario de vacaciones (Fase 4 frontend):
+// modules/rh/frontend/utils/calendarioLaboral.js. El util es ESM plano y Jest corre sin transpilar:
+// se evalúa el fuente sin `export` (mismo cargador que calendarioLaboral.util.test.js).
+const fs = require("fs");
+const path = require("path");
+
+const fuente = fs.readFileSync(path.join(__dirname, "../frontend/utils/calendarioLaboral.js"), "utf8");
+if (/^\s*import\s/m.test(fuente)) throw new Error("calendarioLaboral.js no debe tener imports");
+const nombres = [...fuente.matchAll(/^export\s+(?:async\s+)?(?:const|let|function\*?|class)\s+(\w+)/gm)].map((m) => m[1]);
+const U = new Function(`${fuente.replace(/^export\s+/gm, "")}\nreturn { ${nombres.join(", ")} };`)();
+
+const OCUPACION = {
+  fechas_llenas: ["2026-10-14", "2026-10-21"],
+  dias_no_habiles: [
+    { fecha: "2026-10-12", tipo: "oficial", nombre: "Día de prueba" },
+    { fecha: "2026-10-20", tipo: "otorgado", nombre: "Puente" },
+  ],
+  eventos: [{ fecha: "2026-10-16", nombre: "Inventario" }, { fecha: "2026-10-16", nombre: "Auditoría" }],
+};
+
+const celdas = (semanas) => semanas.flat();
+const celda = (semanas, fecha) => celdas(semanas).find((c) => c.fecha === fecha);
+
+describe("formulario de vacaciones - mensajes de conflicto", () => {
+  it("devuelve null cuando no hay conflicto", () => {
+    expect(U.mensajeConflicto(null)).toBeNull();
+    expect(U.mensajeConflicto(undefined)).toBeNull();
+  });
+
+  it("usa el mensaje del backend tal cual", () => {
+    expect(U.mensajeConflicto({ codigo: "CUPO_LLENO", mensaje: "El 14 de octubre el cupo está lleno" }))
+      .toBe("El 14 de octubre el cupo está lleno");
+  });
+
+  it("recurre al mensaje por código cuando el mensaje falta o está vacío", () => {
+    for (const codigo of ["SIN_DIAS_HABILES", "TRASLAPE", "SALDO_INSUFICIENTE", "CUPO_LLENO"]) {
+      expect(U.mensajeConflicto({ codigo })).toBe(U.MENSAJES_CONFLICTO[codigo]);
+      expect(U.mensajeConflicto({ codigo, mensaje: "   " })).toBe(U.MENSAJES_CONFLICTO[codigo]);
+    }
+  });
+
+  it("usa un mensaje genérico ante un código desconocido", () => {
+    expect(U.mensajeConflicto({ codigo: "NUEVO" })).toBe(U.MENSAJE_CONFLICTO_GENERICO);
+  });
+});
+
+describe("formulario de vacaciones - resumen de disponibilidad", () => {
+  const datos = {
+    dias_habiles: 3,
+    dias_no_habiles: [
+      { fecha: "2026-10-20", tipo: "otorgado", nombre: "Puente" },
+      { fecha: "2026-10-12", tipo: "oficial", nombre: "Día de prueba" },
+    ],
+    eventos: [{ fecha: "2026-10-16", nombre: "Inventario" }],
+    cupo: 2,
+    saldo: 10,
+    conflicto: null,
+  };
+
+  it("toma los días hábiles del backend y calcula el saldo restante", () => {
+    const r = U.resumirDisponibilidad(datos);
+    expect(r.dias).toBe(3);
+    expect(r.saldo).toBe(10);
+    expect(r.quedarian).toBe(7);
+    expect(r.conflicto).toBeNull();
+  });
+
+  it("ordena los días no hábiles y rotula su tipo", () => {
+    const r = U.resumirDisponibilidad(datos);
+    expect(r.noHabiles.map((d) => d.fecha)).toEqual(["2026-10-12", "2026-10-20"]);
+    expect(r.noHabiles[0].etiquetaTipo).toBe("Oficial de ley");
+    expect(r.noHabiles[1].etiquetaTipo).toBe("Descanso otorgado");
+    expect(r.eventos).toHaveLength(1);
+  });
+
+  it("el saldo restante puede ser negativo (el backend marca SALDO_INSUFICIENTE)", () => {
+    const r = U.resumirDisponibilidad({ ...datos, dias_habiles: 12, conflicto: { codigo: "SALDO_INSUFICIENTE", mensaje: "No alcanza" } });
+    expect(r.quedarian).toBe(-2);
+    expect(r.conflicto).toEqual({ codigo: "SALDO_INSUFICIENTE", mensaje: "No alcanza" });
+  });
+
+  it("sin saldo en la respuesta usa el de respaldo o no calcula restante", () => {
+    expect(U.resumirDisponibilidad({ ...datos, saldo: null }, 8).quedarian).toBe(5);
+    expect(U.resumirDisponibilidad({ ...datos, saldo: null }).quedarian).toBeNull();
+  });
+
+  it("es tolerante a una respuesta incompleta", () => {
+    const r = U.resumirDisponibilidad({});
+    expect(r.dias).toBe(0);
+    expect(r.noHabiles).toEqual([]);
+    expect(r.eventos).toEqual([]);
+    expect(r.cupo).toBeUndefined();
+    expect(U.resumirDisponibilidad(null).dias).toBe(0);
+  });
+
+  it("conserva cupo null (sin departamento)", () => {
+    expect(U.resumirDisponibilidad({ ...datos, cupo: null }).cupo).toBeNull();
+  });
+
+  it("pluraliza los días hábiles", () => {
+    expect(U.textoDiasHabiles(1)).toBe("1 día hábil");
+    expect(U.textoDiasHabiles(0)).toBe("0 días hábiles");
+    expect(U.textoDiasHabiles(5)).toBe("5 días hábiles");
+  });
+});
+
+describe("formulario de vacaciones - rango y botón Enviar", () => {
+  it("rangoCompleto exige dos fechas reales y en orden", () => {
+    expect(U.rangoCompleto("2026-10-14", "2026-10-16")).toBe(true);
+    expect(U.rangoCompleto("2026-10-14", "2026-10-14")).toBe(true);
+    expect(U.rangoCompleto("2026-10-16", "2026-10-14")).toBe(false);
+    expect(U.rangoCompleto("", "2026-10-14")).toBe(false);
+    expect(U.rangoCompleto("2026-02-30", "2026-03-02")).toBe(false);
+    expect(U.rangoCompleto("20260-10-14", "20260-10-16")).toBe(false);
+  });
+
+  it("bloquea Enviar sin rango, cargando, con error, con conflicto o enviando", () => {
+    const limpio = { estado: "listo", resumen: { conflicto: null } };
+    expect(U.envioBloqueado(limpio)).toBe(false);
+    expect(U.envioBloqueado({ estado: "ocioso", resumen: null })).toBe(true);
+    expect(U.envioBloqueado({ estado: "cargando", resumen: limpio.resumen })).toBe(true);
+    expect(U.envioBloqueado({ estado: "error", resumen: null })).toBe(true);
+    expect(U.envioBloqueado({ estado: "listo", resumen: { conflicto: { codigo: "CUPO_LLENO", mensaje: "x" } } })).toBe(true);
+    expect(U.envioBloqueado(limpio, true)).toBe(true);
+    expect(U.envioBloqueado(null)).toBe(true);
+  });
+
+  it("siguienteSeleccion: primer clic fija la inicial, el segundo la final", () => {
+    expect(U.siguienteSeleccion({ inicio: "", fin: "" }, "2026-10-14")).toEqual({ inicio: "2026-10-14", fin: "" });
+    expect(U.siguienteSeleccion({ inicio: "2026-10-14", fin: "" }, "2026-10-16")).toEqual({ inicio: "2026-10-14", fin: "2026-10-16" });
+    expect(U.siguienteSeleccion({ inicio: "2026-10-14", fin: "" }, "2026-10-14")).toEqual({ inicio: "2026-10-14", fin: "2026-10-14" });
+  });
+
+  it("siguienteSeleccion: una fecha anterior reemplaza la inicial y un rango completo se reinicia", () => {
+    expect(U.siguienteSeleccion({ inicio: "2026-10-14", fin: "" }, "2026-10-13")).toEqual({ inicio: "2026-10-13", fin: "" });
+    expect(U.siguienteSeleccion({ inicio: "2026-10-14", fin: "2026-10-16" }, "2026-10-19")).toEqual({ inicio: "2026-10-19", fin: "" });
+    expect(U.siguienteSeleccion(null, "2026-10-19")).toEqual({ inicio: "2026-10-19", fin: "" });
+  });
+});
+
+describe("formulario de vacaciones - mes de ocupación", () => {
+  const semanas = U.construirMesOcupacion(2026, 10, OCUPACION, { inicio: "2026-10-14", fin: "2026-10-16", hoy: "2026-10-15" });
+
+  it("conserva la cuadrícula de lunes a domingo en múltiplos de 7", () => {
+    expect(celdas(semanas).length % 7).toBe(0);
+    expect(semanas[0][0].fecha).toBe("2026-09-28");
+    expect(semanas[semanas.length - 1][6].fecha).toBe("2026-11-01");
+  });
+
+  it("marca el cupo lleno", () => {
+    expect(celda(semanas, "2026-10-14").lleno).toBe(true);
+    expect(celda(semanas, "2026-10-15").lleno).toBe(false);
+    expect(celda(semanas, "2026-10-21").lleno).toBe(true);
+  });
+
+  it("marca no hábiles oficiales, otorgados y fines de semana", () => {
+    expect(celda(semanas, "2026-10-12").noHabil).toMatchObject({ tipo: "oficial", etiquetaTipo: "Oficial de ley" });
+    expect(celda(semanas, "2026-10-20").noHabil).toMatchObject({ tipo: "otorgado", nombre: "Puente" });
+    expect(celda(semanas, "2026-10-17").finDeSemana).toBe(true);
+    expect(celda(semanas, "2026-10-17").noHabil).toBeNull();
+  });
+
+  it("agrupa los eventos del día sin bloquearlo", () => {
+    const c = celda(semanas, "2026-10-16");
+    expect(c.eventos.sort()).toEqual(["Auditoría", "Inventario"]);
+    expect(c.seleccionable).toBe(true);
+  });
+
+  it("solo un día hábil libre es seleccionable", () => {
+    expect(celda(semanas, "2026-10-13").seleccionable).toBe(true);
+    expect(celda(semanas, "2026-10-14").seleccionable).toBe(false); // lleno
+    expect(celda(semanas, "2026-10-12").seleccionable).toBe(false); // oficial
+    expect(celda(semanas, "2026-10-20").seleccionable).toBe(false); // otorgado
+    expect(celda(semanas, "2026-10-18").seleccionable).toBe(false); // domingo
+  });
+
+  it("destaca el rango elegido y sus extremos", () => {
+    expect(celda(semanas, "2026-10-14")).toMatchObject({ esInicio: true, enRango: true, esFin: false });
+    expect(celda(semanas, "2026-10-15")).toMatchObject({ esInicio: false, enRango: true, esFin: false, esHoy: true });
+    expect(celda(semanas, "2026-10-16")).toMatchObject({ esFin: true, enRango: true });
+    expect(celda(semanas, "2026-10-13").enRango).toBe(false);
+    expect(celda(semanas, "2026-10-19").enRango).toBe(false);
+  });
+
+  it("con solo fecha inicial destaca ese día y no pinta rango", () => {
+    const s = U.construirMesOcupacion(2026, 10, OCUPACION, { inicio: "2026-10-13", fin: "" });
+    expect(celda(s, "2026-10-13")).toMatchObject({ esInicio: true, enRango: false, esFin: false });
+    expect(celdas(s).filter((c) => c.enRango)).toHaveLength(0);
+  });
+
+  it("tolera ocupación nula (cargando o con error) y rango invertido", () => {
+    const s = U.construirMesOcupacion(2026, 10, null, { inicio: "2026-10-16", fin: "2026-10-14" });
+    expect(celdas(s).some((c) => c.lleno || c.noHabil || c.eventos.length)).toBe(false);
+    expect(celdas(s).some((c) => c.enRango)).toBe(false);
+  });
+
+  it("el aria-label empieza por el número del día e incluye texto de cada marca", () => {
+    expect(celda(semanas, "2026-10-14").etiqueta).toMatch(/^14 Cupo lleno\. miércoles 14 de octubre de 2026/);
+    expect(celda(semanas, "2026-10-14").etiqueta).toContain("Fecha inicial elegida");
+    expect(celda(semanas, "2026-10-12").etiqueta).toContain("Día no hábil, Oficial de ley: Día de prueba");
+    expect(celda(semanas, "2026-10-17").etiqueta).toContain("Fin de semana, día no hábil");
+    expect(celda(semanas, "2026-10-16").etiqueta).toContain("Evento: Inventario");
+    expect(celda(semanas, "2026-10-15").etiqueta).toContain("Dentro del rango elegido");
+  });
+
+  it("no depende de la zona horaria: las fechas son texto", () => {
+    expect(celda(semanas, "2026-10-31").dia).toBe(31);
+    expect(celdas(semanas).every((c) => /^\d{4}-\d{2}-\d{2}$/.test(c.fecha))).toBe(true);
+  });
+
+  it("detalleMesOcupacion lista solo las marcas del mes ordenadas por fecha", () => {
+    const d = U.detalleMesOcupacion(2026, 10, { ...OCUPACION, fechas_llenas: [...OCUPACION.fechas_llenas, "2026-11-03"] });
+    expect(d.map((f) => `${f.fecha} ${f.clase}`)).toEqual([
+      "2026-10-12 no-habil",
+      "2026-10-14 lleno",
+      "2026-10-16 evento",
+      "2026-10-16 evento",
+      "2026-10-20 no-habil",
+      "2026-10-21 lleno",
+    ]);
+    expect(d[1].texto).toBe("Cupo lleno");
+    expect(d[0].texto).toBe("Oficial de ley: Día de prueba");
+    expect(U.detalleMesOcupacion(2026, 10, null)).toEqual([]);
+  });
+});
+
+describe("formulario de vacaciones - periodo, cruce de año y fecha de regreso", () => {
+  it("anioDeTexto lee el año del texto y rechaza fechas inválidas", () => {
+    expect(U.anioDeTexto("2026-12-28")).toBe(2026);
+    expect(U.anioDeTexto("2027-01-01")).toBe(2027);
+    expect(U.anioDeTexto("2027-02-29")).toBeNull();
+    expect(U.anioDeTexto("")).toBeNull();
+    expect(U.anioDeTexto(undefined)).toBeNull();
+  });
+
+  it("notaCruceDeAnio avisa solo si el rango cruza de año y dice el periodo de la fecha inicial", () => {
+    expect(U.notaCruceDeAnio("2026-12-28", "2027-01-04")).toMatch(/periodo 2026/);
+    expect(U.notaCruceDeAnio("2026-10-19", "2026-10-23")).toBeNull();
+    expect(U.notaCruceDeAnio("2026-12-28", "")).toBeNull();
+    expect(U.notaCruceDeAnio("2027-01-04", "2026-12-28")).toBeNull();
+  });
+
+  it("regresoValido: vacío es válido; debe ser >= fecha final", () => {
+    expect(U.regresoValido("2026-10-23", "")).toBe(true);
+    expect(U.regresoValido("2026-10-23", "2026-10-23")).toBe(true);
+    expect(U.regresoValido("2026-10-23", "2026-10-26")).toBe(true);
+    expect(U.regresoValido("2026-10-23", "2026-10-22")).toBe(false);
+    expect(U.regresoValido("2026-10-23", "mañana")).toBe(false);
+  });
+});

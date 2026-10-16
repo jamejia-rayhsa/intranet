@@ -277,3 +277,180 @@ export function etiquetaDia(fecha, items) {
     .join('; ');
   return `${dia} ${visibles}. ${base}. ${detalle}`;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Formulario de vacaciones (Fase 4). La regla de días hábiles vive SOLO en el backend
+// (GET /api/vacaciones/disponibilidad); aquí únicamente se da formato y se pinta lo que responde.
+// ---------------------------------------------------------------------------------------------
+
+/** Códigos de conflicto de /disponibilidad (paridad con vacaciones.controller.js). */
+export const MENSAJES_CONFLICTO = {
+  SIN_DIAS_HABILES: 'El rango elegido no incluye días hábiles.',
+  TRASLAPE: 'Ya tienes una solicitud de vacaciones que se traslapa con estas fechas.',
+  SALDO_INSUFICIENTE: 'No tienes suficientes días disponibles para este rango.',
+  CUPO_LLENO: 'El cupo de vacaciones de tu departamento está lleno en alguna de estas fechas.',
+};
+export const MENSAJE_CONFLICTO_GENERICO = 'No se puede solicitar este rango de fechas.';
+export const MENSAJE_ERROR_DISPONIBILIDAD = 'No se pudo calcular la disponibilidad. Intenta de nuevo.';
+
+/** Mensaje del conflicto: el del backend; si falta, el de respaldo por código. null si no hay conflicto. */
+export function mensajeConflicto(conflicto) {
+  if (!conflicto) return null;
+  const texto = typeof conflicto.mensaje === 'string' ? conflicto.mensaje.trim() : '';
+  return texto || MENSAJES_CONFLICTO[conflicto.codigo] || MENSAJE_CONFLICTO_GENERICO;
+}
+
+/** '1 día hábil' / '3 días hábiles'. */
+export function textoDiasHabiles(n) {
+  return `${n} ${n === 1 ? 'día hábil' : 'días hábiles'}`;
+}
+
+/** Rango completo y en orden (texto 'YYYY-MM-DD'); la validación de fondo la hace el backend. */
+export function rangoCompleto(inicio, fin) {
+  return parsearFecha(inicio) !== null && parsearFecha(fin) !== null && fin >= inicio;
+}
+
+/** Año (número) de una fecha 'YYYY-MM-DD' válida leído del texto; null si no es válida. */
+export function anioDeTexto(texto) {
+  return parsearFecha(texto) !== null ? Number(String(texto).slice(0, 4)) : null;
+}
+
+/**
+ * Nota cuando el rango cruza de año: el servidor descuenta del periodo del año de la fecha inicial.
+ * Devuelve null si no cruza o el rango no es válido.
+ */
+export function notaCruceDeAnio(inicio, fin) {
+  if (!rangoCompleto(inicio, fin)) return null;
+  const anioInicio = anioDeTexto(inicio);
+  if (anioInicio === anioDeTexto(fin)) return null;
+  return `Tus fechas cruzan de año: los días se descuentan del periodo ${anioInicio} (el año de la fecha inicial).`;
+}
+
+/** ¿La fecha de regreso (opcional) es válida respecto a la fecha final? Vacía = válida. */
+export function regresoValido(fechaFinal, fechaRegreso) {
+  if (!fechaRegreso) return true;
+  return parsearFecha(fechaRegreso) !== null && fechaRegreso >= fechaFinal;
+}
+
+/**
+ * Interpreta la respuesta de /disponibilidad para mostrarla.
+ * quedarian = saldo - días hábiles (puede ser negativo: entonces hay conflicto SALDO_INSUFICIENTE).
+ */
+export function resumirDisponibilidad(datos, saldoRespaldo = null) {
+  const d = datos || {};
+  const dias = Number.isFinite(d.dias_habiles) ? d.dias_habiles : 0;
+  const saldo = Number.isFinite(d.saldo) ? d.saldo : (Number.isFinite(saldoRespaldo) ? saldoRespaldo : null);
+  const noHabiles = ordenarItems(Array.isArray(d.dias_no_habiles) ? d.dias_no_habiles : [])
+    .map((i) => ({ ...i, etiquetaTipo: infoTipo(i.tipo).etiqueta, icono: infoTipo(i.tipo).icono }));
+  const eventos = ordenarItems(Array.isArray(d.eventos) ? d.eventos : []);
+  return {
+    dias,
+    saldo,
+    quedarian: saldo === null ? null : saldo - dias,
+    noHabiles,
+    eventos,
+    cupo: d.cupo === undefined ? undefined : d.cupo,
+    conflicto: d.conflicto ? { codigo: d.conflicto.codigo, mensaje: mensajeConflicto(d.conflicto) } : null,
+  };
+}
+
+/**
+ * Estado del botón Enviar: bloqueado sin rango, mientras carga la disponibilidad, si falló o si hay conflicto.
+ * @param {{estado: string, resumen: object|null}} disp estado: 'ocioso' | 'cargando' | 'listo' | 'error'
+ */
+export function envioBloqueado(disp, enviando = false) {
+  if (enviando) return true;
+  if (!disp || disp.estado !== 'listo') return true;
+  return Boolean(disp.resumen && disp.resumen.conflicto);
+}
+
+/** Es una fecha en la que se puede fijar un extremo del rango (hábil y con cupo). */
+export function esSeleccionable(celda) {
+  return !celda.lleno && !celda.noHabil && !celda.finDeSemana;
+}
+
+/**
+ * Efecto de elegir un día en el calendario: sin inicio, o con rango ya completo, empieza uno nuevo;
+ * con solo inicio, una fecha anterior lo reemplaza y una posterior fija el final.
+ */
+export function siguienteSeleccion(actual, fecha) {
+  const inicio = actual && actual.inicio ? actual.inicio : '';
+  const fin = actual && actual.fin ? actual.fin : '';
+  if (!inicio || fin || fecha < inicio) return { inicio: fecha, fin: '' };
+  return { inicio, fin: fecha };
+}
+
+function indexarOcupacion(ocupacion) {
+  const o = ocupacion || {};
+  const llenas = new Set(Array.isArray(o.fechas_llenas) ? o.fechas_llenas : []);
+  const noHabiles = {};
+  for (const i of ordenarItems(Array.isArray(o.dias_no_habiles) ? o.dias_no_habiles : [])) {
+    if (!noHabiles[i.fecha]) noHabiles[i.fecha] = i;
+  }
+  const eventos = {};
+  for (const e of ordenarItems(Array.isArray(o.eventos) ? o.eventos : [])) {
+    (eventos[e.fecha] = eventos[e.fecha] || []).push(e.nombre);
+  }
+  return { llenas, noHabiles, eventos };
+}
+
+/**
+ * Aria-label de un día del calendario de ocupación: empieza por el número visible (WCAG 2.5.3).
+ */
+export function etiquetaDiaOcupacion(celda) {
+  // Empieza por el texto visible en el mismo orden en que se pinta (número y "Cupo lleno"): WCAG 2.5.3
+  const partes = [`${celda.dia}${celda.lleno ? ' Cupo lleno' : ''}`, fechaConDiaSemana(celda.fecha)];
+  if (celda.noHabil) partes.push(`Día no hábil, ${celda.noHabil.etiquetaTipo}: ${celda.noHabil.nombre}`);
+  else if (celda.finDeSemana) partes.push('Fin de semana, día no hábil');
+  for (const nombre of celda.eventos) partes.push(`Evento: ${nombre}`);
+  if (celda.esInicio) partes.push('Fecha inicial elegida');
+  if (celda.esFin) partes.push('Fecha final elegida');
+  else if (celda.enRango) partes.push('Dentro del rango elegido');
+  return partes.join('. ');
+}
+
+/**
+ * Mes del calendario de ocupación: cuadrícula con las marcas de cupo lleno, no hábil y evento,
+ * y el rango elegido. Fechas siempre como texto. Con solo `inicio` se destaca ese día.
+ * @returns {Array<Array<object>>} semanas de celdas
+ */
+export function construirMesOcupacion(anio, mes, ocupacion, { inicio = '', fin = '', hoy = '' } = {}) {
+  const { llenas, noHabiles, eventos } = indexarOcupacion(ocupacion);
+  const hayRango = rangoCompleto(inicio, fin);
+  return construirCuadricula(anio, mes).map((semana) =>
+    semana.map((c) => {
+      const noHabilItem = noHabiles[c.fecha] || null;
+      const celda = {
+        ...c,
+        lleno: llenas.has(c.fecha),
+        noHabil: noHabilItem
+          ? { tipo: noHabilItem.tipo, nombre: noHabilItem.nombre, etiquetaTipo: infoTipo(noHabilItem.tipo).etiqueta, icono: infoTipo(noHabilItem.tipo).icono }
+          : null,
+        eventos: eventos[c.fecha] || [],
+        esHoy: c.fecha === hoy,
+        esInicio: Boolean(inicio) && c.fecha === inicio,
+        esFin: hayRango && c.fecha === fin,
+        enRango: hayRango && c.fecha >= inicio && c.fecha <= fin,
+      };
+      celda.seleccionable = esSeleccionable(celda);
+      celda.etiqueta = etiquetaDiaOcupacion(celda);
+      return celda;
+    }),
+  );
+}
+
+/** Marcas del mes mostrado para la lista de texto: [{fecha, clase: 'lleno'|'no-habil'|'evento', texto}]. */
+export function detalleMesOcupacion(anio, mes, ocupacion) {
+  const { llenas, noHabiles, eventos } = indexarOcupacion(ocupacion);
+  const prefijo = `${pad(anio, 4)}-${pad(mes, 2)}-`;
+  const filas = [];
+  for (const f of llenas) if (f.startsWith(prefijo)) filas.push({ fecha: f, clase: 'lleno', texto: 'Cupo lleno' });
+  for (const [f, i] of Object.entries(noHabiles)) {
+    if (f.startsWith(prefijo)) filas.push({ fecha: f, clase: 'no-habil', texto: `${infoTipo(i.tipo).etiqueta}: ${i.nombre}` });
+  }
+  for (const [f, nombres] of Object.entries(eventos)) {
+    if (f.startsWith(prefijo)) for (const n of nombres) filas.push({ fecha: f, clase: 'evento', texto: `Evento: ${n}` });
+  }
+  const orden = { lleno: 0, 'no-habil': 1, evento: 2 };
+  return filas.sort((a, b) => (a.fecha !== b.fecha ? (a.fecha < b.fecha ? -1 : 1) : orden[a.clase] - orden[b.clase]));
+}

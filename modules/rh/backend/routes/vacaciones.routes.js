@@ -32,6 +32,20 @@ router.get(
   empleadoPropioEnPeticion({ ...RH, origen: "query", campo: "empleado_id" }),
   ControladorVacaciones.obtenerSaldo,
 );
+// Vista previa y ocupación del departamento (solo fechas, nunca nombres). Deben ir antes de "/:id".
+// empleado_id solo lo puede pedir quien actúa por otro (RH); el resto consulta el suyo.
+router.get(
+  "/disponibilidad",
+  verificarPermiso("rh", "Vacaciones", "consulta"),
+  empleadoPropioEnPeticion({ ...RH, origen: "query", campo: "empleado_id" }),
+  ControladorVacaciones.disponibilidad,
+);
+router.get(
+  "/ocupacion",
+  verificarPermiso("rh", "Vacaciones", "consulta"),
+  empleadoPropioEnPeticion({ ...RH, origen: "query", campo: "empleado_id" }),
+  ControladorVacaciones.ocupacion,
+);
 // El controlador limita el listado: RH todo, el resto sus solicitudes y las de sus subordinados
 router.get("/", verificarPermiso("rh", "Vacaciones", "consulta"), ControladorVacaciones.listar);
 router.get(

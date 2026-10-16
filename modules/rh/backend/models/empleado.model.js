@@ -166,9 +166,11 @@ const Empleado = {
     return resultado.rows[0];
   },
 
-  async obtenerPorId(id) {
+  // `cliente`: dentro de una transacción debe pasarse el cliente de ésta (pedir otra conexión al
+  // pool con la transacción abierta puede agotarlo y congelar el portal)
+  async obtenerPorId(id, cliente = grupo) {
     const consulta = `${SELECT_EMPLEADO} WHERE e.id = $1`;
-    const resultado = await grupo.query(consulta, [id]);
+    const resultado = await cliente.query(consulta, [id]);
     return resultado.rows[0];
   },
 

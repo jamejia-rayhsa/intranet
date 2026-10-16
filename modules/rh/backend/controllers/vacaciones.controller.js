@@ -1,8 +1,150 @@
 const SolicitudVacaciones = require("../models/solicitudVacaciones.model");
+const CalendarioLaboral = require("../models/calendarioLaboral.model");
 const Empleado = require("../models/empleado.model");
 const ServicioNotificacionRH = require("../services/notificacion.service");
 const { tienePermiso } = require("../../../portal/backend/middleware/permisos.middleware");
 const { registrarAccion } = require("../../../auditoria/backend/services/auditoria.service");
+const {
+  validarRango,
+  esFechaValida,
+  anioDeFecha,
+  listarDiasHabiles,
+  primeraFechaLlena,
+  fechasLlenas,
+} = require("../utils/diasHabiles");
+
+// Error esperado dentro de una transacción: provoca ROLLBACK y se responde con su estado.
+// `auditoria` (opcional) = datos para registrar el rechazo por cupo (sin datos de compañeros).
+class ErrorVacaciones extends Error {
+  constructor(estado, mensaje, extra = {}) {
+    super(mensaje);
+    this.estado = estado;
+    this.codigo = extra.codigo || null;
+    this.auditoria = extra.auditoria || null;
+  }
+}
+
+const formatearFecha = (texto) => {
+  const [anio, mes, dia] = texto.split("-");
+  return `${dia}/${mes}/${anio}`;
+};
+
+const mensajeCupoCrear = (fecha, cupo) =>
+  `El ${formatearFecha(fecha)} ya no hay lugar: el cupo de vacaciones de tu departamento (${cupo} ${cupo === 1 ? "persona" : "personas"} a la vez) está lleno`;
+const mensajeCupoAprobar = (fecha, cupo) =>
+  `No se puede aprobar: el ${formatearFecha(fecha)} el cupo de vacaciones del departamento (${cupo} ${cupo === 1 ? "persona" : "personas"} a la vez) ya está lleno`;
+
+const MSG_TRASLAPE = "Ya existe una solicitud pendiente o aprobada en ese rango de fechas";
+const MSG_SIN_HABILES = "El rango no incluye ningún día hábil (lunes a viernes sin festivos ni descansos)";
+const mensajeSaldo = (pendientes, solicitados) =>
+  `No hay suficientes días disponibles. Días pendientes: ${pendientes}, días solicitados: ${solicitados}`;
+
+// Responde el error de una operación: los esperados con su estado; el resto, 500 genérico
+async function responderError(req, res, error, mensajeGenerico) {
+  if (error instanceof ErrorVacaciones) {
+    if (error.auditoria) {
+      try {
+        await registrarAccion(
+          req,
+          "rh",
+          "solicitudes_vacaciones",
+          String(error.auditoria.registroId),
+          "RECHAZO_CUPO",
+          null,
+          error.auditoria.datos,
+        );
+      } catch (errorAuditoria) {
+        console.error("Error al registrar auditoría:", errorAuditoria.message);
+      }
+    }
+    return res.status(error.estado).json({ exito: false, mensaje: error.message });
+  }
+  console.error(`${mensajeGenerico}:`, error.message);
+  return res.status(500).json({ exito: false, mensaje: mensajeGenerico });
+}
+
+// Empleado sobre el que se consulta: el pedido (si el middleware lo permitió) o el del token
+async function empleadoDeLaConsulta(req) {
+  if (req.query.empleado_id) return Empleado.obtenerPorId(req.query.empleado_id);
+  return Empleado.obtenerPorUsuarioId(req.user.usuario_id);
+}
+
+// Datos del calendario laboral (solo oficial/otorgado/evento activos, sin nada de compañeros)
+function separarCalendario(filas) {
+  const noHabilesLista = filas
+    .filter((f) => CalendarioLaboral.TIPOS_NO_HABILES.includes(f.tipo))
+    .map((f) => ({ fecha: f.fecha, tipo: f.tipo, nombre: f.nombre }));
+  const eventos = filas
+    .filter((f) => f.tipo === "evento")
+    .map((f) => ({ fecha: f.fecha, nombre: f.nombre }));
+  return { noHabilesLista, eventos, noHabiles: new Set(noHabilesLista.map((f) => f.fecha)) };
+}
+
+// Al aprobar: con la fila del departamento bloqueada, revalida traslape propio, saldo y cupo con
+// los datos actuales (excluyendo la propia solicitud). Los días guardados NO se recalculan; el
+// calendario actual solo decide qué días del rango cuentan para el cupo.
+async function revalidarAprobacion(solicitud, cliente) {
+  const inicio = solicitud.fecha_inicial_txt;
+  const fin = solicitud.fecha_final_txt;
+
+  let departamentoId = solicitud.departamento_id;
+  if (!departamentoId) {
+    // Solicitudes antiguas sin departamento_id: el del empleado hoy (si no tiene, no hay cupo)
+    const empleado = await Empleado.obtenerPorId(solicitud.empleado_id, cliente);
+    departamentoId = empleado ? empleado.departamento_id : null;
+  }
+  const departamento = departamentoId
+    ? await SolicitudVacaciones.bloquearDepartamento(departamentoId, cliente)
+    : null;
+
+  const traslape = await SolicitudVacaciones.tieneTraslape(
+    solicitud.empleado_id,
+    inicio,
+    fin,
+    solicitud.id,
+    cliente,
+  );
+  if (traslape) throw new ErrorVacaciones(409, MSG_TRASLAPE);
+
+  const saldo = await SolicitudVacaciones.calcularSaldo(
+    solicitud.empleado_id,
+    solicitud.periodo,
+    cliente,
+  );
+  if (saldo && solicitud.dias_a_disfrutar > saldo.dias_pendientes) {
+    throw new ErrorVacaciones(409, mensajeSaldo(saldo.dias_pendientes, solicitud.dias_a_disfrutar));
+  }
+
+  if (departamento) {
+    const noHabiles = await CalendarioLaboral.obtenerFechasNoHabiles(inicio, fin, cliente);
+    const diasHabiles = listarDiasHabiles(inicio, fin, noHabiles);
+    const ocupacion = await SolicitudVacaciones.ocupacionPorDia(
+      departamento.id,
+      inicio,
+      fin,
+      solicitud.id,
+      cliente,
+    );
+    const llena = primeraFechaLlena(diasHabiles, ocupacion, departamento.cupo_vacaciones);
+    if (llena) {
+      throw new ErrorVacaciones(409, mensajeCupoAprobar(llena, departamento.cupo_vacaciones), {
+        codigo: "CUPO_LLENO",
+        auditoria: {
+          registroId: solicitud.id,
+          datos: {
+            operacion: "aprobar",
+            empleado_id: solicitud.empleado_id,
+            departamento_id: departamento.id,
+            fecha_inicial: inicio,
+            fecha_final: fin,
+            fecha_llena: llena,
+            cupo: departamento.cupo_vacaciones,
+          },
+        },
+      });
+    }
+  }
+}
 
 const ControladorVacaciones = {
   async obtenerSaldo(req, res) {
@@ -38,30 +180,40 @@ const ControladorVacaciones = {
 
       res.json({ exito: true, datos: { ...saldo, periodo: parseInt(periodo) } });
     } catch (error) {
-      res.status(500).json({
-        exito: false,
-        mensaje: "Error al calcular saldo de vacaciones",
-        error: error.message,
-      });
+      console.error("Error al calcular saldo de vacaciones:", error.message);
+      res.status(500).json({ exito: false, mensaje: "Error al calcular saldo de vacaciones" });
     }
   },
 
   async crear(req, res) {
     try {
-      let {
-        empleado_id,
-        fecha_inicial,
-        fecha_final,
-        fecha_regreso,
-        observaciones,
-        periodo,
-      } = req.body;
+      // `periodo` del cuerpo se IGNORA a propósito: el periodo siempre es el año de fecha_inicial
+      let { empleado_id, fecha_inicial, fecha_final, fecha_regreso, observaciones } = req.body;
 
       if (!fecha_inicial || !fecha_final) {
         return res.status(400).json({
           exito: false,
           mensaje: "Fecha inicial y fecha final son obligatorias",
         });
+      }
+
+      const rango = validarRango(fecha_inicial, fecha_final);
+      if (!rango.ok) {
+        return res.status(400).json({ exito: false, mensaje: rango.mensaje });
+      }
+      if (fecha_regreso) {
+        if (!esFechaValida(fecha_regreso)) {
+          return res.status(400).json({
+            exito: false,
+            mensaje: "La fecha de regreso debe ser válida con formato AAAA-MM-DD",
+          });
+        }
+        if (fecha_regreso < fecha_final) {
+          return res.status(400).json({
+            exito: false,
+            mensaje: "La fecha de regreso no puede ser anterior a la fecha final",
+          });
+        }
       }
 
       if (!empleado_id) {
@@ -74,95 +226,125 @@ const ControladorVacaciones = {
         }
         empleado_id = empleadoUsuario.id;
       }
-
-      const inicio = new Date(fecha_inicial);
-      const fin = new Date(fecha_final);
-
-      if (fin < inicio) {
-        return res.status(400).json({
-          exito: false,
-          mensaje: "La fecha final no puede ser anterior a la fecha inicial",
-        });
+      const idNumerico = Number(empleado_id);
+      if (!Number.isInteger(idNumerico) || idNumerico < 1 || idNumerico > 2147483647) {
+        return res.status(400).json({ exito: false, mensaje: "El empleado indicado no es válido" });
       }
 
-      const periodoCalculado =
-        parseInt(periodo) || new Date(fecha_inicial).getFullYear();
+      // Periodo = año de la fecha inicial leído del texto (sin zona horaria)
+      const periodoCalculado = anioDeFecha(fecha_inicial);
 
-      const empleado = await Empleado.obtenerPorId(empleado_id);
-      if (!empleado) {
-        return res.status(404).json({
-          exito: false,
-          mensaje: "Empleado no encontrado",
-        });
-      }
+      // Todo lo que decide si cabe (traslape, saldo, cupo) y el INSERT van en una transacción.
+      // Orden de bloqueos: empleado (candado de aplicación) -> departamento (FOR UPDATE). Con el
+      // empleado bloqueado se lee su departamento, así que el cupo se aplica al vigente. Dentro de
+      // la transacción TODA consulta usa `cliente` (una segunda conexión del pool puede agotarlo).
+      const { solicitud, empleado, jefe } = await SolicitudVacaciones.enTransaccion(
+        async (cliente) => {
+          await SolicitudVacaciones.bloquearEmpleado(idNumerico, cliente);
 
-      const traslape = await SolicitudVacaciones.tieneTraslape(
-        empleado_id,
-        fecha_inicial,
-        fecha_final,
+          const empleadoTx = await Empleado.obtenerPorId(idNumerico, cliente);
+          if (!empleadoTx) throw new ErrorVacaciones(404, "Empleado no encontrado");
+          const jefeTx = empleadoTx.jefe_inmediato_id
+            ? await Empleado.obtenerPorId(empleadoTx.jefe_inmediato_id, cliente)
+            : null;
+          const jefeNombre = jefeTx ? `${jefeTx.nombre} ${jefeTx.apellido_paterno}`.trim() : null;
+
+          let cupo = null;
+          if (empleadoTx.departamento_id) {
+            const departamento = await SolicitudVacaciones.bloquearDepartamento(
+              empleadoTx.departamento_id,
+              cliente,
+            );
+            cupo = departamento ? departamento.cupo_vacaciones : null;
+          }
+
+          const noHabiles = await CalendarioLaboral.obtenerFechasNoHabiles(
+            fecha_inicial,
+            fecha_final,
+            cliente,
+          );
+          const diasHabiles = listarDiasHabiles(fecha_inicial, fecha_final, noHabiles);
+          const dias_a_disfrutar = diasHabiles.length;
+          if (dias_a_disfrutar === 0) throw new ErrorVacaciones(400, MSG_SIN_HABILES);
+
+          const traslape = await SolicitudVacaciones.tieneTraslape(
+            idNumerico,
+            fecha_inicial,
+            fecha_final,
+            null,
+            cliente,
+          );
+          if (traslape) throw new ErrorVacaciones(409, MSG_TRASLAPE);
+
+          const saldo = await SolicitudVacaciones.calcularSaldo(
+            idNumerico,
+            periodoCalculado,
+            cliente,
+          );
+          if (dias_a_disfrutar > saldo.dias_pendientes) {
+            throw new ErrorVacaciones(400, mensajeSaldo(saldo.dias_pendientes, dias_a_disfrutar));
+          }
+
+          if (cupo !== null) {
+            const ocupacion = await SolicitudVacaciones.ocupacionPorDia(
+              empleadoTx.departamento_id,
+              fecha_inicial,
+              fecha_final,
+              null,
+              cliente,
+            );
+            const llena = primeraFechaLlena(diasHabiles, ocupacion, cupo);
+            if (llena) {
+              throw new ErrorVacaciones(409, mensajeCupoCrear(llena, cupo), {
+                codigo: "CUPO_LLENO",
+                auditoria: {
+                  registroId: "nueva",
+                  datos: {
+                    operacion: "crear",
+                    empleado_id: idNumerico,
+                    departamento_id: empleadoTx.departamento_id,
+                    fecha_inicial,
+                    fecha_final,
+                    fecha_llena: llena,
+                    cupo,
+                  },
+                },
+              });
+            }
+          }
+
+          const creada = await SolicitudVacaciones.crear(
+            {
+              empleado_id: idNumerico,
+              numero_nomina: empleadoTx.numero_nomina,
+              nombre: empleadoTx.nombre,
+              apellido_paterno: empleadoTx.apellido_paterno,
+              apellido_materno: empleadoTx.apellido_materno,
+              fecha_imss: empleadoTx.fecha_imss,
+              antiguedad: saldo.antiguedad,
+              ubicacion: empleadoTx.ubicacion,
+              departamento: empleadoTx.departamento,
+              departamento_id: empleadoTx.departamento_id,
+              jefe_inmediato_id: empleadoTx.jefe_inmediato_id,
+              jefe_nombre: jefeNombre,
+              fecha_inicial,
+              fecha_final,
+              fecha_regreso: fecha_regreso || null,
+              periodo: periodoCalculado,
+              dias_periodo: saldo.dias_periodo,
+              dias_disfrutados: saldo.dias_disfrutados,
+              dias_pendientes_inicial: saldo.dias_pendientes,
+              dias_a_disfrutar,
+              dias_pendientes_final: saldo.dias_pendientes - dias_a_disfrutar,
+              observaciones,
+            },
+            cliente,
+          );
+          return { solicitud: creada, empleado: empleadoTx, jefe: jefeTx };
+        },
       );
-      if (traslape) {
-        return res.status(400).json({
-          exito: false,
-          mensaje:
-            "Ya existe una solicitud pendiente o aprobada en ese rango de fechas",
-        });
-      }
 
-      const saldo = await SolicitudVacaciones.calcularSaldo(
-        empleado_id,
-        periodoCalculado,
-      );
-
-      const diffMs = fin - inicio;
-      const dias_a_disfrutar = Math.round(diffMs / (1000 * 60 * 60 * 24)) + 1;
-
-      if (dias_a_disfrutar > saldo.dias_pendientes) {
-        return res.status(400).json({
-          exito: false,
-          mensaje: `No hay suficientes días disponibles. Días pendientes: ${saldo.dias_pendientes}, días solicitados: ${dias_a_disfrutar}`,
-        });
-      }
-
-      const fechaIngreso = empleado.fecha_ingreso
-        ? new Date(empleado.fecha_ingreso)
-        : null;
-      const antiguedad = fechaIngreso
-        ? Math.max(1, periodoCalculado - fechaIngreso.getFullYear())
-        : 0;
-
-      const jefe = empleado.jefe_inmediato_id
-        ? await Empleado.obtenerPorId(empleado.jefe_inmediato_id)
-        : null;
-
-      const jefeNombre = jefe
-        ? `${jefe.nombre} ${jefe.apellido_paterno}`.trim()
-        : null;
-
-      const solicitud = await SolicitudVacaciones.crear({
-        empleado_id,
-        numero_nomina: empleado.numero_nomina,
-        nombre: empleado.nombre,
-        apellido_paterno: empleado.apellido_paterno,
-        apellido_materno: empleado.apellido_materno,
-        fecha_imss: empleado.fecha_imss,
-        antiguedad,
-        ubicacion: empleado.ubicacion,
-        departamento: empleado.departamento,
-        jefe_inmediato_id: empleado.jefe_inmediato_id,
-        jefe_nombre: jefeNombre,
-        fecha_inicial,
-        fecha_final,
-        fecha_regreso: fecha_regreso || null,
-        periodo: periodoCalculado,
-        dias_periodo: saldo.dias_periodo,
-        dias_disfrutados: saldo.dias_disfrutados,
-        dias_pendientes_inicial: saldo.dias_pendientes,
-        dias_a_disfrutar,
-        dias_pendientes_final: saldo.dias_pendientes - dias_a_disfrutar,
-        observaciones,
-      });
-
+      // Después del COMMIT nada de lo siguiente puede convertir el éxito en error
       if (jefe) {
         try {
           await ServicioNotificacionRH.notificarNuevoPermiso(
@@ -197,11 +379,7 @@ const ControladorVacaciones = {
         mensaje: "Solicitud de vacaciones creada exitosamente",
       });
     } catch (error) {
-      res.status(400).json({
-        exito: false,
-        mensaje: "Error al crear solicitud de vacaciones",
-        error: error.message,
-      });
+      await responderError(req, res, error, "Error al crear solicitud de vacaciones");
     }
   },
 
@@ -258,11 +436,8 @@ const ControladorVacaciones = {
         },
       });
     } catch (error) {
-      res.status(500).json({
-        exito: false,
-        mensaje: "Error al listar solicitudes de vacaciones",
-        error: error.message,
-      });
+      console.error("Error al listar solicitudes de vacaciones:", error.message);
+      res.status(500).json({ exito: false, mensaje: "Error al listar solicitudes de vacaciones" });
     }
   },
 
@@ -276,11 +451,8 @@ const ControladorVacaciones = {
       }
       res.json({ exito: true, datos: solicitud });
     } catch (error) {
-      res.status(500).json({
-        exito: false,
-        mensaje: "Error al obtener solicitud",
-        error: error.message,
-      });
+      console.error("Error al obtener solicitud:", error.message);
+      res.status(500).json({ exito: false, mensaje: "Error al obtener solicitud" });
     }
   },
 
@@ -302,36 +474,54 @@ const ControladorVacaciones = {
         });
       }
 
-      const anterior = await SolicitudVacaciones.obtenerPorId(req.params.id);
-      if (!anterior) {
-        return res
-          .status(404)
-          .json({ exito: false, mensaje: "Solicitud no encontrada" });
-      }
-
-      if (anterior.estatus !== "pendiente") {
-        return res.status(400).json({
-          exito: false,
-          mensaje: "Solo se pueden responder solicitudes pendientes",
-        });
-      }
-
       const empleadoAutoriza = await Empleado.obtenerPorUsuarioId(req.user.usuario_id);
       const autorizaNombre = empleadoAutoriza
         ? `${empleadoAutoriza.nombre} ${empleadoAutoriza.apellido_paterno}`.trim()
         : req.user.nombre || null;
 
-      const solicitud = await SolicitudVacaciones.responder(
-        req.params.id,
-        estatus,
-        req.user.usuario_id,
-        autorizaNombre,
-        motivo_rechazo || null,
-      );
+      // Orden de bloqueos (el mismo que crear, sin ciclos): empleado (candado de aplicación, solo al
+      // aprobar) -> solicitud (FOR UPDATE) -> departamento (FOR UPDATE, solo al aprobar). Para tomar
+      // el candado del empleado primero se lee su id SIN bloquear la fila. Dentro de la transacción
+      // toda consulta usa `cliente`.
+      const { anterior, solicitud } = await SolicitudVacaciones.enTransaccion(async (cliente) => {
+        if (estatus === "aprobado") {
+          const empleadoDeLaSolicitud = await SolicitudVacaciones.empleadoIdDeSolicitud(
+            req.params.id,
+            cliente,
+          );
+          if (empleadoDeLaSolicitud) {
+            await SolicitudVacaciones.bloquearEmpleado(empleadoDeLaSolicitud, cliente);
+          }
+        }
 
-      const empleado = await Empleado.obtenerPorId(anterior.empleado_id);
-      if (empleado && empleado.usuario_correo) {
-        try {
+        const actual = await SolicitudVacaciones.obtenerParaResponder(req.params.id, cliente);
+        if (!actual) throw new ErrorVacaciones(404, "Solicitud no encontrada");
+        if (actual.estatus !== "pendiente") {
+          throw new ErrorVacaciones(409, "Solo se pueden responder solicitudes pendientes");
+        }
+
+        if (estatus === "aprobado") {
+          await revalidarAprobacion(actual, cliente);
+        }
+
+        const respondida = await SolicitudVacaciones.responder(
+          req.params.id,
+          estatus,
+          req.user.usuario_id,
+          autorizaNombre,
+          motivo_rechazo || null,
+          cliente,
+        );
+        if (!respondida) {
+          throw new ErrorVacaciones(409, "Solo se pueden responder solicitudes pendientes");
+        }
+        return { anterior: actual, solicitud: respondida };
+      });
+
+      // Ya hay COMMIT: notificar y auditar no pueden devolver error (un reintento daría 409)
+      try {
+        const empleado = await Empleado.obtenerPorId(anterior.empleado_id);
+        if (empleado && empleado.usuario_correo) {
           if (estatus === "aprobado") {
             await ServicioNotificacionRH.notificarPermisoAprobado(
               empleado.usuario_correo,
@@ -346,9 +536,9 @@ const ControladorVacaciones = {
               motivo_rechazo,
             );
           }
-        } catch (errorNotif) {
-          console.error("Error al notificar al empleado:", errorNotif.message);
         }
+      } catch (errorNotif) {
+        console.error("Error al notificar al empleado:", errorNotif.message);
       }
 
       try {
@@ -371,11 +561,116 @@ const ControladorVacaciones = {
         mensaje: `Solicitud ${estatus} exitosamente`,
       });
     } catch (error) {
-      res.status(400).json({
-        exito: false,
-        mensaje: "Error al responder solicitud",
-        error: error.message,
+      await responderError(req, res, error, "Error al responder solicitud");
+    }
+  },
+
+  // Vista previa para el formulario: días hábiles, no hábiles/eventos del rango, días llenos del
+  // departamento (solo fechas, nunca quién), cupo, saldo y el primer conflicto que impediría crear.
+  async disponibilidad(req, res) {
+    try {
+      const { fecha_inicial, fecha_final } = req.query;
+      const rango = validarRango(fecha_inicial, fecha_final);
+      if (!rango.ok) return res.status(400).json({ exito: false, mensaje: rango.mensaje });
+
+      const empleado = await empleadoDeLaConsulta(req);
+      if (!empleado) {
+        return res.status(404).json({ exito: false, mensaje: "Empleado no encontrado" });
+      }
+
+      const filas = await CalendarioLaboral.listar({
+        desde: fecha_inicial,
+        hasta: fecha_final,
+        soloActivos: true,
       });
+      const { noHabilesLista, eventos, noHabiles } = separarCalendario(filas);
+      const diasHabiles = listarDiasHabiles(fecha_inicial, fecha_final, noHabiles);
+
+      let cupo = null;
+      let llenas = [];
+      if (empleado.departamento_id) {
+        cupo = await SolicitudVacaciones.obtenerCupoDepartamento(empleado.departamento_id);
+        if (cupo !== null) {
+          const ocupacion = await SolicitudVacaciones.ocupacionPorDia(
+            empleado.departamento_id,
+            fecha_inicial,
+            fecha_final,
+          );
+          llenas = fechasLlenas(diasHabiles, ocupacion, cupo);
+        }
+      }
+
+      const periodo = anioDeFecha(fecha_inicial);
+      const saldo = await SolicitudVacaciones.calcularSaldo(empleado.id, periodo);
+      const diasPendientes = saldo ? saldo.dias_pendientes : null;
+
+      let conflicto = null;
+      if (diasHabiles.length === 0) {
+        conflicto = { codigo: "SIN_DIAS_HABILES", mensaje: MSG_SIN_HABILES };
+      } else if (
+        await SolicitudVacaciones.tieneTraslape(empleado.id, fecha_inicial, fecha_final)
+      ) {
+        conflicto = { codigo: "TRASLAPE", mensaje: MSG_TRASLAPE };
+      } else if (diasPendientes !== null && diasHabiles.length > diasPendientes) {
+        conflicto = {
+          codigo: "SALDO_INSUFICIENTE",
+          mensaje: mensajeSaldo(diasPendientes, diasHabiles.length),
+        };
+      } else if (llenas.length > 0) {
+        conflicto = { codigo: "CUPO_LLENO", mensaje: mensajeCupoCrear(llenas[0], cupo) };
+      }
+
+      res.json({
+        exito: true,
+        datos: {
+          dias_habiles: diasHabiles.length,
+          dias_no_habiles: noHabilesLista,
+          eventos,
+          fechas_llenas: llenas,
+          cupo,
+          saldo: diasPendientes,
+          conflicto,
+        },
+      });
+    } catch (error) {
+      await responderError(req, res, error, "Error al calcular la disponibilidad");
+    }
+  },
+
+  // Para pintar el calendario de ocupación del formulario: solo fechas llenas, no hábiles y eventos
+  async ocupacion(req, res) {
+    try {
+      const { desde, hasta } = req.query;
+      const rango = validarRango(desde, hasta);
+      if (!rango.ok) return res.status(400).json({ exito: false, mensaje: rango.mensaje });
+
+      const empleado = await empleadoDeLaConsulta(req);
+      if (!empleado) {
+        return res.status(404).json({ exito: false, mensaje: "Empleado no encontrado" });
+      }
+
+      const filas = await CalendarioLaboral.listar({ desde, hasta, soloActivos: true });
+      const { noHabilesLista, eventos, noHabiles } = separarCalendario(filas);
+
+      let llenas = [];
+      if (empleado.departamento_id) {
+        const cupo = await SolicitudVacaciones.obtenerCupoDepartamento(empleado.departamento_id);
+        if (cupo !== null) {
+          const ocupacion = await SolicitudVacaciones.ocupacionPorDia(
+            empleado.departamento_id,
+            desde,
+            hasta,
+          );
+          llenas = fechasLlenas(listarDiasHabiles(desde, hasta, noHabiles), ocupacion, cupo);
+        }
+      }
+
+      res.json({
+        exito: true,
+        datos: { fechas_llenas: llenas, dias_no_habiles: noHabilesLista, eventos },
+      });
+    } catch (error) {
+      await responderError(req, res, error, "Error al consultar la ocupación");
     }
   },
 };
