@@ -209,7 +209,7 @@ describe("calendarioLaboral (frontend) - agrupación", () => {
   it("maneja entradas vacías o desconocidas", () => {
     expect(U.agruparPorFecha(undefined)).toEqual({});
     expect(U.infoTipo("otro").etiqueta).toBe("otro");
-    expect(U.TIPOS_CALENDARIO.map((t) => t.valor)).toEqual(["oficial", "otorgado", "evento"]);
+    expect(U.TIPOS_CALENDARIO.map((t) => t.valor)).toEqual(["oficial", "otorgado", "evento", "actividad"]);
   });
 
   it("los tipos coinciden con los del backend", () => {

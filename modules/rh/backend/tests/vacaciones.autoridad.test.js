@@ -29,6 +29,8 @@ jest.mock("../models/empleado.model", () => ({
 }));
 jest.mock("../models/calendarioLaboral.model", () => ({
   obtenerFechasNoHabiles: jest.fn().mockResolvedValue([]),
+  obtenerFechasBloqueadas: jest.fn().mockResolvedValue([]),
+  TIPO_BLOQUEO: "actividad",
 }));
 jest.mock("../models/solicitudVacaciones.model", () => ({
   obtenerPorId: jest.fn(),

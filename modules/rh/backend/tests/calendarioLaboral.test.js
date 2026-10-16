@@ -330,3 +330,112 @@ describe("Calendario laboral - obtenerFechasNoHabiles", () => {
     expect(grupo.query).not.toHaveBeenCalled();
   });
 });
+
+describe("Calendario laboral - tipo actividad (Día Actividad Empresa)", () => {
+  const ACTIVIDAD = { id: 9, fecha: "2026-10-28", tipo: "actividad", nombre: "Inventario general", descripcion: null, activo: true };
+  const cuerpo = { fecha: "2026-10-28", tipo: "actividad", nombre: "Inventario general" };
+  const nombresDeSql = () => sqlsDeDatos().map(([sql]) => sql.replace(/\s+/g, " "));
+
+  it("el modelo admite los 4 tipos y expone el tipo que bloquea", () => {
+    expect(CalendarioLaboral.TIPOS_CALENDARIO).toEqual(["oficial", "otorgado", "evento", "actividad"]);
+    expect(CalendarioLaboral.TIPOS_NO_HABILES).toEqual(["oficial", "otorgado"]);
+    expect(CalendarioLaboral.TIPO_BLOQUEO).toBe("actividad");
+  });
+
+  it("un tipo inválido sigue dando 400 sin tocar la BD (alta, edición y filtro)", async () => {
+    const alta = await request(app).post("/api/calendario-laboral").send({ ...cuerpo, tipo: "bloqueo" });
+    const edicion = await request(app).put("/api/calendario-laboral/9").send({ tipo: "Actividad" });
+    const filtro = await request(app).get("/api/calendario-laboral").query({ tipo: "otro" });
+    expect([alta.status, edicion.status, filtro.status]).toEqual([400, 400, 400]);
+    expect(sqlsDeDatos()).toHaveLength(0);
+  });
+
+  it("el filtro ?tipo=actividad es válido", async () => {
+    mockRespuestas = [{ rows: [ACTIVIDAD] }];
+    const res = await request(app).get("/api/calendario-laboral").query({ tipo: "actividad" });
+    expect(res.status).toBe(200);
+    expect(sqlsDeDatos()[0][1]).toContain("actividad");
+  });
+
+  it("POST de una actividad devuelve avisos con los conteos (aprobadas y pendientes), sin nombres", async () => {
+    mockRespuestas = [{ rows: [ACTIVIDAD] }, { rows: [] }, { rows: [{ aprobadas: 2, pendientes: 1, empleado: "Secreto" }] }];
+    const res = await request(app).post("/api/calendario-laboral").send(cuerpo);
+    expect(res.status).toBe(201);
+    expect(res.body.avisos).toEqual({ solicitudes_aprobadas: 2, solicitudes_pendientes: 1 });
+    expect(JSON.stringify(res.body)).not.toMatch(/Secreto/);
+    const sqls = nombresDeSql();
+    expect(sqls[2]).toMatch(/FROM solicitudes_vacaciones/);
+    expect(sqls[2]).toMatch(/fecha_inicial <= \$1::date AND fecha_final >= \$1::date/);
+    expect(sqlsDeDatos()[2][1]).toEqual(["2026-10-28"]);
+    // solo lee: ninguna escritura sobre solicitudes
+    expect(sqls.some((q) => /^(UPDATE|DELETE|INSERT INTO) solicitudes_vacaciones/.test(q))).toBe(false);
+  });
+
+  it("PUT que deja la fila como actividad también devuelve avisos", async () => {
+    mockRespuestas = [
+      { rows: [{ ...ACTIVIDAD, tipo: "evento" }] },
+      { rows: [ACTIVIDAD] },
+      { rows: [] },
+      { rows: [{ aprobadas: 0, pendientes: 3 }] },
+    ];
+    const res = await request(app).put("/api/calendario-laboral/9").send({ tipo: "actividad" });
+    expect(res.status).toBe(200);
+    expect(res.body.avisos).toEqual({ solicitudes_aprobadas: 0, solicitudes_pendientes: 3 });
+  });
+
+  it("los demás tipos no traen la clave avisos ni consultan solicitudes", async () => {
+    mockRespuestas = [{ rows: [FILA] }];
+    const res = await request(app).post("/api/calendario-laboral").send({ fecha: "2026-12-31", tipo: "otorgado", nombre: "X" });
+    expect(res.status).toBe(201);
+    expect(res.body).not.toHaveProperty("avisos");
+    expect(nombresDeSql().some((q) => /solicitudes_vacaciones/.test(q))).toBe(false);
+  });
+
+  it("actividad en sábado o domingo: avisos en cero y sin consultar solicitudes", async () => {
+    mockRespuestas = [{ rows: [{ ...ACTIVIDAD, fecha: "2026-10-31" }] }];
+    const res = await request(app).post("/api/calendario-laboral").send({ ...cuerpo, fecha: "2026-10-31" });
+    expect(res.body.avisos).toEqual({ solicitudes_aprobadas: 0, solicitudes_pendientes: 0 });
+    expect(nombresDeSql().some((q) => /solicitudes_vacaciones/.test(q))).toBe(false);
+  });
+
+  it("actividad el mismo día de un festivo oficial: avisos en cero", async () => {
+    mockRespuestas = [{ rows: [ACTIVIDAD] }, { rows: [{ fecha: "2026-10-28" }] }];
+    const res = await request(app).post("/api/calendario-laboral").send(cuerpo);
+    expect(res.body.avisos).toEqual({ solicitudes_aprobadas: 0, solicitudes_pendientes: 0 });
+    expect(nombresDeSql().some((q) => /FROM solicitudes_vacaciones/.test(q))).toBe(false);
+  });
+
+  it("actividad inactiva: avisos en cero", async () => {
+    mockRespuestas = [{ rows: [{ ...ACTIVIDAD, activo: false }] }, { rows: [] }, { rows: [{ aprobadas: 5, pendientes: 5 }] }];
+    const res = await request(app).post("/api/calendario-laboral").send({ ...cuerpo, activo: false });
+    expect(res.body.avisos).toEqual({ solicitudes_aprobadas: 0, solicitudes_pendientes: 0 });
+    expect(nombresDeSql().some((q) => /FROM solicitudes_vacaciones/.test(q))).toBe(false);
+  });
+
+  it("si falla el cálculo del aviso, la escritura ya hecha responde 201 con avisos null y sin filtrar el error", async () => {
+    mockRespuestas = [{ rows: [ACTIVIDAD] }, { rows: [] }, new Error("secreto interno de la BD")];
+    const res = await request(app).post("/api/calendario-laboral").send(cuerpo);
+    expect(res.status).toBe(201);
+    expect(res.body.avisos).toBeNull();
+    expect(JSON.stringify(res.body)).not.toMatch(/secreto/);
+    expect(registrarAccion).toHaveBeenCalledTimes(1);
+  });
+
+  it("obtenerFechasBloqueadas devuelve {fecha, nombre} de actividades activas, parametrizado, y acepta cliente", async () => {
+    const cliente = { query: jest.fn().mockResolvedValue({ rows: [{ fecha: "2026-10-28", nombre: "Inventario general", extra: 1 }] }) };
+    const fechas = await CalendarioLaboral.obtenerFechasBloqueadas("2026-10-01", "2026-10-31", cliente);
+    expect(fechas).toEqual([{ fecha: "2026-10-28", nombre: "Inventario general" }]);
+    const [sql, valores] = cliente.query.mock.calls[0];
+    expect(sql).toMatch(/activo = true/);
+    expect(sql).toMatch(/tipo = \$1/);
+    expect(sql).toMatch(/to_char\(fecha, 'YYYY-MM-DD'\)/);
+    expect(valores).toEqual(["actividad", "2026-10-01", "2026-10-31"]);
+    expect(grupo.query).not.toHaveBeenCalled();
+  });
+
+  it("obtenerFechasNoHabiles NO incluye las actividades", async () => {
+    mockRespuestas = [{ rows: [] }];
+    await CalendarioLaboral.obtenerFechasNoHabiles("2026-10-01", "2026-10-31");
+    expect(sqlsDeDatos()[0][1][0]).not.toContain("actividad");
+  });
+});

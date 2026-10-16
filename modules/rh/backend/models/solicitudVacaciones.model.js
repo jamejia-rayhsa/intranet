@@ -125,6 +125,24 @@ const SolicitudVacaciones = {
     return new Map(resultado.rows.map((fila) => [fila.fecha, fila.ocupados]));
   },
 
+  /**
+   * Solicitudes aprobadas y pendientes cuyo rango incluye la fecha (solo conteos, nunca quién).
+   * El llamador decide si la fecha es día hábil.
+   */
+  async contarSolicitudesEnFecha(fecha, cliente = grupo) {
+    const resultado = await cliente.query(
+      `SELECT COUNT(*) FILTER (WHERE estatus = 'aprobado')::int AS aprobadas,
+              COUNT(*) FILTER (WHERE estatus = 'pendiente')::int AS pendientes
+       FROM solicitudes_vacaciones
+       WHERE estatus IN ('aprobado', 'pendiente')
+         AND fecha_inicial <= $1::date
+         AND fecha_final >= $1::date`,
+      [fecha],
+    );
+    const fila = resultado.rows[0] || {};
+    return { aprobadas: fila.aprobadas || 0, pendientes: fila.pendientes || 0 };
+  },
+
   async calcularDiasPeriodo(antiguedad, cliente = grupo) {
     const consulta = `
       SELECT dias_vacaciones FROM tabla_calculo_vacaciones

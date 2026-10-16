@@ -471,6 +471,16 @@ export default function VacacionesPage() {
                 </ul>
               </div>
             )}
+            {disp.estado === "listo" && resumen && resumen.bloqueadas.length > 0 && (
+              <div style={{ ...estiloAviso, background: "#ede9fe", color: "#4c1d95", border: "1px solid #4c1d95" }}>
+                <strong><span aria-hidden="true">■ </span>Fechas bloqueadas en tu rango (Día Actividad Empresa, no se pueden solicitar):</strong>
+                <ul style={{ margin: "0.25rem 0 0", paddingLeft: "1.2rem" }}>
+                  {resumen.bloqueadas.map((b) => (
+                    <li key={`${b.fecha}-${b.nombre}`}>{fechaLegible(b.fecha)} — Bloqueado: {b.nombre}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {disp.estado === "listo" && resumen && resumen.conflicto && (
               <p role="alert" style={{ ...estiloAviso, background: "var(--color-error-suave)", color: "#7f1d1d", fontWeight: 600 }}>
                 {resumen.conflicto.mensaje}

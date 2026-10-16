@@ -82,6 +82,7 @@ services:
       - ./modules/portal/backend/migrations/006-eventos-noticias.sql:/sql/006-eventos-noticias.sql:ro
       - ./modules/rh/backend/migrations/009-calendario-laboral.sql:/sql/009-calendario-laboral.sql:ro
       - ./modules/rh/backend/migrations/010-empleados-usuario-unico.sql:/sql/010-empleados-usuario-unico.sql:ro
+      - ./modules/rh/backend/migrations/011-calendario-actividad.sql:/sql/011-calendario-actividad.sql:ro
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
@@ -108,6 +109,8 @@ services:
         psql -v ON_ERROR_STOP=1 -f /sql/009-calendario-laboral.sql
         echo "[db-init] aplicando 010-empleados-usuario-unico.sql"
         psql -v ON_ERROR_STOP=1 -f /sql/010-empleados-usuario-unico.sql
+        echo "[db-init] aplicando 011-calendario-actividad.sql"
+        psql -v ON_ERROR_STOP=1 -f /sql/011-calendario-actividad.sql
         echo "[db-init] listo"
     networks:
       - internal

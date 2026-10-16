@@ -26,6 +26,7 @@ import {
   resolverListado,
   mensajeErrorRed,
   etiquetaDia,
+  ayudaDelTipo,
   MENSAJE_ERROR_PERMISOS,
   MENSAJE_ERROR_LISTADO,
 } from "../utils/calendarioLaboral";
@@ -45,7 +46,8 @@ const estiloVacio = { color: "var(--color-texto-medio)", padding: "0.75rem 0" };
 
 const AYUDA =
   "Los días oficiales de ley y los descansos otorgados no descuentan del saldo de vacaciones. " +
-  "Los eventos son informativos: no descuentan ni bloquean.";
+  "Los eventos son informativos: no descuentan ni bloquean. " +
+  "El Día Actividad Empresa bloquea las vacaciones para todos en esa fecha.";
 
 function Marca({ item }) {
   const tipo = infoTipo(item.tipo);
@@ -83,6 +85,7 @@ export default function CalendarioLaboralPage() {
   const [modal, setModal] = useState(null); // { item, fecha }
   const [diaSeleccionado, setDiaSeleccionado] = useState(null);
   const [mensaje, setMensaje] = useState("");
+  const [avisoActividad, setAvisoActividad] = useState("");
   const [errorPermisos, setErrorPermisos] = useState("");
   const [version, setVersion] = useState(0);
   const moverFoco = useRef(false);
@@ -194,10 +197,11 @@ export default function CalendarioLaboralPage() {
 
   const cerrarModal = useCallback(() => setModal(null), []);
 
-  function alGuardar(texto) {
+  function alGuardar(texto, aviso) {
     enfocarTrasGuardar.current = true;
     setModal(null);
     setMensaje(texto);
+    setAvisoActividad(aviso || "");
     setDiaSeleccionado(null);
     setVersion((v) => v + 1);
   }
@@ -242,6 +246,11 @@ export default function CalendarioLaboralPage() {
 
       <div role="status" aria-live="polite">
         {mensaje && <p className="calendario__aviso calendario__aviso--ok">{mensaje}</p>}
+        {avisoActividad && (
+          <p className="calendario__aviso calendario__aviso--actividad">
+            <span aria-hidden="true">■ </span>{avisoActividad}
+          </p>
+        )}
         {errorPermisos && <p className="calendario__aviso calendario__aviso--error" role="alert">{errorPermisos}</p>}
         {errorCarga && <p className="calendario__aviso calendario__aviso--error" role="alert">{errorCarga}</p>}
         {cargando && <p style={estiloVacio}>Cargando calendario...</p>}
@@ -311,7 +320,12 @@ export default function CalendarioLaboralPage() {
       )}
 
       <ul className="calendario__leyenda" aria-label="Leyenda de tipos">
-        {TIPOS_CALENDARIO.map((t) => <li key={t.valor}><Chip tipo={t.valor} /></li>)}
+        {TIPOS_CALENDARIO.map((t) => (
+          <li key={t.valor}>
+            <Chip tipo={t.valor} />
+            {t.bloquea && <span className="calendario__leyenda-nota"> {ayudaDelTipo(t.valor)}</span>}
+          </li>
+        ))}
       </ul>
 
       <h2 className="calendario__lista-titulo" tabIndex={-1} ref={tituloListaRef}>Fechas de {tituloMes}</h2>

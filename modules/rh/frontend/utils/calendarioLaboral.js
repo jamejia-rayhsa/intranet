@@ -9,7 +9,22 @@ export const TIPOS_CALENDARIO = [
   { valor: 'oficial', etiqueta: 'Oficial de ley', icono: '★', descuenta: false },
   { valor: 'otorgado', etiqueta: 'Descanso otorgado', icono: '◆', descuenta: false },
   { valor: 'evento', etiqueta: 'Evento', icono: '●', descuenta: false },
+  // Bloquea las vacaciones de todos en esa fecha (si es día hábil)
+  { valor: 'actividad', etiqueta: 'Día Actividad Empresa', icono: '■', descuenta: false, bloquea: true },
 ];
+
+/** Texto de ayuda de cada tipo (modal y pantalla del calendario). */
+export const AYUDA_TIPOS = {
+  oficial: 'Festivo de ley: no es día hábil y no descuenta del saldo.',
+  otorgado: 'Descanso concedido por la empresa: no es día hábil y no descuenta del saldo.',
+  evento: 'Informativo: no descuenta ni bloquea.',
+  actividad: 'Bloquea las vacaciones para todos: nadie puede solicitar ni aprobar vacaciones que incluyan esta fecha si es un día hábil (lunes a viernes).',
+};
+
+/** Texto del aviso de «bloquea las vacaciones» que acompaña al tipo 'actividad'. */
+export function ayudaDelTipo(valor) {
+  return AYUDA_TIPOS[valor] || '';
+}
 
 export const NOMBRES_MESES = [
   'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
@@ -27,7 +42,7 @@ export const DIAS_SEMANA = [
   { corto: 'Dom', largo: 'domingo' },
 ];
 
-const ORDEN_TIPO = { oficial: 0, otorgado: 1, evento: 2 };
+const ORDEN_TIPO = { oficial: 0, otorgado: 1, evento: 2, actividad: 3 };
 
 export function infoTipo(valor) {
   return TIPOS_CALENDARIO.find((t) => t.valor === valor) || { valor, etiqueta: valor, icono: '•', descuenta: false };
@@ -139,7 +154,7 @@ function compararItems(a, b) {
   return (a.id ?? 0) - (b.id ?? 0);
 }
 
-/** Ordena por fecha, tipo (oficial, otorgado, evento) e id sin mutar la entrada. */
+/** Ordena por fecha, tipo (oficial, otorgado, evento, actividad) e id sin mutar la entrada. */
 export function ordenarItems(items) {
   return [...(items || [])].sort(compararItems);
 }
@@ -289,6 +304,7 @@ export const MENSAJES_CONFLICTO = {
   TRASLAPE: 'Ya tienes una solicitud de vacaciones que se traslapa con estas fechas.',
   SALDO_INSUFICIENTE: 'No tienes suficientes días disponibles para este rango.',
   CUPO_LLENO: 'El cupo de vacaciones de tu departamento está lleno en alguna de estas fechas.',
+  ACTIVIDAD_EMPRESA: 'Alguna de estas fechas es un Día Actividad Empresa: las vacaciones están bloqueadas para todos.',
 };
 export const MENSAJE_CONFLICTO_GENERICO = 'No se puede solicitar este rango de fechas.';
 export const MENSAJE_ERROR_DISPONIBILIDAD = 'No se pudo calcular la disponibilidad. Intenta de nuevo.';
@@ -343,12 +359,14 @@ export function resumirDisponibilidad(datos, saldoRespaldo = null) {
   const noHabiles = ordenarItems(Array.isArray(d.dias_no_habiles) ? d.dias_no_habiles : [])
     .map((i) => ({ ...i, etiquetaTipo: infoTipo(i.tipo).etiqueta, icono: infoTipo(i.tipo).icono }));
   const eventos = ordenarItems(Array.isArray(d.eventos) ? d.eventos : []);
+  const bloqueadas = ordenarItems(Array.isArray(d.fechas_bloqueadas) ? d.fechas_bloqueadas : []);
   return {
     dias,
     saldo,
     quedarian: saldo === null ? null : saldo - dias,
     noHabiles,
     eventos,
+    bloqueadas,
     cupo: d.cupo === undefined ? undefined : d.cupo,
     conflicto: d.conflicto ? { codigo: d.conflicto.codigo, mensaje: mensajeConflicto(d.conflicto) } : null,
   };
@@ -364,9 +382,9 @@ export function envioBloqueado(disp, enviando = false) {
   return Boolean(disp.resumen && disp.resumen.conflicto);
 }
 
-/** Es una fecha en la que se puede fijar un extremo del rango (hábil y con cupo). */
+/** Es una fecha en la que se puede fijar un extremo del rango (hábil, con cupo y no bloqueada). */
 export function esSeleccionable(celda) {
-  return !celda.lleno && !celda.noHabil && !celda.finDeSemana;
+  return !celda.lleno && !celda.bloqueado && !celda.noHabil && !celda.finDeSemana;
 }
 
 /**
@@ -391,7 +409,12 @@ function indexarOcupacion(ocupacion) {
   for (const e of ordenarItems(Array.isArray(o.eventos) ? o.eventos : [])) {
     (eventos[e.fecha] = eventos[e.fecha] || []).push(e.nombre);
   }
-  return { llenas, noHabiles, eventos };
+  // Días Actividad Empresa: si hay varias en la misma fecha se juntan los nombres
+  const bloqueadas = {};
+  for (const b of ordenarItems(Array.isArray(o.fechas_bloqueadas) ? o.fechas_bloqueadas : [])) {
+    bloqueadas[b.fecha] = bloqueadas[b.fecha] ? `${bloqueadas[b.fecha]}, ${b.nombre}` : b.nombre;
+  }
+  return { llenas, noHabiles, eventos, bloqueadas };
 }
 
 /**
@@ -399,7 +422,9 @@ function indexarOcupacion(ocupacion) {
  */
 export function etiquetaDiaOcupacion(celda) {
   // Empieza por el texto visible en el mismo orden en que se pinta (número y "Cupo lleno"): WCAG 2.5.3
-  const partes = [`${celda.dia}${celda.lleno ? ' Cupo lleno' : ''}`, fechaConDiaSemana(celda.fecha)];
+  const visible = `${celda.dia}${celda.lleno ? ' Cupo lleno' : ''}${celda.bloqueado ? ` Bloqueado: ${celda.bloqueado}` : ''}`;
+  const partes = [visible, fechaConDiaSemana(celda.fecha)];
+  if (celda.bloqueado) partes.push('Las vacaciones están bloqueadas para todos en esta fecha');
   if (celda.noHabil) partes.push(`Día no hábil, ${celda.noHabil.etiquetaTipo}: ${celda.noHabil.nombre}`);
   else if (celda.finDeSemana) partes.push('Fin de semana, día no hábil');
   for (const nombre of celda.eventos) partes.push(`Evento: ${nombre}`);
@@ -415,7 +440,7 @@ export function etiquetaDiaOcupacion(celda) {
  * @returns {Array<Array<object>>} semanas de celdas
  */
 export function construirMesOcupacion(anio, mes, ocupacion, { inicio = '', fin = '', hoy = '' } = {}) {
-  const { llenas, noHabiles, eventos } = indexarOcupacion(ocupacion);
+  const { llenas, noHabiles, eventos, bloqueadas } = indexarOcupacion(ocupacion);
   const hayRango = rangoCompleto(inicio, fin);
   return construirCuadricula(anio, mes).map((semana) =>
     semana.map((c) => {
@@ -427,6 +452,7 @@ export function construirMesOcupacion(anio, mes, ocupacion, { inicio = '', fin =
           ? { tipo: noHabilItem.tipo, nombre: noHabilItem.nombre, etiquetaTipo: infoTipo(noHabilItem.tipo).etiqueta, icono: infoTipo(noHabilItem.tipo).icono }
           : null,
         eventos: eventos[c.fecha] || [],
+        bloqueado: bloqueadas[c.fecha] || null,
         esHoy: c.fecha === hoy,
         esInicio: Boolean(inicio) && c.fecha === inicio,
         esFin: hayRango && c.fecha === fin,
@@ -439,18 +465,52 @@ export function construirMesOcupacion(anio, mes, ocupacion, { inicio = '', fin =
   );
 }
 
-/** Marcas del mes mostrado para la lista de texto: [{fecha, clase: 'lleno'|'no-habil'|'evento', texto}]. */
+/** Marcas del mes mostrado para la lista de texto: [{fecha, clase: 'lleno'|'bloqueado'|'no-habil'|'evento', texto}]. */
 export function detalleMesOcupacion(anio, mes, ocupacion) {
-  const { llenas, noHabiles, eventos } = indexarOcupacion(ocupacion);
+  const { llenas, noHabiles, eventos, bloqueadas } = indexarOcupacion(ocupacion);
   const prefijo = `${pad(anio, 4)}-${pad(mes, 2)}-`;
   const filas = [];
   for (const f of llenas) if (f.startsWith(prefijo)) filas.push({ fecha: f, clase: 'lleno', texto: 'Cupo lleno' });
+  for (const [f, nombre] of Object.entries(bloqueadas)) {
+    if (f.startsWith(prefijo)) filas.push({ fecha: f, clase: 'bloqueado', texto: `Bloqueado: ${nombre}` });
+  }
   for (const [f, i] of Object.entries(noHabiles)) {
     if (f.startsWith(prefijo)) filas.push({ fecha: f, clase: 'no-habil', texto: `${infoTipo(i.tipo).etiqueta}: ${i.nombre}` });
   }
   for (const [f, nombres] of Object.entries(eventos)) {
     if (f.startsWith(prefijo)) for (const n of nombres) filas.push({ fecha: f, clase: 'evento', texto: `Evento: ${n}` });
   }
-  const orden = { lleno: 0, 'no-habil': 1, evento: 2 };
+  const orden = { lleno: 0, bloqueado: 1, 'no-habil': 2, evento: 3 };
   return filas.sort((a, b) => (a.fecha !== b.fecha ? (a.fecha < b.fecha ? -1 : 1) : orden[a.clase] - orden[b.clase]));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Día Actividad Empresa: aviso de solicitudes afectadas al guardar la fecha en el calendario.
+// ---------------------------------------------------------------------------------------------
+
+const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
+
+/**
+ * Texto del aviso que devuelve POST/PUT del calendario cuando el tipo es 'actividad'
+ * (`avisos: {solicitudes_aprobadas, solicitudes_pendientes}`). Solo conteos, sin nombres.
+ * Devuelve null si no hay aviso que mostrar (otros tipos) y un texto de respaldo si el servidor no
+ * pudo calcularlo (avisos null).
+ */
+export function mensajeAvisosActividad(avisos) {
+  if (avisos === null) {
+    return 'La fecha se guardó, pero no se pudo calcular cuántas solicitudes de vacaciones incluyen ese día. Revisa el listado de vacaciones.';
+  }
+  if (!avisos || typeof avisos !== 'object') return null;
+  const aprobadas = Number.isInteger(avisos.solicitudes_aprobadas) ? avisos.solicitudes_aprobadas : 0;
+  const pendientes = Number.isInteger(avisos.solicitudes_pendientes) ? avisos.solicitudes_pendientes : 0;
+  if (aprobadas === 0 && pendientes === 0) {
+    return 'Ninguna solicitud de vacaciones, aprobada o pendiente, incluye esta fecha.';
+  }
+  const partes = [];
+  if (aprobadas > 0) partes.push(plural(aprobadas, 'solicitud aprobada', 'solicitudes aprobadas'));
+  if (pendientes > 0) partes.push(plural(pendientes, 'solicitud pendiente', 'solicitudes pendientes'));
+  return (
+    `Atención: hay ${partes.join(' y ')} de vacaciones que incluyen esta fecha. No se modificaron: ` +
+    'las aprobadas se conservan y las pendientes no se podrán aprobar mientras la fecha siga bloqueada. RH decide qué hacer con ellas.'
+  );
 }

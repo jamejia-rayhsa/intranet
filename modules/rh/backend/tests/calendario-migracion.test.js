@@ -9,6 +9,8 @@ const leer = (...partes) => fs.readFileSync(path.join(RAIZ, ...partes), "utf8");
 const MIGRACION = leer("modules/rh/backend/migrations/009-calendario-laboral.sql");
 const INIT = leer("config/database/init.sql");
 const COMPOSE = leer("docker-compose.supabase.yml");
+const MIGRACION_011 = leer("modules/rh/backend/migrations/011-calendario-actividad.sql");
+const DOCS = leer("docs/supabase.md");
 
 // Fechas esperadas calculadas por regla (Ley Federal del Trabajo, art. 74), no copiadas del SQL.
 const nesimoLunes = (anio, mes, n) => {
@@ -106,3 +108,37 @@ describe("Migración 009 calendario laboral", () => {
     expect(app).toMatch(/\/api\/calendario-laboral[\s\S]*calendario\.routes/);
   });
 });
+
+describe("Migración 011 tipo actividad del calendario", () => {
+  const sql011 = normalizar(MIGRACION_011);
+
+  it("amplía el CHECK a los 4 tipos con nombre fijo", () => {
+    expect(sql011).toContain("CHECK (tipo IN ('oficial', 'otorgado', 'evento', 'actividad'))");
+    expect(sql011).toContain("ADD CONSTRAINT calendario_laboral_tipo_check");
+  });
+
+  it("es idempotente: sale si ya admite actividad y busca la restricción por definición (no por nombre)", () => {
+    expect(sql011).toMatch(/IF EXISTS \( SELECT 1 FROM pg_constraint WHERE conrelid = 'calendario_laboral'::regclass AND contype = 'c' AND conname = 'calendario_laboral_tipo_check' AND pg_get_constraintdef\(oid\) LIKE '%actividad%' \) THEN RETURN;/);
+    expect(sql011).toMatch(/pg_get_constraintdef\(oid\) LIKE '%tipo%'/);
+    expect(sql011).toMatch(/DROP CONSTRAINT %I/);
+  });
+
+  it("no modifica ni borra datos", () => {
+    expect(sql011).not.toMatch(/\b(DELETE|TRUNCATE|UPDATE|INSERT|DROP TABLE)\b/i);
+  });
+
+  it("init.sql replica el cuerpo de la 011 DESPUÉS de la 009 y de la 010 (la 009 conserva su CHECK original)", () => {
+    expect(normalizar(INIT)).toContain(sql011);
+    const iguales = (patron) => INIT.indexOf(patron);
+    expect(iguales("calendario_laboral_tipo_check")).toBeGreaterThan(iguales("empleados_usuario_id_unique"));
+    expect(iguales("empleados_usuario_id_unique")).toBeGreaterThan(iguales("CREATE TABLE IF NOT EXISTS calendario_laboral"));
+  });
+
+  it("está montada y aplicada en supabase-db-init después de la 010 y documentada", () => {
+    expect(COMPOSE).toContain("./modules/rh/backend/migrations/011-calendario-actividad.sql:/sql/011-calendario-actividad.sql:ro");
+    expect(COMPOSE).toContain("psql -v ON_ERROR_STOP=1 -f /sql/011-calendario-actividad.sql");
+    expect(COMPOSE.indexOf("-f /sql/011-calendario-actividad.sql")).toBeGreaterThan(COMPOSE.indexOf("-f /sql/010-empleados-usuario-unico.sql"));
+    expect(DOCS).toContain("011-calendario-actividad.sql");
+  });
+});
+

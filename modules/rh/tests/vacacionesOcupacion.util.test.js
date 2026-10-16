@@ -248,3 +248,186 @@ describe("formulario de vacaciones - periodo, cruce de año y fecha de regreso",
     expect(U.regresoValido("2026-10-23", "mañana")).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Día Actividad Empresa
+// ---------------------------------------------------------------------------------------------
+const CON_ACTIVIDAD = {
+  ...OCUPACION,
+  fechas_bloqueadas: [
+    { fecha: "2026-10-22", nombre: "Inventario general" },
+    { fecha: "2026-10-22", nombre: "Auditoría externa" },
+    { fecha: "2026-10-28", nombre: "Taller anual" },
+  ],
+};
+
+const luminancia = (hex) => {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const contraste = (a, b) => {
+  const [claro, oscuro] = [luminancia(a), luminancia(b)].sort((x, y) => y - x);
+  return (claro + 0.05) / (oscuro + 0.05);
+};
+
+describe("Día Actividad Empresa - tipo y textos", () => {
+  it("el tipo existe con etiqueta, ícono propio, bloquea y no descuenta", () => {
+    const t = U.TIPOS_CALENDARIO.find((x) => x.valor === "actividad");
+    expect(t).toMatchObject({ etiqueta: "Día Actividad Empresa", icono: "■", bloquea: true, descuenta: false });
+    const iconos = U.TIPOS_CALENDARIO.map((x) => x.icono);
+    expect(new Set(iconos).size).toBe(iconos.length);
+    expect(U.TIPOS_CALENDARIO.filter((x) => x.bloquea).map((x) => x.valor)).toEqual(["actividad"]);
+  });
+
+  it("tiene texto de ayuda que dice que bloquea las vacaciones para todos; los demás tipos no bloquean", () => {
+    expect(U.ayudaDelTipo("actividad")).toMatch(/bloquea las vacaciones para todos/i);
+    for (const tipo of ["oficial", "otorgado", "evento"]) expect(U.ayudaDelTipo(tipo)).not.toMatch(/bloquea las vacaciones/i);
+    expect(U.ayudaDelTipo("desconocido")).toBe("");
+  });
+
+  it("los códigos de conflicto del frontend coinciden con los del backend", () => {
+    const controlador = fs.readFileSync(path.join(__dirname, "../backend/controllers/vacaciones.controller.js"), "utf8");
+    const codigosBackend = [...controlador.matchAll(/codigo: "([A-Z_]+)"/g)].map((m) => m[1]);
+    expect(codigosBackend).toContain("ACTIVIDAD_EMPRESA");
+    for (const codigo of new Set(codigosBackend)) expect(U.MENSAJES_CONFLICTO[codigo]).toEqual(expect.any(String));
+  });
+
+  it("el color de la actividad cumple AA (>= 4,5:1) en marca, chip, aviso y fila", () => {
+    const css = fs.readFileSync(path.join(__dirname, "../frontend/styles/calendario.css"), "utf8");
+    const fondo = css.match(/--cal-actividad-fondo:\s*(#[0-9a-f]{6})/i)[1];
+    const texto = css.match(/--cal-actividad-texto:\s*(#[0-9a-f]{6})/i)[1];
+    expect(contraste(texto, fondo)).toBeGreaterThanOrEqual(4.5);
+    expect(contraste(texto, "#ffffff")).toBeGreaterThanOrEqual(4.5);
+    expect(contraste(texto, "#eceff3")).toBeGreaterThanOrEqual(4.5);
+    // distinto de los otros tipos
+    for (const otro of ["oficial", "otorgado", "evento"]) {
+      expect(css.match(new RegExp(`--cal-${otro}-fondo:\\s*(#[0-9a-f]{6})`, "i"))[1].toLowerCase()).not.toBe(fondo.toLowerCase());
+    }
+  });
+
+  it("ordena la actividad después de oficial, otorgado y evento", () => {
+    const orden = U.ordenarItems([
+      { fecha: "2026-10-22", tipo: "actividad", id: 1 },
+      { fecha: "2026-10-22", tipo: "evento", id: 2 },
+      { fecha: "2026-10-22", tipo: "oficial", id: 3 },
+    ]);
+    expect(orden.map((i) => i.tipo)).toEqual(["oficial", "evento", "actividad"]);
+  });
+
+  it("etiquetaDia (calendario laboral) usa la etiqueta del tipo", () => {
+    expect(U.etiquetaDia("2026-10-22", [{ tipo: "actividad", nombre: "Inventario", activo: true }]))
+      .toBe("22 Inventario. jueves 22 de octubre de 2026. Día Actividad Empresa: Inventario");
+  });
+});
+
+describe("Día Actividad Empresa - aviso de solicitudes afectadas", () => {
+  it("cuenta aprobadas y pendientes con singular/plural y aclara que no se modificaron", () => {
+    const uno = U.mensajeAvisosActividad({ solicitudes_aprobadas: 1, solicitudes_pendientes: 1 });
+    expect(uno).toMatch(/hay 1 solicitud aprobada y 1 solicitud pendiente/);
+    expect(uno).toMatch(/No se modificaron/);
+    const varios = U.mensajeAvisosActividad({ solicitudes_aprobadas: 3, solicitudes_pendientes: 2 });
+    expect(varios).toMatch(/3 solicitudes aprobadas y 2 solicitudes pendientes/);
+  });
+
+  it("solo menciona lo que hay", () => {
+    expect(U.mensajeAvisosActividad({ solicitudes_aprobadas: 2, solicitudes_pendientes: 0 })).toMatch(/^Atención: hay 2 solicitudes aprobadas de vacaciones que incluyen/);
+    expect(U.mensajeAvisosActividad({ solicitudes_aprobadas: 0, solicitudes_pendientes: 1 })).not.toMatch(/\d solicitudes? aprobadas?/);
+  });
+
+  it("en cero dice que ninguna solicitud incluye la fecha", () => {
+    expect(U.mensajeAvisosActividad({ solicitudes_aprobadas: 0, solicitudes_pendientes: 0 })).toMatch(/Ninguna solicitud/);
+  });
+
+  it("sin aviso (otros tipos) devuelve null; avisos null (fallo del cálculo) da texto de respaldo; basura se ignora", () => {
+    expect(U.mensajeAvisosActividad(undefined)).toBeNull();
+    expect(U.mensajeAvisosActividad("texto")).toBeNull();
+    expect(U.mensajeAvisosActividad(null)).toMatch(/no se pudo calcular/);
+    expect(U.mensajeAvisosActividad({ solicitudes_aprobadas: "x", solicitudes_pendientes: -0.5 })).toMatch(/Ninguna solicitud/);
+  });
+});
+
+describe("Día Actividad Empresa - calendario de ocupación y disponibilidad", () => {
+  const semanas = U.construirMesOcupacion(2026, 10, CON_ACTIVIDAD, { hoy: "2026-10-15" });
+
+  it("marca la fecha como bloqueada, no seleccionable, y junta nombres de la misma fecha", () => {
+    const c = celda(semanas, "2026-10-22");
+    expect(c.bloqueado).toBe("Inventario general, Auditoría externa");
+    expect(c.seleccionable).toBe(false);
+    expect(celda(semanas, "2026-10-28").bloqueado).toBe("Taller anual");
+    expect(celda(semanas, "2026-10-23").bloqueado).toBeNull();
+    expect(celda(semanas, "2026-10-23").seleccionable).toBe(true);
+  });
+
+  it("el aria-label empieza por el texto visible «Bloqueado: nombre» y explica el bloqueo", () => {
+    const c = celda(semanas, "2026-10-28");
+    expect(c.etiqueta.startsWith("28 Bloqueado: Taller anual. ")).toBe(true);
+    expect(c.etiqueta).toMatch(/vacaciones están bloqueadas para todos/);
+  });
+
+  it("si además está lleno, el texto visible conserva el orden: número, Cupo lleno, Bloqueado", () => {
+    const m = U.construirMesOcupacion(2026, 10, { fechas_llenas: ["2026-10-22"], fechas_bloqueadas: [{ fecha: "2026-10-22", nombre: "X" }] });
+    expect(celda(m, "2026-10-22").etiqueta.startsWith("22 Cupo lleno Bloqueado: X. ")).toBe(true);
+  });
+
+  it("detalleMesOcupacion lista «Bloqueado: nombre» ordenado entre lleno y no hábil", () => {
+    const detalle = U.detalleMesOcupacion(2026, 10, { ...CON_ACTIVIDAD, fechas_llenas: ["2026-10-22"], dias_no_habiles: [{ fecha: "2026-10-22", tipo: "oficial", nombre: "F" }] });
+    expect(detalle.filter((f) => f.fecha === "2026-10-22").map((f) => f.clase)).toEqual(["lleno", "bloqueado", "no-habil"]);
+    expect(detalle.find((f) => f.clase === "bloqueado").texto).toBe("Bloqueado: Inventario general, Auditoría externa");
+    expect(U.detalleMesOcupacion(2026, 11, CON_ACTIVIDAD).some((f) => f.clase === "bloqueado")).toBe(false);
+  });
+
+  it("sin fechas_bloqueadas (respuesta antigua o vacía) no marca nada y no falla", () => {
+    const m = U.construirMesOcupacion(2026, 10, OCUPACION);
+    expect(celdas(m).every((c) => c.bloqueado === null)).toBe(true);
+    expect(() => U.construirMesOcupacion(2026, 10, { fechas_bloqueadas: "no es lista" })).not.toThrow();
+  });
+
+  it("resumirDisponibilidad expone las fechas bloqueadas ordenadas y el mensaje del conflicto", () => {
+    const r = U.resumirDisponibilidad({
+      dias_habiles: 5,
+      saldo: 10,
+      fechas_bloqueadas: [{ fecha: "2026-10-28", nombre: "B" }, { fecha: "2026-10-22", nombre: "A" }],
+      conflicto: { codigo: "ACTIVIDAD_EMPRESA", mensaje: "El 22/10/2026 es Día Actividad Empresa (A)" },
+    });
+    expect(r.bloqueadas.map((b) => b.nombre)).toEqual(["A", "B"]);
+    expect(r.conflicto.codigo).toBe("ACTIVIDAD_EMPRESA");
+    expect(U.resumirDisponibilidad({ dias_habiles: 1 }).bloqueadas).toEqual([]);
+  });
+
+  it("Enviar queda deshabilitado cuando hay conflicto ACTIVIDAD_EMPRESA", () => {
+    const resumen = U.resumirDisponibilidad({ dias_habiles: 3, saldo: 9, conflicto: { codigo: "ACTIVIDAD_EMPRESA" } });
+    expect(resumen.conflicto.mensaje).toBe(U.MENSAJES_CONFLICTO.ACTIVIDAD_EMPRESA);
+    expect(U.envioBloqueado({ estado: "listo", resumen })).toBe(true);
+    expect(U.envioBloqueado({ estado: "listo", resumen: U.resumirDisponibilidad({ dias_habiles: 3, saldo: 9, conflicto: null }) })).toBe(false);
+  });
+});
+
+describe("Día Actividad Empresa - JSX (lectura del fuente, no hay jsdom)", () => {
+  const leer = (...p) => fs.readFileSync(path.join(__dirname, "../frontend", ...p), "utf8");
+
+  it("el modal muestra la ayuda del tipo y pasa el aviso solo si el tipo es actividad", () => {
+    const modal = leer("components", "ModalFechaCalendario.jsx");
+    expect(modal).toMatch(/aria-describedby="cal-tipo-ayuda"/);
+    expect(modal).toMatch(/cuerpo\.tipo === "actividad"[\s\S]*mensajeAvisosActividad\(respuesta\.avisos\)/);
+  });
+
+  it("la página muestra el aviso en la región role=status y la leyenda explica el bloqueo", () => {
+    const pagina = leer("pages", "CalendarioLaboralPage.jsx");
+    expect(pagina).toMatch(/<div role="status" aria-live="polite">[\s\S]*avisoActividad[\s\S]*errorPermisos/);
+    expect(pagina).toMatch(/t\.bloquea && /);
+  });
+
+  it("el calendario de ocupación pinta «Bloqueado: nombre» y su versión corta, y el detalle siempre lo muestra", () => {
+    const comp = leer("components", "CalendarioOcupacion.jsx");
+    expect(comp).toMatch(/celda\.bloqueado && /);
+    expect(comp).toMatch(/Bloqueado: \{celda\.bloqueado\}/);
+    expect(comp).toMatch(/ocupacion__bloq-corto">Bloq</);
+  });
+
+  it("el formulario de vacaciones lista las fechas bloqueadas y no usa Enviar sin envioBloqueado", () => {
+    const pagina = leer("pages", "VacacionesPage.jsx");
+    expect(pagina).toMatch(/resumen\.bloqueadas\.length > 0/);
+    expect(pagina).toMatch(/Bloqueado: \{b\.nombre\}/);
+    expect(pagina).toMatch(/envioBloqueado\(/);
+  });
+});

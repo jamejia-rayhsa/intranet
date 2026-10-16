@@ -5,9 +5,11 @@ const { grupo } = require("../config/database");
 const COLUMNAS = `id, to_char(fecha, 'YYYY-MM-DD') AS fecha, tipo, nombre, descripcion, activo,
   creado_por, fecha_creacion, fecha_actualizacion`;
 
-const TIPOS_CALENDARIO = ["oficial", "otorgado", "evento"];
+const TIPOS_CALENDARIO = ["oficial", "otorgado", "evento", "actividad"];
 // Tipos que no cuentan como día hábil ni se descuentan del saldo
 const TIPOS_NO_HABILES = ["oficial", "otorgado"];
+// Tipo que BLOQUEA las vacaciones de todos en esa fecha (si es día hábil); no es no-hábil ni se salta
+const TIPO_BLOQUEO = "actividad";
 
 const CalendarioLaboral = {
   async listar({ desde, hasta, tipo, soloActivos } = {}) {
@@ -103,8 +105,27 @@ const CalendarioLaboral = {
     );
     return resultado.rows.map((fila) => fila.fecha);
   },
+
+  /**
+   * Días Actividad Empresa activos entre desde y hasta (ambos incluidos): [{fecha, nombre}] por fecha.
+   * NO los incluye obtenerFechasNoHabiles. Acepta el cliente de la transacción.
+   * @returns {Promise<{fecha: string, nombre: string}[]>}
+   */
+  async obtenerFechasBloqueadas(desde, hasta, cliente = grupo) {
+    const resultado = await cliente.query(
+      `SELECT to_char(fecha, 'YYYY-MM-DD') AS fecha, nombre
+       FROM calendario_laboral
+       WHERE activo = true
+         AND tipo = $1
+         AND fecha BETWEEN $2::date AND $3::date
+       ORDER BY fecha, id`,
+      [TIPO_BLOQUEO, desde, hasta],
+    );
+    return resultado.rows.map((fila) => ({ fecha: fila.fecha, nombre: fila.nombre }));
+  },
 };
 
 module.exports = CalendarioLaboral;
 module.exports.TIPOS_CALENDARIO = TIPOS_CALENDARIO;
 module.exports.TIPOS_NO_HABILES = TIPOS_NO_HABILES;
+module.exports.TIPO_BLOQUEO = TIPO_BLOQUEO;

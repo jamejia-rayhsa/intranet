@@ -188,6 +188,15 @@ export default function CalendarioOcupacion({ inicio, fin, cupo, version = 0, on
                         <span className="ocupacion__icono" aria-hidden="true">⛔</span> <span className="calendario__marca-texto"><span className="ocupacion__texto-corto">Lleno</span><span className="ocupacion__texto-largo">Cupo lleno</span></span>
                       </span>
                     )}
+                    {celda.bloqueado && (
+                      <span className="calendario__marca ocupacion__marca--bloqueado">
+                        <span className="ocupacion__icono" aria-hidden="true">■</span>{" "}
+                        <span className="calendario__marca-texto">
+                          <span className="ocupacion__bloq-corto">Bloq</span>
+                          <span className="ocupacion__bloq-largo">Bloqueado: {celda.bloqueado}</span>
+                        </span>
+                      </span>
+                    )}
                     {celda.noHabil && (
                       <span className={`calendario__marca calendario__marca--${celda.noHabil.tipo}`}>
                         <span aria-hidden="true">{celda.noHabil.icono}</span>
@@ -208,6 +217,7 @@ export default function CalendarioOcupacion({ inicio, fin, cupo, version = 0, on
 
       <ul className="calendario__leyenda ocupacion__leyenda" aria-label="Leyenda">
         <li><span className="calendario__marca ocupacion__marca--lleno"><span aria-hidden="true">⛔</span> Cupo lleno</span></li>
+        <li><span className="calendario__marca ocupacion__marca--bloqueado"><span aria-hidden="true">■</span> Bloqueado (Día Actividad Empresa)</span></li>
         <li><span className="calendario__marca calendario__marca--oficial"><span aria-hidden="true">★</span> Oficial</span></li>
         <li><span className="calendario__marca calendario__marca--otorgado"><span aria-hidden="true">◆</span> Descanso otorgado</span></li>
         <li><span className="calendario__marca calendario__marca--evento"><span aria-hidden="true">●</span> Evento</span></li>

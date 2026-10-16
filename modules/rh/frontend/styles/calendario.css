@@ -6,6 +6,9 @@
   --cal-otorgado-texto: #14532d;
   --cal-evento-fondo: #e0f2fe;
   --cal-evento-texto: #0c4a6e;
+  /* Día Actividad Empresa: morado 9,23:1 sobre su fondo (WCAG AA >= 4,5:1) */
+  --cal-actividad-fondo: #ede9fe;
+  --cal-actividad-texto: #4c1d95;
   --cal-finde-fondo: #eceff3;
   max-width: 1000px;
   margin: 0 auto;
@@ -68,6 +71,7 @@
 .calendario__aviso--ayuda { background: var(--color-info-suave); color: #0c4a6e; }
 .calendario__aviso--ok { background: var(--color-exito-suave); color: #14532d; }
 .calendario__aviso--error { background: var(--color-error-suave); color: #7f1d1d; }
+.calendario__aviso--actividad { background: var(--cal-actividad-fondo); color: var(--cal-actividad-texto); border: 1px solid var(--cal-actividad-texto); font-weight: 600; }
 
 .calendario__rejilla {
   border: 1px solid var(--color-borde);
@@ -151,6 +155,9 @@
 .calendario__chip--otorgado { background: var(--cal-otorgado-fondo); color: var(--cal-otorgado-texto); }
 .calendario__marca--evento,
 .calendario__chip--evento { background: var(--cal-evento-fondo); color: var(--cal-evento-texto); }
+/* Además del color, el borde y el peso distinguen el bloqueo (no se depende solo del color) */
+.calendario__marca--actividad,
+.calendario__chip--actividad { background: var(--cal-actividad-fondo); color: var(--cal-actividad-texto); border: 1px solid var(--cal-actividad-texto); font-weight: 700; }
 
 .calendario__chip {
   display: inline-block;
@@ -161,6 +168,9 @@
   white-space: nowrap;
 }
 
+.calendario__leyenda-nota { font-size: 0.8rem; color: var(--color-texto-medio); overflow-wrap: anywhere; }
+.calendario__ayuda-tipo { margin: 0.1rem 0 0; font-size: 0.8rem; color: var(--color-texto-medio); overflow-wrap: anywhere; }
+.calendario__ayuda-tipo--actividad { color: var(--cal-actividad-texto); font-weight: 600; }
 .calendario__leyenda {
   display: flex;
   flex-wrap: wrap;

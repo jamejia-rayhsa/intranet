@@ -105,6 +105,14 @@ async function consulta(dueno, sql, p = []) {
     return { rows: d ? [{ cupo_vacaciones: d.cupo }] : [] };
   }
   if (/FROM calendario_laboral/.test(s)) {
+    if (/WHERE activo = true AND tipo = \$1 AND fecha BETWEEN/.test(s)) {
+      // obtenerFechasBloqueadas: [tipo, desde, hasta]
+      return {
+        rows: estado.calendario
+          .filter((c) => c.activo && c.tipo === p[0] && c.fecha >= p[1] && c.fecha <= p[2])
+          .map((c) => ({ fecha: c.fecha, nombre: c.nombre })),
+      };
+    }
     if (/SELECT DISTINCT/.test(s)) {
       const fechas = estado.calendario
         .filter((c) => c.activo && ["oficial", "otorgado"].includes(c.tipo) && c.fecha >= p[1] && c.fecha <= p[2])
@@ -745,6 +753,7 @@ describe("Vacaciones - GET /disponibilidad", () => {
       dias_no_habiles: [{ fecha: "2026-10-21", tipo: "oficial", nombre: "Festivo" }],
       eventos: [{ fecha: "2026-10-22", nombre: "Inventario" }],
       fechas_llenas: [],
+      fechas_bloqueadas: [],
       cupo: 1,
       saldo: 12,
       conflicto: null,
@@ -830,7 +839,7 @@ describe("Vacaciones - GET /ocupacion", () => {
     estado.solicitudes.push(solicitudAprobada({ nombre: "Compañero Secreto", ...con("2026-10-19", "2026-10-21") }));
     const res = await consultar({ desde: "2026-10-01", hasta: "2026-10-31" });
     expect(res.status).toBe(200);
-    expect(Object.keys(res.body.datos).sort()).toEqual(["dias_no_habiles", "eventos", "fechas_llenas"]);
+    expect(Object.keys(res.body.datos).sort()).toEqual(["dias_no_habiles", "eventos", "fechas_bloqueadas", "fechas_llenas"]);
     // el 21 es festivo: no es "día hábil lleno"
     expect(res.body.datos.fechas_llenas).toEqual(["2026-10-19", "2026-10-20"]);
     expect(res.body.datos.dias_no_habiles).toEqual([{ fecha: "2026-10-21", tipo: "oficial", nombre: "Festivo" }]);
@@ -850,5 +859,232 @@ describe("Vacaciones - GET /ocupacion", () => {
     estado.solicitudes.push(solicitudAprobada(con("2026-10-19", "2026-10-21")));
     const res = await consultar({ desde: "2026-10-01", hasta: "2026-10-31" });
     expect(res.body.datos.fechas_llenas).toEqual([]);
+  });
+});
+
+// ---------- Día Actividad Empresa (tipo 'actividad'): bloquea las vacaciones de todos ----------
+describe("Vacaciones - Día Actividad Empresa", () => {
+  const ACTIVIDAD = { fecha: "2026-10-21", tipo: "actividad", nombre: "Inventario general", activo: true };
+  const responderSol = (id, cuerpo) => request(app).put(`/vacaciones/${id}/responder`).send(cuerpo);
+
+  describe("crear", () => {
+    it("actividad en día hábil del rango -> 409 ACTIVIDAD_EMPRESA con fecha y nombre, ROLLBACK, sin INSERT", async () => {
+      estado.calendario.push(ACTIVIDAD);
+      const res = await crear({ fecha_inicial: "2026-10-19", fecha_final: "2026-10-23" });
+      expect(res.status).toBe(409);
+      expect(res.body.mensaje).toMatch(/21\/10\/2026/);
+      expect(res.body.mensaje).toMatch(/Inventario general/);
+      expect(res.body.mensaje).toMatch(/Día Actividad Empresa/);
+      expect(estado.solicitudes).toHaveLength(0);
+      expect(hubo(/^ROLLBACK$/)).toBe(true);
+      expect(hubo(/^INSERT/)).toBe(false);
+      expect(hubo(/^COMMIT$/)).toBe(false);
+    });
+
+    it("bloquea aunque el rango sea de un solo día y para cualquier departamento (también sin departamento)", async () => {
+      estado.calendario.push(ACTIVIDAD);
+      expect((await crear({ fecha_inicial: "2026-10-21", fecha_final: "2026-10-21" })).status).toBe(409);
+      Empleado.obtenerPorId.mockImplementation(async () => ({ ...EMPLEADO, departamento_id: null }));
+      expect((await crear({ fecha_inicial: "2026-10-19", fecha_final: "2026-10-23" })).status).toBe(409);
+    });
+
+    it("actividad en sábado o domingo NO bloquea (no es día hábil) y no se descuenta", async () => {
+      estado.calendario.push({ ...ACTIVIDAD, fecha: "2026-10-24" }, { ...ACTIVIDAD, fecha: "2026-10-25" });
+      const res = await crear({ fecha_inicial: "2026-10-23", fecha_final: "2026-10-26" });
+      expect(res.status).toBe(201);
+      expect(res.body.datos.dias_a_disfrutar).toBe(2);
+    });
+
+    it("actividad en un día que además es festivo oficial NO bloquea (ya no es día hábil)", async () => {
+      estado.calendario.push(ACTIVIDAD, { fecha: "2026-10-21", tipo: "oficial", nombre: "Festivo", activo: true });
+      const res = await crear({ fecha_inicial: "2026-10-19", fecha_final: "2026-10-23" });
+      expect(res.status).toBe(201);
+      expect(res.body.datos.dias_a_disfrutar).toBe(4);
+    });
+
+    it("una actividad inactiva o fuera del rango no bloquea; un evento tampoco", async () => {
+      estado.calendario.push(
+        { ...ACTIVIDAD, activo: false },
+        { ...ACTIVIDAD, fecha: "2026-11-02" },
+        { fecha: "2026-10-22", tipo: "evento", nombre: "Evento", activo: true },
+      );
+      expect((await crear({ fecha_inicial: "2026-10-19", fecha_final: "2026-10-23" })).status).toBe(201);
+    });
+
+    it("orden de validación: 0 hábiles (400) -> actividad (409) -> traslape -> saldo -> cupo", async () => {
+      // 0 hábiles gana: sábado-domingo con actividad en festivo oficial lunes
+      estado.calendario.push(
+        { ...ACTIVIDAD, fecha: "2026-10-26" },
+        { fecha: "2026-10-26", tipo: "oficial", nombre: "Festivo", activo: true },
+      );
+      expect((await crear({ fecha_inicial: "2026-10-24", fecha_final: "2026-10-26" })).status).toBe(400);
+      // actividad gana a traslape, saldo y cupo
+      estado.calendario.length = 0;
+      estado.calendario.push(ACTIVIDAD);
+      estado.diasPeriodo = 1;
+      estado.solicitudes.push(
+        pendiente(con("2026-10-19", "2026-10-23")),
+        solicitudAprobada(con("2026-10-19", "2026-10-23")),
+      );
+      const res = await crear({ fecha_inicial: "2026-10-19", fecha_final: "2026-10-23" });
+      expect(res.status).toBe(409);
+      expect(res.body.mensaje).toMatch(/Día Actividad Empresa/);
+    });
+
+    it("lee las actividades con el cliente de la transacción (no con el pool) y después del candado", async () => {
+      estado.calendario.push(ACTIVIDAD);
+      await crear({ fecha_inicial: "2026-10-19", fecha_final: "2026-10-23" });
+      const lecturas = log.filter((l) => /tipo = \$1/.test(l.sql));
+      expect(lecturas).toHaveLength(1);
+      expect(lecturas[0].dueno).not.toBe("pool");
+      expect(lecturas[0].p).toEqual(["actividad", "2026-10-19", "2026-10-23"]);
+      const iCandado = sqls().findIndex((q) => /pg_advisory_xact_lock/.test(q));
+      expect(iCandado).toBeGreaterThanOrEqual(0);
+      expect(iCandado).toBeLessThan(log.indexOf(lecturas[0]));
+    });
+
+    it("audita RECHAZO_ACTIVIDAD sin datos personales ni de compañeros", async () => {
+      estado.calendario.push(ACTIVIDAD);
+      await crear({ fecha_inicial: "2026-10-19", fecha_final: "2026-10-23" });
+      expect(registrarAccion).toHaveBeenCalledTimes(1);
+      const [, modulo, tabla, id, accion, previos, nuevos] = registrarAccion.mock.calls[0];
+      expect([modulo, tabla, id, accion, previos]).toEqual(["rh", "solicitudes_vacaciones", "nueva", "RECHAZO_ACTIVIDAD", null]);
+      expect(nuevos).toEqual({
+        operacion: "crear",
+        empleado_id: 10,
+        departamento_id: 1,
+        fecha_inicial: "2026-10-19",
+        fecha_final: "2026-10-23",
+        fecha_bloqueada: "2026-10-21",
+      });
+      expect(JSON.stringify(nuevos)).not.toMatch(/Ana|Prueba|Inventario/);
+      expect(accion.length).toBeLessThanOrEqual(20);
+    });
+
+    it("no filtra el mensaje de un fallo de la BD al leer actividades", async () => {
+      const original = grupo.connect.getMockImplementation();
+      grupo.connect.mockImplementation(async () => {
+        const c = await original();
+        return {
+          ...c,
+          query: (sql, p) => {
+            if (/tipo = \$1/.test(sql)) throw new Error("secreto interno de la BD");
+            return c.query(sql, p);
+          },
+        };
+      });
+      const res = await crear({ fecha_inicial: "2026-10-19", fecha_final: "2026-10-23" });
+      expect(res.status).toBe(500);
+      expect(JSON.stringify(res.body)).not.toMatch(/secreto/);
+    });
+  });
+
+  describe("aprobar", () => {
+    beforeEach(() => {
+      mockEdicion = true; // RH, y quien autoriza no es el solicitante
+      Empleado.obtenerPorUsuarioId.mockImplementation(async () => ({ ...EMPLEADO, id: 99, usuario_id: 5 }));
+    });
+
+    it("pendiente creada ANTES de registrar la actividad: 409, sigue pendiente, sin UPDATE y se audita", async () => {
+      const sol = pendiente(con("2026-10-19", "2026-10-23"));
+      estado.solicitudes.push(sol);
+      estado.calendario.push(ACTIVIDAD);
+      const res = await responderSol(sol.id, { estatus: "aprobado" });
+      expect(res.status).toBe(409);
+      expect(res.body.mensaje).toMatch(/21\/10\/2026/);
+      expect(res.body.mensaje).toMatch(/Inventario general/);
+      expect(sol.estatus).toBe("pendiente");
+      expect(hubo(/^UPDATE/)).toBe(false);
+      expect(hubo(/^ROLLBACK$/)).toBe(true);
+      const [, , , id, accion, previos, nuevos] = registrarAccion.mock.calls[0];
+      expect([id, accion, previos]).toEqual([String(sol.id), "RECHAZO_ACTIVIDAD", null]);
+      expect(nuevos).toMatchObject({ operacion: "aprobar", fecha_bloqueada: "2026-10-21" });
+      expect(JSON.stringify(nuevos)).not.toMatch(/Inventario/);
+    });
+
+    it("el bloqueo aplica aunque el empleado no tenga departamento (sin cupo)", async () => {
+      const sol = pendiente({ departamento_id: null, ...con("2026-10-19", "2026-10-23") });
+      estado.solicitudes.push(sol);
+      Empleado.obtenerPorId.mockImplementation(async () => ({ ...EMPLEADO, departamento_id: null }));
+      estado.calendario.push(ACTIVIDAD);
+      expect((await responderSol(sol.id, { estatus: "aprobado" })).status).toBe(409);
+      expect(sol.estatus).toBe("pendiente");
+    });
+
+    it("actividad en fin de semana o en festivo no impide aprobar", async () => {
+      const sol = pendiente(con("2026-10-19", "2026-10-25"));
+      estado.solicitudes.push(sol);
+      estado.calendario.push(
+        { ...ACTIVIDAD, fecha: "2026-10-24" },
+        ACTIVIDAD,
+        { fecha: "2026-10-21", tipo: "oficial", nombre: "Festivo", activo: true },
+      );
+      expect((await responderSol(sol.id, { estatus: "aprobado" })).status).toBe(200);
+      expect(sol.estatus).toBe("aprobado");
+    });
+
+    it("RECHAZAR una pendiente con actividad en el rango sí se puede (RH decide)", async () => {
+      const sol = pendiente(con("2026-10-19", "2026-10-23"));
+      estado.solicitudes.push(sol);
+      estado.calendario.push(ACTIVIDAD);
+      const res = await responderSol(sol.id, { estatus: "rechazado", motivo_rechazo: "Actividad de empresa" });
+      expect(res.status).toBe(200);
+      expect(sol.estatus).toBe("rechazado");
+    });
+
+    it("las solicitudes ya aprobadas no se tocan al registrarse la actividad", async () => {
+      const aprobada = solicitudAprobada(con("2026-10-19", "2026-10-23"));
+      estado.solicitudes.push(aprobada);
+      estado.calendario.push(ACTIVIDAD);
+      expect(aprobada.estatus).toBe("aprobado");
+      expect(hubo(/^UPDATE/)).toBe(false);
+    });
+  });
+
+  describe("endpoints de vista previa", () => {
+    const disponibilidad = (q) => request(app).get("/vacaciones/disponibilidad").query(q);
+    const ocupacion = (q) => request(app).get("/vacaciones/ocupacion").query(q);
+
+    it("/disponibilidad devuelve fechas_bloqueadas y el conflicto ACTIVIDAD_EMPRESA", async () => {
+      estado.calendario.push(ACTIVIDAD, { ...ACTIVIDAD, fecha: "2026-10-24", nombre: "Sábado" });
+      const res = await disponibilidad({ fecha_inicial: "2026-10-19", fecha_final: "2026-10-25" });
+      expect(res.status).toBe(200);
+      expect(res.body.datos.fechas_bloqueadas).toEqual([{ fecha: "2026-10-21", nombre: "Inventario general" }]);
+      expect(res.body.datos.conflicto.codigo).toBe("ACTIVIDAD_EMPRESA");
+      expect(res.body.datos.conflicto.mensaje).toMatch(/21\/10\/2026.*Inventario general/);
+      expect(res.body.datos.dias_habiles).toBe(5);
+    });
+
+    it("/disponibilidad: SIN_DIAS_HABILES gana a la actividad y la actividad gana a traslape, saldo y cupo", async () => {
+      estado.calendario.push({ ...ACTIVIDAD, fecha: "2026-10-24" });
+      let res = await disponibilidad({ fecha_inicial: "2026-10-24", fecha_final: "2026-10-25" });
+      expect(res.body.datos.conflicto.codigo).toBe("SIN_DIAS_HABILES");
+      expect(res.body.datos.fechas_bloqueadas).toEqual([]);
+      estado.calendario.push(ACTIVIDAD);
+      estado.diasPeriodo = 1;
+      estado.solicitudes.push(pendiente(con("2026-10-19", "2026-10-23")), solicitudAprobada(con("2026-10-19", "2026-10-23")));
+      res = await disponibilidad({ fecha_inicial: "2026-10-19", fecha_final: "2026-10-23" });
+      expect(res.body.datos.conflicto.codigo).toBe("ACTIVIDAD_EMPRESA");
+    });
+
+    it("/disponibilidad sin actividades: fechas_bloqueadas vacío y sin conflicto", async () => {
+      const res = await disponibilidad({ fecha_inicial: "2026-10-19", fecha_final: "2026-10-23" });
+      expect(res.body.datos.fechas_bloqueadas).toEqual([]);
+      expect(res.body.datos.conflicto).toBeNull();
+    });
+
+    it("/ocupacion devuelve fechas_bloqueadas solo de días hábiles y activas", async () => {
+      estado.calendario.push(
+        ACTIVIDAD,
+        { ...ACTIVIDAD, fecha: "2026-10-24", nombre: "Sábado" },
+        { ...ACTIVIDAD, fecha: "2026-10-22", nombre: "Inactiva", activo: false },
+        { ...ACTIVIDAD, fecha: "2026-10-26", nombre: "Con festivo" },
+        { fecha: "2026-10-26", tipo: "oficial", nombre: "Festivo", activo: true },
+      );
+      const res = await ocupacion({ desde: "2026-10-01", hasta: "2026-10-31" });
+      expect(res.status).toBe(200);
+      expect(res.body.datos.fechas_bloqueadas).toEqual([{ fecha: "2026-10-21", nombre: "Inventario general" }]);
+      expect(res.body.datos.eventos).toEqual([]);
+    });
   });
 });

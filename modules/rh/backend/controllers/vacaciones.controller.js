@@ -38,6 +38,18 @@ const mensajeCupoCrear = (fecha, cupo) =>
 const mensajeCupoAprobar = (fecha, cupo) =>
   `No se puede aprobar: el ${formatearFecha(fecha)} el cupo de vacaciones del departamento (${cupo} ${cupo === 1 ? "persona" : "personas"} a la vez) ya está lleno`;
 
+const mensajeActividadCrear = (fecha, nombre) =>
+  `El ${formatearFecha(fecha)} es Día Actividad Empresa (${nombre}) y las vacaciones están bloqueadas para todos ese día`;
+const mensajeActividadAprobar = (fecha, nombre) =>
+  `No se puede aprobar: el ${formatearFecha(fecha)} es Día Actividad Empresa (${nombre}) y las vacaciones están bloqueadas para todos ese día`;
+
+// Días Actividad Empresa que caen en día HÁBIL del rango (los de sábado, domingo, festivo o descanso
+// otorgado no bloquean: de todos modos no son días de vacaciones). `diasHabiles` ya excluye esos días.
+function actividadesEnDiasHabiles(actividades, diasHabiles) {
+  const habiles = new Set(diasHabiles);
+  return actividades.filter((a) => habiles.has(a.fecha));
+}
+
 const MSG_TRASLAPE = "Ya existe una solicitud pendiente o aprobada en ese rango de fechas";
 const MSG_SIN_HABILES = "El rango no incluye ningún día hábil (lunes a viernes sin festivos ni descansos)";
 const mensajeSaldo = (pendientes, solicitados) =>
@@ -53,7 +65,7 @@ async function responderError(req, res, error, mensajeGenerico) {
           "rh",
           "solicitudes_vacaciones",
           String(error.auditoria.registroId),
-          "RECHAZO_CUPO",
+          error.codigo === "ACTIVIDAD_EMPRESA" ? "RECHAZO_ACTIVIDAD" : "RECHAZO_CUPO",
           null,
           error.auditoria.datos,
         );
@@ -104,7 +116,7 @@ async function empleadoDeLaConsulta(req) {
   return Empleado.obtenerPorUsuarioId(req.user.usuario_id);
 }
 
-// Datos del calendario laboral (solo oficial/otorgado/evento activos, sin nada de compañeros)
+// Datos del calendario laboral (solo oficial/otorgado/evento/actividad activos, sin nada de compañeros)
 function separarCalendario(filas) {
   const noHabilesLista = filas
     .filter((f) => CalendarioLaboral.TIPOS_NO_HABILES.includes(f.tipo))
@@ -112,7 +124,15 @@ function separarCalendario(filas) {
   const eventos = filas
     .filter((f) => f.tipo === "evento")
     .map((f) => ({ fecha: f.fecha, nombre: f.nombre }));
-  return { noHabilesLista, eventos, noHabiles: new Set(noHabilesLista.map((f) => f.fecha)) };
+  const actividades = filas
+    .filter((f) => f.tipo === CalendarioLaboral.TIPO_BLOQUEO)
+    .map((f) => ({ fecha: f.fecha, nombre: f.nombre }));
+  return {
+    noHabilesLista,
+    eventos,
+    actividades,
+    noHabiles: new Set(noHabilesLista.map((f) => f.fecha)),
+  };
 }
 
 // Al aprobar: con la fila del departamento bloqueada, revalida traslape propio, saldo y cupo con
@@ -131,6 +151,32 @@ async function revalidarAprobacion(solicitud, cliente) {
   const departamento = departamentoId
     ? await SolicitudVacaciones.bloquearDepartamento(departamentoId, cliente)
     : null;
+
+  // Un Día Actividad Empresa en día hábil del rango bloquea la aprobación (aunque la solicitud se
+  // creó antes de registrarlo). Se evalúa antes que traslape, saldo y cupo, igual que al crear.
+  const noHabiles = await CalendarioLaboral.obtenerFechasNoHabiles(inicio, fin, cliente);
+  const diasHabiles = listarDiasHabiles(inicio, fin, noHabiles);
+  const actividades = actividadesEnDiasHabiles(
+    await CalendarioLaboral.obtenerFechasBloqueadas(inicio, fin, cliente),
+    diasHabiles,
+  );
+  if (actividades.length > 0) {
+    const [primera] = actividades;
+    throw new ErrorVacaciones(409, mensajeActividadAprobar(primera.fecha, primera.nombre), {
+      codigo: "ACTIVIDAD_EMPRESA",
+      auditoria: {
+        registroId: solicitud.id,
+        datos: {
+          operacion: "aprobar",
+          empleado_id: solicitud.empleado_id,
+          departamento_id: departamentoId || null,
+          fecha_inicial: inicio,
+          fecha_final: fin,
+          fecha_bloqueada: primera.fecha,
+        },
+      },
+    });
+  }
 
   const traslape = await SolicitudVacaciones.tieneTraslape(
     solicitud.empleado_id,
@@ -151,8 +197,6 @@ async function revalidarAprobacion(solicitud, cliente) {
   }
 
   if (departamento) {
-    const noHabiles = await CalendarioLaboral.obtenerFechasNoHabiles(inicio, fin, cliente);
-    const diasHabiles = listarDiasHabiles(inicio, fin, noHabiles);
     const ocupacion = await SolicitudVacaciones.ocupacionPorDia(
       departamento.id,
       inicio,
@@ -318,6 +362,29 @@ const ControladorVacaciones = {
           const diasHabiles = listarDiasHabiles(fecha_inicial, fecha_final, noHabiles);
           const dias_a_disfrutar = diasHabiles.length;
           if (dias_a_disfrutar === 0) throw new ErrorVacaciones(400, MSG_SIN_HABILES);
+
+          // Día Actividad Empresa en día hábil: bloquea para todos (no se salta ni se descuenta)
+          const actividades = actividadesEnDiasHabiles(
+            await CalendarioLaboral.obtenerFechasBloqueadas(fecha_inicial, fecha_final, cliente),
+            diasHabiles,
+          );
+          if (actividades.length > 0) {
+            const [primera] = actividades;
+            throw new ErrorVacaciones(409, mensajeActividadCrear(primera.fecha, primera.nombre), {
+              codigo: "ACTIVIDAD_EMPRESA",
+              auditoria: {
+                registroId: "nueva",
+                datos: {
+                  operacion: "crear",
+                  empleado_id: idNumerico,
+                  departamento_id: empleadoTx.departamento_id || null,
+                  fecha_inicial,
+                  fecha_final,
+                  fecha_bloqueada: primera.fecha,
+                },
+              },
+            });
+          }
 
           const traslape = await SolicitudVacaciones.tieneTraslape(
             idNumerico,
@@ -658,8 +725,9 @@ const ControladorVacaciones = {
         hasta: fecha_final,
         soloActivos: true,
       });
-      const { noHabilesLista, eventos, noHabiles } = separarCalendario(filas);
+      const { noHabilesLista, eventos, actividades, noHabiles } = separarCalendario(filas);
       const diasHabiles = listarDiasHabiles(fecha_inicial, fecha_final, noHabiles);
+      const bloqueadas = actividadesEnDiasHabiles(actividades, diasHabiles);
 
       let cupo = null;
       let llenas = [];
@@ -682,6 +750,11 @@ const ControladorVacaciones = {
       let conflicto = null;
       if (diasHabiles.length === 0) {
         conflicto = { codigo: "SIN_DIAS_HABILES", mensaje: MSG_SIN_HABILES };
+      } else if (bloqueadas.length > 0) {
+        conflicto = {
+          codigo: "ACTIVIDAD_EMPRESA",
+          mensaje: mensajeActividadCrear(bloqueadas[0].fecha, bloqueadas[0].nombre),
+        };
       } else if (
         await SolicitudVacaciones.tieneTraslape(empleado.id, fecha_inicial, fecha_final)
       ) {
@@ -702,6 +775,7 @@ const ControladorVacaciones = {
           dias_no_habiles: noHabilesLista,
           eventos,
           fechas_llenas: llenas,
+          fechas_bloqueadas: bloqueadas,
           cupo,
           saldo: diasPendientes,
           conflicto,
@@ -726,7 +800,8 @@ const ControladorVacaciones = {
       }
 
       const filas = await CalendarioLaboral.listar({ desde, hasta, soloActivos: true });
-      const { noHabilesLista, eventos, noHabiles } = separarCalendario(filas);
+      const { noHabilesLista, eventos, actividades, noHabiles } = separarCalendario(filas);
+      const bloqueadas = actividadesEnDiasHabiles(actividades, listarDiasHabiles(desde, hasta, noHabiles));
 
       let llenas = [];
       if (empleado.departamento_id) {
@@ -743,7 +818,12 @@ const ControladorVacaciones = {
 
       res.json({
         exito: true,
-        datos: { fechas_llenas: llenas, dias_no_habiles: noHabilesLista, eventos },
+        datos: {
+          fechas_llenas: llenas,
+          fechas_bloqueadas: bloqueadas,
+          dias_no_habiles: noHabilesLista,
+          eventos,
+        },
       });
     } catch (error) {
       await responderError(req, res, error, "Error al consultar la ocupación");

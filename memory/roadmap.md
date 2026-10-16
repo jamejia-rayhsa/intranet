@@ -59,3 +59,9 @@
 ## Fase 3 — Pantalla de administración del calendario (RH/Admin) — CERRADA (commit 07400d2)
 ## Fase 4 — Días hábiles + bloqueo por departamento con cupo + fechas ocupadas en el selector — CERRADA (commit fa87d41)
 ## Fase 5 — Revisión, pruebas y cierre — LISTA PARA GO/NO-GO FINAL (ver decisions.md "Cierre de la tarea")
+
+---
+
+# Tarea adicional (2026-10-16): tipo "Día Actividad Empresa" (bloquea vacaciones)
+> Misma rama `feat/calendariolaboral-vacaciones`. Una sola fase: coder (BD+API+UI) → revisor + tester → commit → GO/NO-GO del humano.
+- **Situación:** EN CURSO (coder). Diseño en decisions.md (2026-10-16).

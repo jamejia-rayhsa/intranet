@@ -1,6 +1,6 @@
 import { useState, useEffect, useId } from "react";
 import useFocoModal from "../../../portal/frontend/hooks/useFocoModal";
-import { TIPOS_CALENDARIO, fechaConDiaSemana } from "../utils/calendarioLaboral";
+import { TIPOS_CALENDARIO, fechaConDiaSemana, ayudaDelTipo, mensajeAvisosActividad } from "../utils/calendarioLaboral";
 import {
   crearFechaCalendario,
   actualizarFechaCalendario,
@@ -61,13 +61,12 @@ export default function ModalFechaCalendario({ item, fechaInicial, onCerrar, onG
       activo: formulario.activo,
     };
     try {
-      if (editando) {
-        await actualizarFechaCalendario(item.id, cuerpo);
-        onGuardado("Fecha del calendario actualizada");
-      } else {
-        await crearFechaCalendario(cuerpo);
-        onGuardado("Fecha agregada al calendario");
-      }
+      const respuesta = editando
+        ? await actualizarFechaCalendario(item.id, cuerpo)
+        : await crearFechaCalendario(cuerpo);
+      // Si la fecha quedó como Día Actividad Empresa, el servidor cuenta las solicitudes afectadas
+      const aviso = cuerpo.tipo === "actividad" && respuesta ? mensajeAvisosActividad(respuesta.avisos) : null;
+      onGuardado(editando ? "Fecha del calendario actualizada" : "Fecha agregada al calendario", aviso);
     } catch (err) {
       // 400 (validación), 409 (duplicada), 404 (ya no existe): se muestra el mensaje del backend
       setError(err.message || "No se pudo guardar la fecha");
@@ -123,11 +122,15 @@ export default function ModalFechaCalendario({ item, fechaInicial, onCerrar, onG
           </div>
           <div className="calendario__campo">
             <label htmlFor="cal-tipo">Tipo</label>
-            <select id="cal-tipo" name="tipo" value={formulario.tipo} onChange={cambiar} required>
+            <select id="cal-tipo" name="tipo" value={formulario.tipo} onChange={cambiar} required aria-describedby="cal-tipo-ayuda">
               {TIPOS_CALENDARIO.map((t) => (
                 <option key={t.valor} value={t.valor}>{t.etiqueta}</option>
               ))}
             </select>
+            <p id="cal-tipo-ayuda" className={`calendario__ayuda-tipo${formulario.tipo === "actividad" ? " calendario__ayuda-tipo--actividad" : ""}`}>
+              {formulario.tipo === "actividad" && <span aria-hidden="true">■ </span>}
+              {ayudaDelTipo(formulario.tipo)}
+            </p>
           </div>
           <div className="calendario__campo">
             <label htmlFor="cal-nombre">Nombre</label>

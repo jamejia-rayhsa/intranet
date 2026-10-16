@@ -13,6 +13,8 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-16] orquestador → decisions.md — Nuevo tipo de fecha 'Día Actividad Empresa' que bloquea vacaciones para todos (diseño)
+- [2026-10-16] [coder] → code-notes.md — Tipo 'Día Actividad Empresa': migración 011, bloqueo al crear/aprobar, avisos y UI (jest 958, mutaciones, Postgres y Chromium)
 - [2026-10-15] orquestador → decisions.md — Cierre de la tarea de calendario laboral y bloqueo de vacaciones: lista para GO/NO-GO final
 - [2026-10-15] coder → code-notes.md — Cuarta ronda (Fase 5): resultado incierto de GoTrue no se compensa (F1) y pruebas F6 (rol_id 0, nombres privilegiados)
 - [2026-10-15] revisor → reviews.md#re-revision-de-la-tercera-ronda-fase-5 — Re-revisión de la tercera ronda (Fase 5): CONDICIONADO (0 críticos; 1 alto: resultado ambiguo de GoTrue tras la compensación; PARA RESOLVER flujos sin salida)

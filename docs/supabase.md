@@ -54,6 +54,8 @@ Nota sobre `rh/010-empleados-usuario-unico.sql`: agrega `UNIQUE (usuario_id)` a 
 
 Nota sobre la semilla de festivos (`rh/009-calendario-laboral.sql`): solo inserta los festivos oficiales 2026-2027 si `calendario_laboral` está vacía, así que un festivo borrado por RH no reaparece al relanzar `db-init`; si se vacía por completo la tabla, la siguiente ejecución volverá a sembrarlos.
 
+Nota sobre `rh/011-calendario-actividad.sql`: amplía el CHECK de `calendario_laboral.tipo` para admitir `actividad` (Día Actividad Empresa, que bloquea las vacaciones de todos). Es idempotente (busca la restricción por definición, no por nombre), no modifica datos y se puede relanzar con `db-init` sin efectos. Requiere la 009.
+
 ### Migraciones nuevas con el entorno ya levantado
 
 `supabase-db-init` es un servicio de una sola ejecución: aplica `init.sql` (solo si la BD está vacía) y las migraciones idempotentes **cada vez que se levanta**, no mientras el entorno sigue arriba. Si cambias de rama o haces `git pull` y trae una migración nueva (p. ej. `portal/006-eventos-noticias.sql`), la BD que ya está corriendo **no la tiene** y la app falla al usar las columnas nuevas (síntoma: error al crear/guardar). Hay que volver a ejecutar el `db-init`:

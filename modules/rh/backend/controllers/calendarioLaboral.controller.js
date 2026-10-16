@@ -1,4 +1,6 @@
 const CalendarioLaboral = require("../models/calendarioLaboral.model");
+const SolicitudVacaciones = require("../models/solicitudVacaciones.model");
+const { esFinDeSemana } = require("../utils/diasHabiles");
 const { tienePermiso } = require("../../../portal/backend/middleware/permisos.middleware");
 const { registrarAccion } = require("../../../auditoria/backend/services/auditoria.service");
 
@@ -82,6 +84,28 @@ function errorInterno(res, contexto, error) {
   return res.status(500).json({ exito: false, mensaje: `Error al ${contexto}` });
 }
 
+/**
+ * Aviso para RH al registrar o editar un Día Actividad Empresa: cuántas solicitudes aprobadas y
+ * pendientes incluyen esa fecha como día hábil. Solo conteos (sin nombres); NO modifica solicitudes.
+ * Devuelve undefined si la fila no es una actividad y null si el cálculo falla (la escritura ya se
+ * hizo: un fallo aquí no puede convertir el éxito en error).
+ */
+async function calcularAvisos(fila) {
+  if (!fila || fila.tipo !== CalendarioLaboral.TIPO_BLOQUEO) return undefined;
+  const sinEfecto = { solicitudes_aprobadas: 0, solicitudes_pendientes: 0 };
+  try {
+    // Inactiva, sábado/domingo o festivo/descanso del mismo día: no bloquea nada
+    if (!fila.activo || esFinDeSemana(fila.fecha)) return sinEfecto;
+    const noHabiles = await CalendarioLaboral.obtenerFechasNoHabiles(fila.fecha, fila.fecha);
+    if (noHabiles.length > 0) return sinEfecto;
+    const conteo = await SolicitudVacaciones.contarSolicitudesEnFecha(fila.fecha);
+    return { solicitudes_aprobadas: conteo.aprobadas, solicitudes_pendientes: conteo.pendientes };
+  } catch (error) {
+    console.error("[Calendario] Error al calcular los avisos de la actividad:", error.message);
+    return null;
+  }
+}
+
 const ControladorCalendarioLaboral = {
   async listar(req, res) {
     const { desde, hasta, tipo } = req.query;
@@ -116,7 +140,13 @@ const ControladorCalendarioLaboral = {
         creado_por: req.user && (req.user.usuario_id || req.user.id),
       });
       await auditar(req, fila.id, "INSERT", null, resumen(fila));
-      res.status(201).json({ exito: true, datos: fila, mensaje: "Fecha agregada al calendario" });
+      const avisos = await calcularAvisos(fila);
+      res.status(201).json({
+        exito: true,
+        datos: fila,
+        mensaje: "Fecha agregada al calendario",
+        ...(avisos !== undefined && { avisos }),
+      });
     } catch (err) {
       if (esDuplicado(err)) return res.status(409).json({ exito: false, mensaje: MENSAJE_DUPLICADO });
       errorInterno(res, "crear la fecha del calendario", err);
@@ -136,7 +166,13 @@ const ControladorCalendarioLaboral = {
       const fila = await CalendarioLaboral.actualizar(Number(id), datos);
       if (!fila) return res.status(404).json({ exito: false, mensaje: "Fecha del calendario no encontrada" });
       await auditar(req, fila.id, "UPDATE", resumen(previo), resumen(fila));
-      res.json({ exito: true, datos: fila, mensaje: "Fecha del calendario actualizada" });
+      const avisos = await calcularAvisos(fila);
+      res.json({
+        exito: true,
+        datos: fila,
+        mensaje: "Fecha del calendario actualizada",
+        ...(avisos !== undefined && { avisos }),
+      });
     } catch (err) {
       if (esDuplicado(err)) return res.status(409).json({ exito: false, mensaje: MENSAJE_DUPLICADO });
       errorInterno(res, "actualizar la fecha del calendario", err);
