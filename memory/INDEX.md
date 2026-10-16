@@ -13,6 +13,7 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-15] orquestador → decisions.md — Regla de quién autoriza vacaciones: jefe inmediato, RH y super_admin; nunca lo propio
 - [2026-10-15] orquestador → decisions.md — Extensión de la Fase 4 aplicada: pool, JSON malformado, roles (delegación) y saldo
 - [2026-10-15] orquestador → decisions.md — GO a la Fase 5; Fase 4 cerrada (fa87d41)
 - [2026-10-15] orquestador → decisions.md — Decisiones del humano tras la Fase 4: jefe inmediato, timeouts del pool, JSON/roles, saldo por query
@@ -158,3 +159,4 @@
 - [2026-10-15] tester → decisions.md — PARA RESOLVER P1 (alto: interbloqueo del pool con >= 11 solicitudes simultáneas), P2 (periodo del cuerpo), P3 (sin departamento no se serializa), P4 (menores de UI)
 - [2026-10-15] [coder] Correcciones de la revisión de la Fase 4 (periodo del servidor, pool en transacción, candado por empleado, post-COMMIT, UI) -> code-notes.md
 - [2026-10-15] [coder] Extensión Fase 4: timeouts del pool, JSON malformado 400/413, delegación de permisos y roles, validación de periodo/ids en saldo -> code-notes.md
+- [2026-10-15] [coder] Regla de autorización por jefe inmediato (RH/super_admin nunca lo propio; autoridad en la transacción; puede_responder) -> code-notes.md

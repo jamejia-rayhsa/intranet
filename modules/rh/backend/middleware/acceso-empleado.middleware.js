@@ -45,7 +45,8 @@ const validarPeriodo = (nombre = "periodo") =>
  * @param {(req) => Promise<number|string|null|undefined>} [opciones.obtenerEmpleadoId]
  *   empleado dueno del recurso (undefined/null si no existe). Puede dejar el recurso en req.recurso.
  * @param {boolean} [opciones.soloRH] - solo RH (listados de varios empleados)
- * @param {boolean} [opciones.permitirDueno=true] - false: ni el dueno pasa (p. ej. aprobar lo propio)
+ * @param {boolean} [opciones.permitirDueno=true] - false: ni el dueno pasa, tampoco RH ni
+ *   super_admin (p. ej. aprobar lo propio)
  * @param {(req, propio) => Promise<boolean>|boolean} [opciones.permitirSi]
  *   regla extra para no-RH (p. ej. jefe inmediato); `propio` = empleado del usuario
  */
@@ -66,8 +67,14 @@ function accesoEmpleado({
     const recurso = `rh.${opcion}${idRecurso ? `:${idRecurso}` : ""}`;
 
     try {
-      // RH: pasa; si el recurso no existe, el controlador responde 404
+      // RH: pasa; si el recurso no existe, el controlador responde 404. Con permitirDueno:false
+      // (aprobar/rechazar) la excepcion no cubre lo propio: tampoco RH ni super_admin
       if (await tienePermiso(req.user, "rh", opcionRH || opcion, tipoRH)) {
+        if (permitirDueno || !obtenerEmpleadoId) return next();
+        const duenoRH = await obtenerEmpleadoId(req);
+        if (duenoRH === undefined || duenoRH === null) return next();
+        const propioRH = await Empleado.obtenerPorUsuarioId(req.user.usuario_id);
+        if (propioRH && String(propioRH.id) === String(duenoRH)) return denegar(req, res, recurso);
         return next();
       }
       if (soloRH) return denegar(req, res, recurso);

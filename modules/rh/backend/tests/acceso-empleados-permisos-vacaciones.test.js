@@ -183,6 +183,20 @@ describe("RH: empleados, permisos de ausencia y vacaciones por propietario", () 
       comoRH();
       expect((await request(app).put("/vacaciones/1/responder").send({ estatus: "aprobado" })).status).toBe(200);
     });
+    it("responder: RH y super_admin no responden lo propio; lo ajeno y sin empleado si", async () => {
+      Solicitud.obtenerPorId.mockResolvedValue({ id: 1, empleado_id: 20, jefe_inmediato_id: null });
+      comoRH();
+      Empleado.obtenerPorUsuarioId.mockResolvedValue({ id: 20 });
+      expect((await request(app).put("/vacaciones/1/responder").send({ estatus: "aprobado" })).status).toBe(403);
+      Empleado.obtenerPorUsuarioId.mockResolvedValue({ id: 21 });
+      expect((await request(app).put("/vacaciones/1/responder").send({ estatus: "aprobado" })).status).toBe(200);
+      Empleado.obtenerPorUsuarioId.mockResolvedValue(undefined);
+      expect((await request(app).put("/vacaciones/1/responder").send({ estatus: "aprobado" })).status).toBe(200);
+      // inexistente: RH pasa al controlador (404)
+      Solicitud.obtenerPorId.mockResolvedValue(undefined);
+      Empleado.obtenerPorUsuarioId.mockResolvedValue({ id: 20 });
+      expect((await request(app).put("/vacaciones/2/responder").send({ estatus: "aprobado" })).status).toBe(200);
+    });
     it("el jefe de si mismo no se auto-aprueba", async () => {
       Solicitud.obtenerPorId.mockResolvedValue({ id: 1, empleado_id: 8, jefe_inmediato_id: 8 });
       comoEmpleado(8);

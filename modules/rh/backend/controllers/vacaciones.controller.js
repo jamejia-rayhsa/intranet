@@ -67,6 +67,22 @@ async function responderError(req, res, error, mensajeGenerico) {
   return res.status(500).json({ exito: false, mensaje: mensajeGenerico });
 }
 
+// Quién puede aprobar o rechazar: el jefe inmediato del solicitante, RH y super_admin; nadie lo propio.
+// Devuelve el mensaje de rechazo (403) o null si puede. Función pura: no consulta la BD.
+const MSG_PROPIA = "No puedes aprobar ni rechazar tu propia solicitud de vacaciones";
+const MSG_SIN_AUTORIDAD = "No tienes autoridad para responder esta solicitud de vacaciones";
+function motivoSinAutoridad(solicitud, empleadoAutoriza, esRH) {
+  if (empleadoAutoriza && String(empleadoAutoriza.id) === String(solicitud.empleado_id)) {
+    return MSG_PROPIA;
+  }
+  if (esRH) return null;
+  const esJefe =
+    empleadoAutoriza &&
+    solicitud.jefe_inmediato_id != null &&
+    String(solicitud.jefe_inmediato_id) === String(empleadoAutoriza.id);
+  return esJefe ? null : MSG_SIN_AUTORIDAD;
+}
+
 // Empleado sobre el que se consulta: el pedido (si el middleware lo permitió) o el del token
 async function empleadoDeLaConsulta(req) {
   if (req.query.empleado_id) return Empleado.obtenerPorId(req.query.empleado_id);
@@ -436,9 +452,7 @@ const ControladorVacaciones = {
       const solicitudesEnriquecidas = solicitudes.map((sol) => ({
         ...sol,
         puede_responder:
-          sol.estatus === "pendiente" &&
-          (esAdmin ||
-            (empleadoUsuario && sol.empleado_id !== empleadoUsuario.id)),
+          sol.estatus === "pendiente" && motivoSinAutoridad(sol, empleadoUsuario, esAdmin) === null,
       }));
 
       res.json({
@@ -496,6 +510,10 @@ const ControladorVacaciones = {
         ? `${empleadoAutoriza.nombre} ${empleadoAutoriza.apellido_paterno}`.trim()
         : req.user.nombre || null;
 
+      // Autoridad (RH = Empleados:edicion o super_admin). Se resuelve ANTES de la transacción: usa el
+      // pool, y dentro de la transacción solo se puede usar `cliente`.
+      const esRH = await tienePermiso(req.user, "rh", "Empleados", "edicion");
+
       // Orden de bloqueos (el mismo que crear, sin ciclos): empleado (candado de aplicación, solo al
       // aprobar) -> solicitud (FOR UPDATE) -> departamento (FOR UPDATE, solo al aprobar). Para tomar
       // el candado del empleado primero se lee su id SIN bloquear la fila. Dentro de la transacción
@@ -513,6 +531,11 @@ const ControladorVacaciones = {
 
         const actual = await SolicitudVacaciones.obtenerParaResponder(req.params.id, cliente);
         if (!actual) throw new ErrorVacaciones(404, "Solicitud no encontrada");
+
+        // Con la fila ya bloqueada: la ruta pudo decidir con datos anteriores
+        const motivoDenegado = motivoSinAutoridad(actual, empleadoAutoriza, esRH);
+        if (motivoDenegado) throw new ErrorVacaciones(403, motivoDenegado);
+
         if (actual.estatus !== "pendiente") {
           throw new ErrorVacaciones(409, "Solo se pueden responder solicitudes pendientes");
         }

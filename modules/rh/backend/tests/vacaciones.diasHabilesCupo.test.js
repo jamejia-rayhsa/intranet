@@ -108,6 +108,10 @@ async function consulta(dueno, sql, p = []) {
     }
     return { rows: estado.calendario.filter((c) => c.activo && c.fecha >= p[0] && c.fecha <= p[1]) };
   }
+  if (/^SELECT \* FROM solicitudes_vacaciones WHERE id = \$1$/.test(s)) {
+    const fila = estado.solicitudes.find((x) => x.id === Number(p[0]));
+    return { rows: fila ? [{ ...fila }] : [] };
+  }
   if (/FROM solicitudes_vacaciones WHERE id = \$1 FOR UPDATE/.test(s)) {
     await adquirir(`sol${p[0]}`, dueno);
     const fila = estado.solicitudes.find((x) => x.id === Number(p[0]));
@@ -416,6 +420,8 @@ const responder = (id, cuerpo) => request(app).put(`/vacaciones/${id}/responder`
 describe("Vacaciones - responder", () => {
   beforeEach(() => {
     mockEdicion = true; // RH
+    // Quien autoriza es RH y NO el solicitante (nadie responde lo propio)
+    Empleado.obtenerPorUsuarioId.mockImplementation(async () => ({ ...EMPLEADO, id: 99, usuario_id: 5 }));
   });
 
   it("aprueba: bloquea solicitud y departamento antes de contar, guarda y hace COMMIT", async () => {
@@ -611,6 +617,7 @@ describe("Vacaciones - periodo, fecha de regreso y bloqueo por empleado", () => 
 
   it("aprobar: candado de empleado -> solicitud -> departamento; rechazar no toma candado de empleado", async () => {
     mockEdicion = true;
+    Empleado.obtenerPorUsuarioId.mockImplementation(async () => ({ ...EMPLEADO, id: 99, usuario_id: 5 })); // RH != solicitante
     const sol = pendiente(con("2026-10-19", "2026-10-20"));
     estado.solicitudes.push(sol);
     await responder(sol.id, { estatus: "aprobado" });
@@ -647,6 +654,7 @@ describe("Vacaciones - periodo, fecha de regreso y bloqueo por empleado", () => 
 
     it("dos aprobaciones simultáneas que juntas superan el saldo: una 200 y una 409", async () => {
       mockEdicion = true;
+      Empleado.obtenerPorUsuarioId.mockImplementation(async () => ({ ...EMPLEADO, id: 99, usuario_id: 5 })); // RH != solicitante
       estado.diasPeriodo = 22;
       const a = pendiente({ departamento_id: null, dias_a_disfrutar: 15, ...con("2026-10-05", "2026-10-23") });
       const b = pendiente({ departamento_id: null, dias_a_disfrutar: 15, ...con("2026-11-02", "2026-11-20") });
@@ -667,6 +675,8 @@ describe("Vacaciones - periodo, fecha de regreso y bloqueo por empleado", () => 
 describe("Vacaciones - responder: guardia de estado y fallos posteriores al COMMIT", () => {
   beforeEach(() => {
     mockEdicion = true;
+    // Quien autoriza es RH y NO el solicitante (nadie responde lo propio)
+    Empleado.obtenerPorUsuarioId.mockImplementation(async () => ({ ...EMPLEADO, id: 99, usuario_id: 5 }));
   });
 
   it("guardia de estado aislada: si el UPDATE ya no encuentra la solicitud pendiente -> 409", async () => {
