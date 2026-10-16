@@ -12,6 +12,17 @@ Postgres, autenticación y archivos pasaron a un stack Supabase propio (contened
 - [x] Fase 6: login casero eliminado (solo tokens de GoTrue), políticas de acceso por propietario, respaldos (`scripts/supabase/backup.sh` / `restore.sh`, probados) y documentación
 - [ ] Pendiente: probar el login con Microsoft con credenciales reales de Azure y revalidar `email_verified`; configurar SMTP; retirar `usuarios.hash_password`
 
+## Calendario laboral y vacaciones por departamento (2026-10)
+
+Calendario laboral (oficial de ley, descanso otorgado, evento), vacaciones en días hábiles (lun-vie) y bloqueo por cupo de departamento. Decisiones, revisiones y pruebas: `memory/decisions.md`, `reviews.md`, `tests.md` (rama `feat/calendariolaboral-vacaciones`).
+
+- [x] Fase 1: investigación del flujo de vacaciones
+- [x] Fase 2: BD (`calendario_laboral`, `cupo_vacaciones`, `departamento_id`), API `/api/calendario-laboral`, permisos y semilla de festivos MX 2026-2027 (migración 009)
+- [x] Fase 3: pantalla `/rh/calendario` y cupo en Departamentos
+- [x] Fase 4: días hábiles en el servidor, cupo por departamento al crear y aprobar, calendario de ocupación, `/api/vacaciones/disponibilidad` y `/ocupacion`
+- [x] Fase 5: revisión final y pruebas; autoriza el jefe vigente, RH o super_admin (nunca la propia); posesión estricta al asignar roles; timeouts del pool; JSON inválido a 400; migración 010 (UNIQUE `empleados.usuario_id`)
+- [ ] Pendiente: push/PR/despliegue (re-ejecutar `supabase-db-init`), prueba manual con sesión real, y decidir quién asigna `rh_empleado`/`tickets_tecnico` a cuentas existentes (hoy solo super_admin)
+
 ## Estado de Avance
 
 | Etapa | Módulo             | Estado        | Archivos |

@@ -50,6 +50,10 @@ app.use('/api/permisos', require('../routes/permiso.routes'));
 app.use('/api/roles', require('../routes/rol.routes'));
 app.use('/api/usuarios', require('../routes/usuario.routes'));
 
+// Error HTTP explícito de GoTrue (garantiza que NO aplicó el cambio) / resultado incierto (sin respuesta HTTP)
+const errorHttp = (msg, status = 500) => Object.assign(new Error(msg), { status, definitivo: true });
+const errorIncierto = (msg) => Object.assign(new Error(msg), { status: 503, incierto: true });
+
 const comoSuperAdmin = () => {
   mockUser = { usuario_id: 11, rol_id: IDS.super, rol_nombre: 'super_admin' };
 };
@@ -354,6 +358,41 @@ describe('POST /usuarios/:id/rol y PUT /usuarios/:id: asignación de roles', () 
       expect((await asignar(USUARIOS.libre, 'abc')).status).toBe(400);
     });
 
+    it.each([['RH_ADMIN'], [' rh_admin '], ['Tickets_Admin\t'], ['  SUPER_ADMIN']])(
+      'nombre privilegiado con mayúsculas/espacios (%j), incluso sin permisos: 403 en asignar, PUT y alta',
+      async (nombre) => {
+        const rol = mockPool.estado.roles.find((r) => r.id === IDS.rhAdmin);
+        rol.nombre = nombre;
+        // Sin permisos: la posesión estricta no lo frena, solo la comprobación del nombre
+        mockPool.estado.rop = mockPool.estado.rop.filter((f) => f.rol_id !== IDS.rhAdmin);
+        expect((await asignar(USUARIOS.libre, IDS.rhAdmin)).status).toBe(403);
+        const p = await request(app).put(`/api/usuarios/${USUARIOS.libre}`).send({ rol_id: IDS.rhAdmin });
+        expect(p.status).toBe(403);
+        const a = await request(app)
+          .post('/api/usuarios')
+          .send({ correo: 'a@x.com', nombre: 'A', contraseña: 'Secreta123', rol_id: IDS.rhAdmin });
+        expect(a.status).toBe(403);
+        expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.libre]);
+        expect(supabaseAdmin.crearUsuario).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([[0], ['0'], [false], [-1], [1.5], ['abc'], [[1]], [{}]])(
+      'rol_id inválido %j: 400 en asignar, PUT y alta (0 no quita el rol ni se ignora)',
+      async (valor) => {
+        const antes = mockPool.foto();
+        expect((await asignar(USUARIOS.libre, valor)).status).toBe(400);
+        const p = await request(app).put(`/api/usuarios/${USUARIOS.libre}`).send({ rol_id: valor, nombre: 'X' });
+        expect(p.status).toBe(400);
+        const a = await request(app)
+          .post('/api/usuarios')
+          .send({ correo: 'a@x.com', nombre: 'A', contraseña: 'Secreta123', rol_id: valor });
+        expect(a.status).toBe(400);
+        expect(supabaseAdmin.crearUsuario).not.toHaveBeenCalled();
+        expect(mockPool.foto()).toEqual(antes);
+      },
+    );
+
     it('crear usuario con rol_id super_admin: 403 antes de crear nada en GoTrue', async () => {
       const r = await request(app)
         .post('/api/usuarios')
@@ -548,7 +587,7 @@ describe('POST /usuarios/:id/rol y PUT /usuarios/:id: asignación de roles', () 
           return { id: Number(id), ...datos };
         });
         const antes = mockPool.foto();
-        supabaseAdmin.actualizarPassword.mockRejectedValue(new Error('gotrue caido'));
+        supabaseAdmin.actualizarPassword.mockRejectedValue(errorHttp('gotrue caido'));
         const r = await request(app)
           .put(`/api/usuarios/${USUARIOS.libre}`)
           .send({ contraseña: 'Nueva12345', rol_id: IDS.auditor, nombre: 'N', activo: false });
@@ -669,15 +708,15 @@ describe('POST /usuarios/:id/rol y PUT /usuarios/:id: asignación de roles', () 
         expect(retenidas).toEqual([0]);
       });
 
-      it.each(operaciones)('%s con GoTrue caído o expirado: 502, compensa y el estado es idéntico al inicial', async (_n, peticion) => {
-        const expirado = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
-        for (const fallo of [new Error('ECONNREFUSED'), expirado]) {
+      it.each(operaciones)('%s con error HTTP explícito de GoTrue (4xx/5xx): 502, compensa y el estado es idéntico al inicial', async (_n, peticion) => {
+        for (const fallo of [errorHttp('ECONNREFUSED', 500), errorHttp('invalid', 422)]) {
           mockPool.reiniciar();
           const antes = mockPool.foto();
           supabaseAdmin.actualizarPassword.mockImplementation(lento(30, fallo));
           const r = await peticion(USUARIOS.libre);
           expect(r.status).toBe(502);
-          expect(JSON.stringify(r.body)).not.toMatch(/ECONNREFUSED|timeout|Nueva12345/);
+          expect(r.body.mensaje).toMatch(/se revirtieron/);
+          expect(JSON.stringify(r.body)).not.toMatch(/ECONNREFUSED|invalid|Nueva12345/);
           expect(mockPool.foto()).toEqual(antes);
           expect(mockPool.retenidas()).toBe(0);
           // La compensación es una transacción NUEVA (tras el COMMIT) y con el mismo bloqueo del usuario
@@ -686,6 +725,33 @@ describe('POST /usuarios/:id/rol y PUT /usuarios/:id: asignación de roles', () 
           expect(tras).toContain('BEGIN');
           expect(tras.some((q) => /^SELECT id FROM usuarios WHERE id = \$1 FOR UPDATE/.test(q))).toBe(true);
           expect(tras[tras.length - 1]).toBe('COMMIT');
+        }
+      });
+
+      it.each(operaciones)('%s con resultado INCIERTO (timeout, red, sin respuesta HTTP): NO compensa, 502 veraz y log con id', async (_n, peticion) => {
+        const expirado = Object.assign(errorIncierto('Tiempo de espera agotado'), { name: 'TimeoutError' });
+        // Error sin ninguna marca: por defecto también es incierto (solo el error HTTP explícito compensa)
+        for (const fallo of [errorIncierto('No se pudo contactar'), expirado, new Error('desconocido')]) {
+          mockPool.reiniciar();
+          console.error.mockClear();
+          const antes = mockPool.foto();
+          supabaseAdmin.actualizarPassword.mockImplementation(lento(30, fallo));
+          const r = await peticion(USUARIOS.libre);
+          expect(r.status).toBe(502);
+          expect(r.body.mensaje).toMatch(/No se pudo confirmar el cambio.*verifica el estado del usuario/);
+          expect(r.body.mensaje).not.toMatch(/ningún cambio|revirtieron/);
+          expect(JSON.stringify(r.body)).not.toMatch(/Nueva12345|contactar|agotado|desconocido/);
+          // La BD conserva lo que escribió la operación: NO se restaura
+          expect(mockPool.foto()).not.toEqual(antes);
+          const c = mockPool.consultas;
+          const tras = c.slice(c.indexOf('COMMIT') + 1);
+          expect(tras).not.toContain('BEGIN');
+          expect(tras.some((q) => /^UPDATE usuarios SET nombre = \$1, apellido/.test(q))).toBe(false);
+          expect(mockPool.retenidas()).toBe(0);
+          const log = console.error.mock.calls.map((x) => x.join(' ')).join('\n');
+          expect(log).toMatch(new RegExp(`usuario ${USUARIOS.libre}`));
+          expect(log).toMatch(/incierto/);
+          expect(log).not.toMatch(/Nueva12345/);
         }
       });
 
@@ -704,7 +770,7 @@ describe('POST /usuarios/:id/rol y PUT /usuarios/:id: asignación de roles', () 
       });
 
       it('si la compensación también falla: 500 genérico y console.error con el id, sin secretos', async () => {
-        supabaseAdmin.actualizarPassword.mockImplementation(lento(10, new Error('gotrue caido')));
+        supabaseAdmin.actualizarPassword.mockImplementation(lento(10, errorHttp('gotrue caido')));
         const real = mockPool.connect;
         let n = 0;
         jest.spyOn(mockPool, 'connect').mockImplementation(async () => {
@@ -733,7 +799,7 @@ describe('POST /usuarios/:id/rol y PUT /usuarios/:id: asignación de roles', () 
         for (let k = 0; k < 40 && !falla; k++) await esperar(25);
         expect(falla).toBeDefined();
         await Delegacion.operarSobreUsuario(mockPool, SUPER, USUARIOS.libre, { rolId: IDS.rhEmpleado });
-        falla(new Error('gotrue caido'));
+        falla(errorHttp('gotrue caido'));
         const r = await reset;
         expect(r.status).toBe(500);
         expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.rhEmpleado]);

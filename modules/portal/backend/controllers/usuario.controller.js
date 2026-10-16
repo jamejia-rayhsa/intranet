@@ -45,7 +45,8 @@ const ControladorUsuario = {
       }
 
       // El rol inicial se valida ANTES de crear nada (ni GoTrue ni fila local)
-      if (rol_id) {
+      const conRol = rol_id !== undefined && rol_id !== null && rol_id !== "";
+      if (conRol) {
         await Delegacion.validarRolesAsignables(grupo, req.user, [rol_id]);
       }
 
@@ -88,7 +89,7 @@ const ControladorUsuario = {
         throw errorInsert;
       }
 
-      if (rol_id) {
+      if (conRol) {
         await grupo.query(
           "INSERT INTO usuario_rol (usuario_id, rol_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
           [usuario.id, rol_id],
@@ -141,7 +142,7 @@ const ControladorUsuario = {
         req.user,
         req.params.id,
         {
-          rolId: rol_id === undefined ? undefined : rol_id || null,
+          rolId: rol_id === undefined ? undefined : rol_id === null || rol_id === "" ? null : rol_id,
           tomaCuenta: Boolean(contraseña),
           // Solo BD, dentro de la transacción (con el usuario bloqueado)
           escribir: async (cliente) => {

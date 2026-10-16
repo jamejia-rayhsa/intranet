@@ -13,6 +13,9 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-15] orquestador → decisions.md — Cierre de la tarea de calendario laboral y bloqueo de vacaciones: lista para GO/NO-GO final
+- [2026-10-15] coder → code-notes.md — Cuarta ronda (Fase 5): resultado incierto de GoTrue no se compensa (F1) y pruebas F6 (rol_id 0, nombres privilegiados)
+- [2026-10-15] revisor → reviews.md#re-revision-de-la-tercera-ronda-fase-5 — Re-revisión de la tercera ronda (Fase 5): CONDICIONADO (0 críticos; 1 alto: resultado ambiguo de GoTrue tras la compensación; PARA RESOLVER flujos sin salida)
 - [2026-10-15] coder → code-notes.md — Tercera ronda (Fase 5): posesión estricta al asignar roles y GoTrue fuera de la transacción con compensación
 - [2026-10-15] orquestador → decisions.md — Decisiones sobre los 2 altos: posesión estricta al asignar roles (sustituye la decisión 1) y GoTrue fuera de la transacción
 - [2026-10-15] orquestador → decisions.md — Fase 5 condicionada tras la 2.ª re-revisión: 2 altos de usuarios/roles pendientes del humano

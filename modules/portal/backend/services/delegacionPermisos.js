@@ -236,7 +236,7 @@ async function exigirRolAsignable(cliente, actor, rolId) {
  */
 async function validarRolesAsignables(pool, actor, rolIds) {
   if (!Array.isArray(rolIds)) throw new ErrorDelegacion(400, "roles debe ser un array");
-  if (!rolIds.every(esEnteroInt4)) throw new ErrorDelegacion(400, "rol_id no válido");
+  if (!rolIds.every((r) => esEnteroInt4(r) && Number(r) >= 1)) throw new ErrorDelegacion(400, "rol_id no válido");
   const ids = [...new Set(rolIds.map(Number))];
   if (ids.length === 0) return ids;
   const cliente = await pool.connect();
@@ -344,10 +344,11 @@ async function compensarUsuario(pool, usuarioId, previo, posterior) {
  *  1) UNA transacción con el usuario bloqueado (SELECT ... FOR UPDATE): valida contra el estado ACTUAL y
  *     FINAL y escribe en BD (rol + `escribir`). Un ascenso concurrente no se cuela entre validar y escribir.
  *  2) Tras el COMMIT, y SIN ninguna conexión del pool retenida, `externo` (la llamada a GoTrue, lenta:
- *     hasta 10 s). Si falla o expira, se COMPENSA en otra transacción (restaura roles, activo, nombre,
+ *     hasta 10 s). Si GoTrue responde un error HTTP explícito (`error.definitivo`), se COMPENSA en otra transacción (restaura roles, activo, nombre,
  *     apellido y requiere_cambio_password al estado previo, con el mismo bloqueo y solo si el usuario no
- *     cambió entretanto) y se responde un error genérico (502) sin dejar BD y GoTrue desincronizados. Si la
- *     compensación también falla: console.error con el id (sin secretos) y error 500.
+ *     cambió entretanto) y se responde 502. Si el resultado es INCIERTO (timeout, red, sin respuesta HTTP) NO se
+ *     compensa (GoTrue pudo aplicarlo) y se responde 502 pidiendo verificar el usuario. Si la
+ *     compensación falla: console.error con el id (sin secretos) y error 500.
  *
  * @param {object} opciones
  * @param {undefined|null|""|number|string} opciones.rolId - undefined = no cambia el rol; null/"" = quitarlo
@@ -363,7 +364,7 @@ async function compensarUsuario(pool, usuarioId, previo, posterior) {
 async function operarSobreUsuario(pool, actor, usuarioId, { rolId, tomaCuenta = false, escribir, externo } = {}) {
   const cambiaRol = rolId !== undefined;
   const quitar = rolId === null || rolId === "";
-  if (cambiaRol && !quitar && !esEnteroInt4(rolId)) throw new ErrorDelegacion(400, "rol_id no válido");
+  if (cambiaRol && !quitar && (!esEnteroInt4(rolId) || Number(rolId) < 1)) throw new ErrorDelegacion(400, "rol_id no válido");
   if (!esEnteroInt4(usuarioId)) throw new ErrorDelegacion(400, "id de usuario no válido");
 
   let valor;
@@ -431,6 +432,19 @@ async function operarSobreUsuario(pool, actor, usuarioId, { rolId, tomaCuenta = 
     try {
       await externo(valor);
     } catch (errorExterno) {
+      // Solo un error HTTP explícito de GoTrue (`definitivo`) garantiza que NO aplicó el cambio. Un timeout,
+      // un error de red o una respuesta perdida (sin respuesta HTTP) es INCIERTO: GoTrue pudo haberlo aplicado,
+      // y revertir la BD dejaría p. ej. una contraseña nueva en GoTrue con la cuenta activa/sin flag en BD.
+      // Ante la duda por defecto: NO compensar.
+      if (!(errorExterno && errorExterno.definitivo === true)) {
+        console.error(
+          `Resultado incierto de la llamada externa sobre el usuario ${usuarioId}; NO se compensa (BD y GoTrue pueden diferir): ${errorExterno && errorExterno.message}`,
+        );
+        throw new ErrorDelegacion(
+          502,
+          "No se pudo confirmar el cambio en el servicio de autenticación; verifica el estado del usuario",
+        );
+      }
       console.error(`Fallo la llamada externa sobre el usuario ${usuarioId}: ${errorExterno.message}`);
       try {
         await compensarUsuario(pool, usuarioId, previo, posterior);
@@ -442,7 +456,7 @@ async function operarSobreUsuario(pool, actor, usuarioId, { rolId, tomaCuenta = 
       }
       throw new ErrorDelegacion(
         502,
-        "No se pudo completar la operación en el servicio de autenticación; no se aplicó ningún cambio",
+        "El servicio de autenticación rechazó la operación; los cambios en el portal se revirtieron",
       );
     }
   }

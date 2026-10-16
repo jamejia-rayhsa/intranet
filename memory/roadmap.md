@@ -52,10 +52,10 @@
 > Rama `feat/calendariolaboral-vacaciones`. Fases = PROPUESTA del orquestador; cada una cierra con GO del humano. Decisiones en decisions.md (2026-10-15).
 
 ## Estado global
-- **Fase actual:** 5 CONDICIONADA (revisor: 0 críticos, 2 altos por decidir en usuarios/roles del portal; vacaciones y calendario cerrados). **Actualizado:** 2026-10-15
+- **Fase actual:** TAREA COMPLETA: Fases 1-5 hechas; LISTA PARA GO/NO-GO FINAL del humano (push/PR/despliegue solo con su OK). **Actualizado:** 2026-10-15
 
 ## Fase 1 — Investigación — CERRADA (research.md 1545-1638)
 ## Fase 2 — Calendario laboral: BD, backend, permisos, auditoría, semilla de festivos MX — CERRADA (commit c5247eb)
 ## Fase 3 — Pantalla de administración del calendario (RH/Admin) — CERRADA (commit 07400d2)
 ## Fase 4 — Días hábiles + bloqueo por departamento con cupo + fechas ocupadas en el selector — CERRADA (commit fa87d41)
-## Fase 5 — Revisión, pruebas y cierre — CONDICIONADA (ver decisions.md 2.ª re-revisión)
+## Fase 5 — Revisión, pruebas y cierre — LISTA PARA GO/NO-GO FINAL (ver decisions.md "Cierre de la tarea")

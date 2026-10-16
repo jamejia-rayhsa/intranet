@@ -102,7 +102,7 @@ describe('usuario.controller', () => {
 
     it('si GoTrue falla se compensa la BD local y responde 502 (GoTrue va después del COMMIT)', async () => {
       Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_tipo: 'local', auth_uid: 'uid-3' });
-      supabaseAdmin.actualizarPassword.mockRejectedValue(new Error('gotrue caido'));
+      supabaseAdmin.actualizarPassword.mockRejectedValue(Object.assign(new Error('gotrue caido'), { status: 500, definitivo: true }));
       const res = mockRes();
       await controlador.resetearPassword({ user: SUPER, params: { id: 14 } }, res);
       expect(res.status).toHaveBeenCalledWith(502);

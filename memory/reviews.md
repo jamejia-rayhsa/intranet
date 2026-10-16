@@ -2547,3 +2547,69 @@ Hallazgos abiertos:
 - **BAJO** `rh/migrations/002` (`solicitudes_vacaciones.autoriza_id`, NO ACTION): DELETE de un usuario que autoriza, concurrente con una aprobación, puede dar deadlock (Postgres aborta una). Error benigno; documentar.
 - **BAJO** tests: TOCTOU con `setTimeout` de 80 ms (flaky en CI lento); `fakeDelegacion.js` acoplado al SQL exacto de `FOR UPDATE`.
 - **Pendiente previo:** E6 (rh_admin crea cuentas con portal_admin, `empleado.controller.js:110-114`), sin decisión.
+
+### [2026-10-15] [revisor] — Re-revisión de la tercera ronda (Fase 5)
+**Veredicto:** CONDICIONADO. 0 críticos. 1 alto abierto (resultado ambiguo de GoTrue tras la compensación) que conviene resolver antes de mergear; 3 medios (ventana tras COMMIT, GoTrue sin serializar, compensación todo-o-nada) y 1 medio operativo PARA RESOLVER (flujos sin salida).
+**Alcance:** `git diff 6373018..HEAD` (9 archivos, +358/-59). Solo lectura. Lectura de code-notes "Tercera ronda", decisions "Decisiones del humano sobre los 2 altos" y reviews de la segunda ronda. Jest de las 3 suites tocadas: 122/122 OK. Mutantes en una copia de HEAD dentro del scratchpad (no en el repo): 9 mutantes, 7 detectados, 1 equivalente (M3), 1 sobrevive (M4).
+**Verificado sin hallazgo:** posesión estricta en alta de usuario (`usuario.controller.js:49`), PUT y asignarRol (`delegacionPermisos.js:397`, `operarSobreUsuario`), alta de empleado (`empleado.controller.js:110-113`, todos los roles validados antes de GoTrue, sin asignación parcial) y grep de `usuario_rol` (todas las escrituras pasan por la regla; `usuarioRol.model.js` sin llamadores). Sin bypass por mayúsculas, espacios, roles renombrados o multi-rol final. portal_admin no se auto-asigna ni asigna permisos que no posee. super_admin sin regresión (`delegacionPermisos.js:209` sale antes del chequeo). Pool: ninguna conexión retenida durante GoTrue; release en todos los caminos (`finally`, `release(error)` si falla ROLLBACK). Sin ciclos de bloqueo (usuarios FOR UPDATE → usuario_rol/roles; guardarPermisosDeModulo bloquea roles sin tocar usuarios). 502/500 genéricos, sin secretos en logs.
+**Abiertos:** ALTO: timeout de GoTrue ambiguo (F1). MEDIO: ventana con contraseña vieja viva tras COMMIT (F2), GoTrue sin serializar entre operaciones concurrentes (F3), compensación todo-o-nada (F4), flujos sin salida para PARA RESOLVER (F5). BAJO: F6-F11.
+**Siguiente paso:** el orquestador decide F1 (la corrección propuesta no cambia decisiones de seguridad) y F2/F3 (cambian el orden de efectos respecto a GoTrue). F5 es decisión del humano.
+
+**Hallazgos**
+
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:432-446 (catch de `externo`; compensación en :436; 502 en :445); origen en modules/portal/backend/services/supabaseAdmin.service.js:31 (AbortSignal de 10 s)
+**Problema:** si GoTrue expira (o la respuesta se pierde) después de aplicar el cambio, la compensación revierte BD (activo, nombre, apellido, requiere_cambio_password, roles) mientras la contraseña en GoTrue ya es la nueva, y el 502 dice "no se aplicó ningún cambio" (falso). Resultados: PUT {contraseña, activo:false} deja la cuenta activa con una contraseña que nadie conoce; reset deja al usuario con una temporal perdida y sin flag de cambio; el admin, al creer que nada cambió, puede no reintentar. El test de "GoTrue falla" simula un fallo que NO aplica el cambio, así que no lo cubre.
+**Severidad:** alto
+**Fix sugerido:** distinguir fallo definido (respuesta HTTP de GoTrue, 4xx/5xx) de resultado incierto (timeout o error de red): solo compensar en el primero. En el incierto, no revertir y responder 502 con "estado incierto; revisa la cuenta o reintenta" (la operación de contraseña es idempotente). Prueba: stub que APLICA el cambio y después expira → sin compensación y mensaje que no afirma "ningún cambio".
+
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:426-432 (COMMIT y luego `externo`); usuario.controller.js:214 y :218 (reset); modules/portal/backend/controllers/auth.controller.js:55-90 (cambiarPassword valida la contraseña actual con GoTrue)
+**Problema:** tras el COMMIT la BD ya tiene el estado nuevo y la contraseña vieja sigue válida hasta la llamada a GoTrue (hasta 10 s). Con un reset, quien conserve la contraseña vieja puede entrar, ver `requiere_cambio_password=true` y cambiar la contraseña con `cambiarPassword`; si esa escritura en GoTrue cae después de la del admin, el atacante conserva la cuenta. Con el orden anterior (GoTrue antes del COMMIT) la contraseña vieja moría antes de cualquier cambio en BD.
+**Severidad:** medio
+**Fix sugerido:** decisión del orquestador con el humano. Opciones a evaluar: cerrar sesiones GoTrue del usuario tras el reset, o marcar la cuenta como inactiva antes del COMMIT y reactivarla tras GoTrue. Prueba: reset con GoTrue lento y un login/cambio con la contraseña vieja dentro de la ventana.
+
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:432 (llamada externa fuera del `FOR UPDATE`) con usuario.controller.js:160-166 (PUT) y :195-218 (reset)
+**Problema:** la BD se serializa por el bloqueo del usuario, pero GoTrue no. Dos operaciones concurrentes sobre el mismo usuario (dos resets, o reset y PUT con contraseña) pueden llegar a GoTrue en orden distinto al del COMMIT: la contraseña final es la de la última llegada, y ambas responden 200 con temporales distintas, solo una de las cuales vale. Antes de esta ronda el bloqueo se retenía durante GoTrue y esto no pasaba.
+**Severidad:** medio
+**Fix sugerido:** serializar la llamada externa por usuario (candado de aplicación con cola en proceso, o un contador de versión comparado antes de llamar a GoTrue y reintentar/rechazar con 409 si cambió). Prueba: dos resets simultáneos con GoTrue lento; ambas respuestas no pueden ser 200 con temporales distintas.
+
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:317 (`if (!mismoEstado(actual, posterior)) throw`)
+**Problema:** la comparación es sobre el estado completo del usuario. Cualquier cambio ajeno, aunque sea en otra columna, impide revertir incluso lo que la propia operación cambió (p. ej., el rol). Queda un estado parcial con 500 y registro en consola. No pisa el cambio ajeno (correcto), pero es demasiado estricto.
+**Severidad:** medio
+**Fix sugerido:** calcular el diff previo→posterior y restaurar solo las columnas y roles que la operación escribió, siempre que sigan con el valor posterior.
+
+**Archivo/línea:** modules/rh/backend/controllers/empleado.controller.js:93-180 (el alta solo crea usuarios nuevos; `usuario_id` no viene del body); modules/portal/backend/routes/usuario.routes.js:13-17 (todas las rutas de roles exigen portal/Usuarios:edicion); decisions.md, entrada "Decisiones del humano sobre los 2 altos" punto 1
+**Problema (PARA RESOLVER, flujo sin salida):** (a) asignar rh_empleado a una cuenta YA existente solo lo hace super_admin: no hay ruta de vinculación, y la decisión dice que "esas asignaciones las hacen rh_admin o super_admin", lo cual no es posible para cuentas existentes; (b) tickets_tecnico solo lo asigna super_admin: tickets_admin no tiene ruta (no posee portal/Usuarios:edicion) y antes lo hacía portal_admin; (c) auditoria_viewer solo super_admin: consistente con la regla (nadie fuera de super posee auditoría). (a) y (b) son flujos operativos reales; la regla de seguridad en sí es correcta.
+**Severidad:** medio (operativo, no de seguridad)
+**Fix sugerido:** decisión del humano, sin excepciones de seguridad: quién asigna rh_empleado a cuentas existentes y tickets_tecnico (mantener super_admin como única vía, o dar una vía con la misma regla de posesión); corregir el texto de la decisión, que atribuye a rh_admin asignaciones que su código no permite.
+
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:213 (`esNombrePrivilegiado`); tests en modules/portal/backend/tests/delegacionPermisos.test.js
+**Problema:** no hay prueba de asignación con el nombre privilegiado en mayúsculas o con espacios (mutante M4, comparación sensible a mayúsculas, sobrevive). No encontré escalada actual: los nombres privilegiados se comparan normalizados y la posesión sigue aplicando.
+**Severidad:** bajo
+**Fix sugerido:** añadir casos "RH_ADMIN" y " rh_admin " en la asignación (PUT, alta de usuario y alta de empleado) esperando 403.
+
+**Archivo/línea:** modules/portal/backend/models/usuarioRol.model.js:6-10 (INSERT sin validación)
+**Problema:** modelo con escritura directa a usuario_rol sin posesión. Hoy no tiene llamadores (verificado), pero cualquier uso futuro se saltaría la regla.
+**Severidad:** bajo
+**Fix sugerido:** eliminar el modelo o hacer que pase por `exigirRolAsignable` dentro de una transacción.
+
+**Archivo/línea:** modules/rh/backend/controllers/empleado.controller.js:112-113 (`rol_id ? [rol_id] : roles || []`)
+**Problema:** `rol_id = 0` pasa la validación de tipo pero es falsy, así que se ignora sin error y se usa `roles`. No concede permisos, pero el comportamiento es silencioso.
+**Severidad:** bajo
+**Fix sugerido:** comparar explícitamente con `null`, `undefined` y `""`.
+
+**Archivo/línea:** modules/rh/backend/controllers/empleado.controller.js:240-248 (catch del alta)
+**Problema:** la respuesta devuelve `error: error.message` (mensajes de PostgreSQL al cliente; preexistente). Además, cuando la rama `responderErrorDelegacion` vuelve antes de `compensarUsuario`, un error de delegación posterior a GoTrue dejaría la cuenta creada. Hoy esa rama es inalcanzable tras GoTrue, pero es frágil.
+**Severidad:** bajo
+**Fix sugerido:** quitar `error: error.message` y registrarlo en consola, como en departamento.controller.js; compensar antes de responder en cualquier rama.
+
+**Archivo/línea:** modules/portal/backend/controllers/usuario.controller.js:92-95 (INSERT de rol en `crear`)
+**Problema:** el INSERT de usuario_rol va fuera de transacción y fuera de la compensación de la alta. Si falla, queda una cuenta en GoTrue y local sin rol (sin acceso, pero huérfana). Preexistente.
+**Severidad:** bajo
+**Fix sugerido:** insertar el rol dentro de la misma transacción de la alta local, o compensar GoTrue si falla.
+
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:206-227 (usa `actor.rol_id`) con modules/portal/backend/middleware/auth.middleware.js:69-78 (LIMIT 1 sin ORDER BY)
+**Problema:** deuda aceptada ya registrada. Con varios roles, el rol que se toma para decidir puede no ser el de super_admin: un super_admin con un segundo rol puede recibir 403 en asignaciones. No escala privilegios (se usa un subconjunto del actor). Esta ronda no lo empeora, pero depende más de ello.
+**Severidad:** bajo
+**Fix sugerido:** unir los roles del actor (posesión por unión) y ORDER BY determinista, con tests multirrol.
+
+**Pruebas (detalle):** `npx jest` de delegacionPermisos, usuario.controller y empleado.altaRoles: 122/122. Mutantes (copia de HEAD): M1 sin posesión en exigirRolAsignable → detectado; M2 posesión contra el propio rol → detectado; M3 toma de cuenta sin roles finales → sobrevive, pero es equivalente porque exigirRolAsignable ya exige posesión del rol final; M4 nombre privilegiado sensible a mayúsculas → sobrevive (F6); M5 compensación sin restaurar roles → detectado; M6 compensación sin comprobar estado ajeno → detectado; M7 compensación omitida → detectado (5 fallos); M8 alta de empleado sin validar roles → detectado; M9 PUT sin posesión de rol → detectado (26 fallos).
