@@ -10,9 +10,9 @@
 //    se considera poseída también por quien tiene 'edicion' (misma semántica que verificarPermiso).
 //  - Un no super_admin no puede tocar el rol super_admin ni crear/renombrar/borrar roles con nombres
 //    privilegiados (el código decide por nombre: super_admin, rh_admin, tickets_admin).
-//  - Asignar un rol a un usuario exige que el rol no sea privilegiado (decisión del humano: un no
-//    super_admin PUEDE asignar roles no privilegiados aunque tengan más permisos que él). Un no
-//    super_admin tampoco cambia su propio rol (no se auto-eleva).
+//  - Asignar un rol a un usuario (alta de usuario, alta de empleado, PUT, asignarRol) exige que el rol
+//    no sea privilegiado Y que el actor POSEA COMPLETOS los permisos del rol (posesión estricta,
+//    decisión C del humano; 'edicion' cubre 'consulta'). Un no super_admin tampoco cambia su propio rol.
 //  - Un no super_admin no edita, desactiva ni borra usuarios con rol privilegiado.
 //  - Cambiar o resetear la contraseña de un usuario (tomar su cuenta) exige además que los permisos del
 //    rol del usuario sean un subconjunto de los del actor; si no, solo super_admin.
@@ -199,9 +199,9 @@ async function guardarPermisosDeModulo(pool, actor, rolId, modulo, permisos) {
 }
 
 /**
- * Valida (con `cliente`, dentro de la transacción) que el actor pueda asignar `rolId`: el rol no debe
- * ser privilegiado (super_admin, rh_admin, tickets_admin). super_admin: sin restricción. Los roles no
- * privilegiados se pueden asignar aunque tengan más permisos que el actor (decisión del humano).
+ * Valida (con `cliente`, dentro de la transacción) que el actor pueda asignar `rolId`. super_admin: sin
+ * restricción. Los demás: el rol no puede ser privilegiado (super_admin, rh_admin, tickets_admin) y el
+ * actor debe poseer TODOS sus permisos (posesión estricta); si no, 403 sin cambios.
  */
 async function exigirRolAsignable(cliente, actor, rolId) {
   const rol = await cliente.query("SELECT id, nombre FROM roles WHERE id = $1", [rolId]);
@@ -212,6 +212,18 @@ async function exigirRolAsignable(cliente, actor, rolId) {
     throw new ErrorDelegacion(
       403,
       `No puedes asignar el rol ${rol.rows[0].nombre}: solo un super_admin puede hacerlo`,
+    );
+  }
+  const { claves: clavesActor } = await permisosDeRol(cliente, actor && actor.rol_id);
+  const { detalle } = await permisosDeRol(cliente, rolId);
+  const ajenos = detalle.filter((f) => !posee(clavesActor, f.opcion_id, f.tipo));
+  if (ajenos.length > 0) {
+    throw new ErrorDelegacion(
+      403,
+      `No puedes asignar el rol ${rol.rows[0].nombre}: incluye permisos que tú no posees (${ajenos
+        .slice(0, 5)
+        .map(etiqueta)
+        .join(", ")}${ajenos.length > 5 ? ", ..." : ""}); solo un super_admin puede hacerlo`,
     );
   }
   return rol.rows[0];
@@ -273,28 +285,92 @@ async function exigirPermisosPoseidos(cliente, actor, rolIds) {
   }
 }
 
+const COLUMNAS_COMPENSABLES = ["nombre", "apellido", "activo", "requiere_cambio_password"];
+
+/** Foto del usuario (columnas que las operaciones pueden escribir + roles) para comparar y compensar. */
+async function leerEstadoUsuario(cliente, usuarioId) {
+  const fila = await cliente.query(
+    "SELECT nombre, apellido, activo, requiere_cambio_password FROM usuarios WHERE id = $1",
+    [usuarioId],
+  );
+  const roles = await cliente.query("SELECT rol_id FROM usuario_rol WHERE usuario_id = $1", [usuarioId]);
+  const columnas = {};
+  for (const c of COLUMNAS_COMPENSABLES) columnas[c] = fila.rows[0] ? fila.rows[0][c] : undefined;
+  return { columnas, roles: roles.rows.map((f) => Number(f.rol_id)).sort((a, b) => a - b) };
+}
+
+const mismoEstado = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
 /**
- * Operación ATÓMICA sobre un usuario (cambio de rol, edición, contraseña, borrado): valida y escribe en
- * UNA transacción con el usuario bloqueado (SELECT ... FOR UPDATE). Así un ascenso concurrente de rol
- * no se cuela entre la validación y la escritura, y un PUT {contraseña, rol_id} se valida contra el
- * ESTADO FINAL (roles resultantes) además del actual.
+ * Compensación: en una transacción NUEVA y con el mismo bloqueo del usuario, restaura `previo` SOLO si el
+ * usuario sigue exactamente como lo dejó la operación (`posterior`); si alguien lo cambió entretanto no se
+ * pisa (se lanza para que quien llama lo registre).
+ */
+async function compensarUsuario(pool, usuarioId, previo, posterior) {
+  const cliente = await pool.connect();
+  let errorRollback;
+  try {
+    await cliente.query("BEGIN");
+    const bloqueado = await cliente.query("SELECT id FROM usuarios WHERE id = $1 FOR UPDATE", [usuarioId]);
+    if (bloqueado.rows.length === 0) throw new Error("el usuario ya no existe");
+    const actual = await leerEstadoUsuario(cliente, usuarioId);
+    if (!mismoEstado(actual, posterior)) throw new Error("el usuario cambió entretanto; no se restaura");
+    await cliente.query(
+      "UPDATE usuarios SET nombre = $1, apellido = $2, activo = $3, requiere_cambio_password = $4 WHERE id = $5",
+      [...COLUMNAS_COMPENSABLES.map((c) => previo.columnas[c]), usuarioId],
+    );
+    if (!mismoEstado(previo.roles, posterior.roles)) {
+      await cliente.query("DELETE FROM usuario_rol WHERE usuario_id = $1", [usuarioId]);
+      for (const rolId of previo.roles) {
+        await cliente.query(
+          "INSERT INTO usuario_rol (usuario_id, rol_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+          [usuarioId, rolId],
+        );
+      }
+    }
+    await cliente.query("COMMIT");
+  } catch (error) {
+    await cliente.query("ROLLBACK").catch((e) => {
+      errorRollback = e;
+    });
+    throw error;
+  } finally {
+    cliente.release(errorRollback);
+  }
+}
+
+/**
+ * Operación ATÓMICA sobre un usuario (cambio de rol, edición, contraseña, borrado). Dos fases:
+ *  1) UNA transacción con el usuario bloqueado (SELECT ... FOR UPDATE): valida contra el estado ACTUAL y
+ *     FINAL y escribe en BD (rol + `escribir`). Un ascenso concurrente no se cuela entre validar y escribir.
+ *  2) Tras el COMMIT, y SIN ninguna conexión del pool retenida, `externo` (la llamada a GoTrue, lenta:
+ *     hasta 10 s). Si falla o expira, se COMPENSA en otra transacción (restaura roles, activo, nombre,
+ *     apellido y requiere_cambio_password al estado previo, con el mismo bloqueo y solo si el usuario no
+ *     cambió entretanto) y se responde un error genérico (502) sin dejar BD y GoTrue desincronizados. Si la
+ *     compensación también falla: console.error con el id (sin secretos) y error 500.
  *
  * @param {object} opciones
  * @param {undefined|null|""|number|string} opciones.rolId - undefined = no cambia el rol; null/"" = quitarlo
  * @param {boolean} opciones.tomaCuenta - la operación cambia credenciales: exige poseer los permisos de los
  *   roles actuales Y finales (no super_admin)
- * @param {(cliente)=>Promise<any>} [opciones.escribir] - escrituras extra, con el MISMO cliente y tras
- *   validar y cambiar el rol. Si lanza, todo se revierte. Pensada para llamar a GoTrue AL FINAL: un fallo
- *   de GoTrue revierte la BD; el único riesgo residual es que falle el COMMIT después de GoTrue.
+ * @param {(cliente)=>Promise<any>} [opciones.escribir] - escrituras de BD con el MISMO cliente, tras validar
+ *   y cambiar el rol; si lanza, todo se revierte. Solo puede escribir las columnas compensables
+ *   (nombre, apellido, activo, requiere_cambio_password) si se usa `externo`. Su resultado es `valor`.
+ *   Si devuelve null/undefined no se ejecuta `externo`.
+ * @param {(valor:any)=>Promise<any>} [opciones.externo] - llamada externa (GoTrue) DESPUÉS del COMMIT
  * @returns {Promise<{encontrado:boolean, valor?:any}>}
  */
-async function operarSobreUsuario(pool, actor, usuarioId, { rolId, tomaCuenta = false, escribir } = {}) {
+async function operarSobreUsuario(pool, actor, usuarioId, { rolId, tomaCuenta = false, escribir, externo } = {}) {
   const cambiaRol = rolId !== undefined;
   const quitar = rolId === null || rolId === "";
   if (cambiaRol && !quitar && !esEnteroInt4(rolId)) throw new ErrorDelegacion(400, "rol_id no válido");
   if (!esEnteroInt4(usuarioId)) throw new ErrorDelegacion(400, "id de usuario no válido");
 
+  let valor;
+  let previo = null;
+  let posterior = null;
   const cliente = await pool.connect();
+  let errorRollback;
   try {
     await cliente.query("BEGIN");
     const usuario = await cliente.query("SELECT id FROM usuarios WHERE id = $1 FOR UPDATE", [usuarioId]);
@@ -326,6 +402,8 @@ async function operarSobreUsuario(pool, actor, usuarioId, { rolId, tomaCuenta = 
       await exigirPermisosPoseidos(cliente, actor, [...new Set([...rolesActuales, ...rolesFinales])]);
     }
 
+    if (externo) previo = await leerEstadoUsuario(cliente, usuarioId);
+
     if (hayCambioDeRol) {
       await cliente.query("DELETE FROM usuario_rol WHERE usuario_id = $1", [usuarioId]);
       if (!quitar) {
@@ -336,15 +414,39 @@ async function operarSobreUsuario(pool, actor, usuarioId, { rolId, tomaCuenta = 
       }
     }
 
-    const valor = escribir ? await escribir(cliente) : undefined;
+    valor = escribir ? await escribir(cliente) : undefined;
+    if (externo && valor !== null && valor !== undefined) posterior = await leerEstadoUsuario(cliente, usuarioId);
     await cliente.query("COMMIT");
-    return { encontrado: true, valor };
   } catch (error) {
-    await cliente.query("ROLLBACK").catch(() => {});
+    await cliente.query("ROLLBACK").catch((e) => {
+      errorRollback = e;
+    });
     throw error;
   } finally {
-    cliente.release();
+    // La conexión vuelve al pool ANTES de llamar a GoTrue
+    cliente.release(errorRollback);
   }
+
+  if (externo && valor !== null && valor !== undefined) {
+    try {
+      await externo(valor);
+    } catch (errorExterno) {
+      console.error(`Fallo la llamada externa sobre el usuario ${usuarioId}: ${errorExterno.message}`);
+      try {
+        await compensarUsuario(pool, usuarioId, previo, posterior);
+      } catch (errorCompensacion) {
+        console.error(
+          `No se pudo compensar al usuario ${usuarioId} tras fallar la llamada externa; BD y GoTrue pueden estar desincronizados: ${errorCompensacion.message}`,
+        );
+        throw new ErrorDelegacion(500, "Error interno; avisa a un administrador para revisar la cuenta");
+      }
+      throw new ErrorDelegacion(
+        502,
+        "No se pudo completar la operación en el servicio de autenticación; no se aplicó ningún cambio",
+      );
+    }
+  }
+  return { encontrado: true, valor };
 }
 
 /**

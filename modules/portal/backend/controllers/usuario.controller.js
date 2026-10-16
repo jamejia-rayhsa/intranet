@@ -135,6 +135,7 @@ const ControladorUsuario = {
 
       // TODO(supabase): este endpoint no permite cambiar correo; si se agrega,
       // sincronizarlo en GoTrue (el contrato de supabaseAdmin aun no lo ofrece).
+      let authUid = null;
       const { encontrado, valor: usuario } = await Delegacion.operarSobreUsuario(
         grupo,
         req.user,
@@ -142,8 +143,8 @@ const ControladorUsuario = {
         {
           rolId: rol_id === undefined ? undefined : rol_id || null,
           tomaCuenta: Boolean(contraseña),
+          // Solo BD, dentro de la transacción (con el usuario bloqueado)
           escribir: async (cliente) => {
-            let authUid = null;
             if (contraseña) {
               const actual = await Usuario.buscarPorId(req.params.id, cliente);
               if (!actual) return null;
@@ -156,14 +157,14 @@ const ControladorUsuario = {
               authUid = actual.auth_uid;
             }
             // Sin otros campos (p. ej. solo rol_id) no hay UPDATE que hacer: se devuelve el usuario tal cual
-            const guardado =
-              Object.keys(datos).length > 0
-                ? await Usuario.actualizar(req.params.id, datos, cliente)
-                : await Usuario.buscarPorId(req.params.id, cliente);
-            // GoTrue AL FINAL, antes del COMMIT: si falla, la BD se revierte completa
-            if (authUid) await supabaseAdmin.actualizarPassword(authUid, contraseña);
-            return guardado;
+            return Object.keys(datos).length > 0
+              ? Usuario.actualizar(req.params.id, datos, cliente)
+              : Usuario.buscarPorId(req.params.id, cliente);
           },
+          // GoTrue DESPUÉS del COMMIT y sin conexión del pool; si falla, se compensa la BD
+          externo: contraseña
+            ? () => supabaseAdmin.actualizarPassword(authUid, contraseña)
+            : undefined,
         },
       );
       if (!encontrado || !usuario) {
@@ -190,7 +191,8 @@ const ControladorUsuario = {
       const contraseñaTemporal = generarContraseñaTemporal();
 
       // Resetear la contraseña equivale a tomar la cuenta: solo si el actor posee los permisos del rol.
-      // Valida y escribe bajo el bloqueo del usuario; GoTrue va al final, antes del COMMIT.
+      // Valida y escribe en BD bajo el bloqueo del usuario; GoTrue va DESPUÉS del COMMIT (con compensación).
+      let authUid = null;
       const { encontrado } = await Delegacion.operarSobreUsuario(grupo, req.user, id, {
         tomaCuenta: true,
         escribir: async (cliente) => {
@@ -208,11 +210,12 @@ const ControladorUsuario = {
               "El usuario no tiene cuenta en Supabase Auth",
             );
           }
+          authUid = usuario.auth_uid;
           await Usuario.actualizar(id, { requiere_cambio_password: true }, cliente);
-          // La contraseña vive solo en GoTrue
-          await supabaseAdmin.actualizarPassword(usuario.auth_uid, contraseñaTemporal);
           return true;
         },
+        // La contraseña vive solo en GoTrue
+        externo: () => supabaseAdmin.actualizarPassword(authUid, contraseñaTemporal),
       });
       if (!encontrado) {
         return res

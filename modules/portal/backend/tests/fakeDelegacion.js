@@ -3,7 +3,7 @@
 // con una copia del estado: así se comprueba que un rechazo no deja cambios parciales.
 // La verificación contra Postgres real se hizo aparte (ver code-notes.md).
 
-const IDS = { super: 1, portal: 2, rhAdmin: 3, rhEmpleado: 4, ticketsAdmin: 5, auditor: 6, libre: 7 };
+const IDS = { super: 1, portal: 2, rhAdmin: 3, rhEmpleado: 4, ticketsAdmin: 5, auditor: 6, libre: 7, subconjunto: 8, parcial: 9 };
 // usuarios: 10 portal_admin, 11 super_admin, 12 rh_empleado, 13 rh_admin, 14 rol_libre, 15 portal_admin, 16 tickets_admin, 17 sin rol
 const USUARIOS = { portal: 10, super: 11, rhEmpleado: 12, rhAdmin: 13, libre: 14, portal2: 15, ticketsAdmin: 16, sinRol: 17 };
 
@@ -16,6 +16,8 @@ function estadoInicial() {
     { id: 5, nombre: 'tickets_admin' },
     { id: 6, nombre: 'auditoria_viewer' },
     { id: 7, nombre: 'rol_libre' },
+    { id: 8, nombre: 'rol_subconjunto' }, // portal/Roles:consulta + portal/Usuarios:consulta: portal_admin lo posee completo
+    { id: 9, nombre: 'rol_parcial' }, // portal/Roles:edicion + tickets/Tickets:consulta: portal_admin posee solo una parte
   ];
   const opciones = [
     { id: 1, modulo: 'portal', nombre: 'Roles' },
@@ -37,11 +39,21 @@ function estadoInicial() {
   dar(4, 4, ['consulta', 'edicion']); // rh_empleado
   dar(4, 5, ['consulta']);
   dar(5, 6, ['consulta', 'edicion']); // tickets_admin
+  dar(8, 1, ['consulta']);
+  dar(8, 2, ['consulta']);
+  dar(9, 1, ['edicion']);
+  dar(9, 6, ['consulta']);
   return {
     roles,
     opciones,
     rop,
-    usuarios: [{ id: 10 }, { id: 11 }, { id: 12 }, { id: 13 }, { id: 14 }, { id: 15 }, { id: 16 }, { id: 17 }],
+    usuarios: [10, 11, 12, 13, 14, 15, 16, 17].map((id) => ({
+      id,
+      nombre: `Nombre${id}`,
+      apellido: `Apellido${id}`,
+      activo: true,
+      requiere_cambio_password: false,
+    })),
     usuario_rol: [
       { usuario_id: 10, rol_id: 2 }, // portal_admin
       { usuario_id: 11, rol_id: 1 }, // super_admin
@@ -96,6 +108,14 @@ function crearPoolFalso() {
     }
     if (q.startsWith('SELECT id FROM usuarios WHERE id = $1')) {
       return { rows: estado.usuarios.filter((u) => u.id === Number(p[0])) };
+    }
+    if (q.startsWith('SELECT nombre, apellido, activo, requiere_cambio_password FROM usuarios WHERE id = $1')) {
+      return { rows: estado.usuarios.filter((u) => u.id === Number(p[0])).map((u) => ({ ...u })) };
+    }
+    if (q.startsWith('UPDATE usuarios SET nombre = $1, apellido = $2, activo = $3, requiere_cambio_password = $4 WHERE id = $5')) {
+      const u = estado.usuarios.find((x) => x.id === Number(p[4]));
+      if (u) Object.assign(u, { nombre: p[0], apellido: p[1], activo: p[2], requiere_cambio_password: p[3] });
+      return { rows: [] };
     }
     if (q.startsWith('SELECT rol_id FROM usuario_rol WHERE usuario_id = $1')) {
       return { rows: estado.usuario_rol.filter((u) => u.usuario_id === Number(p[0])).map((u) => ({ rol_id: u.rol_id })) };
@@ -183,6 +203,15 @@ function crearPoolFalso() {
       c.release();
     }
   };
+  // Conexiones obtenidas y aún no liberadas (para comprobar que GoTrue se llama sin conexión retenida)
+  pool.retenidas = () => pool.conexiones - pool.liberadas;
+  // Foto comparable del estado (usuario_rol ordenado: la compensación reinserta filas al final)
+  pool.foto = () => {
+    const f = JSON.parse(JSON.stringify(pool.estado));
+    f.usuario_rol.sort((a, b) => a.usuario_id - b.usuario_id || a.rol_id - b.rol_id);
+    return f;
+  };
+  pool.usuario = (id) => pool.estado.usuarios.find((u) => u.id === id);
   pool.tiene = (rol, opcion, tipo) =>
     pool.estado.rop.some((f) => f.rol_id === rol && f.opcion_id === opcion && f.tipo === tipo);
   pool.reiniciar = () => {

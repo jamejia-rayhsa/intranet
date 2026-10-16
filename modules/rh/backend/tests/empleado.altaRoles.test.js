@@ -110,7 +110,15 @@ describe("POST /empleados con crear_usuario: roles iniciales", () => {
       nadaCreado();
     });
 
-    it("un rol no privilegiado, aunque tenga más permisos, se asigna (201)", async () => {
+    it("posesión estricta: un rol con permisos que rh_admin no posee (portal_admin, parcial) -> 403 sin crear nada", async () => {
+      for (const extra of [{ rol_id: IDS.portal }, { rol_id: IDS.parcial }, { roles: [IDS.rhEmpleado, IDS.portal] }]) {
+        const r = await alta(extra);
+        expect(r.status).toBe(403);
+        nadaCreado();
+      }
+    });
+
+    it("un rol no privilegiado cuyos permisos rh_admin posee completos (rh_empleado) se asigna (201)", async () => {
       const r = await alta({ rol_id: IDS.rhEmpleado });
       expect(r.status).toBe(201);
       expect(mockPool.rolDe(60)).toEqual([IDS.rhEmpleado]);

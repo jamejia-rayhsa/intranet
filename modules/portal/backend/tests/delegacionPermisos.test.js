@@ -274,10 +274,22 @@ describe('POST /usuarios/:id/rol y PUT /usuarios/:id: asignación de roles', () 
       expect(mockPool.rolDe(USUARIOS.portal)).toEqual([IDS.portal]);
     });
 
-    it('DECISIÓN DEL HUMANO: puede asignar un rol NO privilegiado aunque tenga más permisos que él (rh_empleado)', async () => {
-      const r = await asignar(USUARIOS.libre, IDS.rhEmpleado);
-      expect(r.status).toBe(200);
-      expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.rhEmpleado]);
+    it('POSESIÓN ESTRICTA: no asigna un rol con permisos que no posee (rh_empleado, parcial): 403 y el rol no cambia', async () => {
+      for (const rol of [IDS.rhEmpleado, IDS.parcial]) {
+        const r = await asignar(USUARIOS.libre, rol);
+        expect(r.status).toBe(403);
+        expect(r.body.mensaje).toMatch(/permisos que tú no posees/);
+        expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.libre]);
+      }
+      const p = await request(app).put(`/api/usuarios/${USUARIOS.libre}`).send({ rol_id: IDS.parcial, nombre: 'Cambiado' });
+      expect(p.status).toBe(403);
+      expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.libre]);
+      expect(Usuario.actualizar).not.toHaveBeenCalled();
+    });
+
+    it('asigna roles cuyos permisos posee completos (consulta cubierta por su edicion) y roles sin permisos', async () => {
+      expect((await asignar(USUARIOS.libre, IDS.subconjunto)).status).toBe(200);
+      expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.subconjunto]);
       expect((await asignar(USUARIOS.sinRol, IDS.auditor)).status).toBe(200);
       expect(mockPool.rolDe(USUARIOS.sinRol)).toEqual([IDS.auditor]);
     });
@@ -350,15 +362,27 @@ describe('POST /usuarios/:id/rol y PUT /usuarios/:id: asignación de roles', () 
       expect(supabaseAdmin.crearUsuario).not.toHaveBeenCalled();
     });
 
-    it('crear usuario con un rol no privilegiado con más permisos (rh_empleado): 201 con ese rol', async () => {
+    it('crear usuario con un rol con más permisos que él (rh_empleado, parcial): 403 antes de crear nada', async () => {
+      for (const rol of [IDS.rhEmpleado, IDS.parcial]) {
+        const r = await request(app)
+          .post('/api/usuarios')
+          .send({ correo: 'a@x.com', nombre: 'A', contraseña: 'Secreta123', rol_id: rol });
+        expect(r.status).toBe(403);
+      }
+      expect(supabaseAdmin.crearUsuario).not.toHaveBeenCalled();
+      expect(Usuario.crear).not.toHaveBeenCalled();
+      expect(mockPool.rolDe(50)).toEqual([]);
+    });
+
+    it('crear usuario con un rol cuyos permisos posee completos (subconjunto): 201 con ese rol', async () => {
       Usuario.buscarPorCorreo.mockResolvedValue(undefined);
       supabaseAdmin.crearUsuario.mockResolvedValue({ id: 'uid-50' });
       Usuario.crear.mockResolvedValue({ id: 50, correo: 'a@x.com' });
       const r = await request(app)
         .post('/api/usuarios')
-        .send({ correo: 'a@x.com', nombre: 'A', contraseña: 'Secreta123', rol_id: IDS.rhEmpleado });
+        .send({ correo: 'a@x.com', nombre: 'A', contraseña: 'Secreta123', rol_id: IDS.subconjunto });
       expect(r.status).toBe(201);
-      expect(mockPool.rolDe(50)).toEqual([IDS.rhEmpleado]);
+      expect(mockPool.rolDe(50)).toEqual([IDS.subconjunto]);
     });
   });
 
@@ -407,6 +431,15 @@ describe('POST /usuarios/:id/rol y PUT /usuarios/:id: asignación de roles', () 
 
   describe('rh_admin (privilegiado, no super_admin) sobre usuarios privilegiados, incluido él mismo', () => {
     beforeEach(comoRhAdmin);
+
+    it('posesión estricta: asigna rh_empleado (permisos que posee) pero no portal_admin ni roles privilegiados', async () => {
+      expect((await asignar(USUARIOS.libre, IDS.rhEmpleado)).status).toBe(200);
+      expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.rhEmpleado]);
+      for (const rol of [IDS.portal, IDS.parcial, IDS.super, IDS.ticketsAdmin]) {
+        expect((await asignar(USUARIOS.sinRol, rol)).status).toBe(403);
+      }
+      expect(mockPool.rolDe(USUARIOS.sinRol)).toEqual([]);
+    });
 
     it('no puede desactivarse, editarse ni borrarse a sí mismo ni a un super_admin', async () => {
       for (const id of [USUARIOS.rhAdmin, USUARIOS.super]) {
@@ -509,15 +542,19 @@ describe('POST /usuarios/:id/rol y PUT /usuarios/:id: asignación de roles', () 
         expect(supabaseAdmin.actualizarPassword).toHaveBeenCalledTimes(1);
       });
 
-      it('si GoTrue falla se revierte TODO (rol incluido): GoTrue va después de las escrituras y antes del COMMIT', async () => {
+      it('si GoTrue falla se COMPENSA todo (rol incluido): 502 y estado idéntico al inicial', async () => {
+        Usuario.actualizar.mockImplementation(async (id, datos) => {
+          Object.assign(mockPool.usuario(Number(id)), datos);
+          return { id: Number(id), ...datos };
+        });
+        const antes = mockPool.foto();
         supabaseAdmin.actualizarPassword.mockRejectedValue(new Error('gotrue caido'));
         const r = await request(app)
           .put(`/api/usuarios/${USUARIOS.libre}`)
-          .send({ contraseña: 'Nueva12345', rol_id: IDS.auditor, nombre: 'N' });
-        expect(r.status).toBe(400);
-        expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.libre]);
-        expect(mockPool.consultas).toContain('ROLLBACK');
-        expect(mockPool.consultas).not.toContain('COMMIT');
+          .send({ contraseña: 'Nueva12345', rol_id: IDS.auditor, nombre: 'N', activo: false });
+        expect(r.status).toBe(502);
+        expect(JSON.stringify(r.body)).not.toMatch(/gotrue caido|Nueva12345/);
+        expect(mockPool.foto()).toEqual(antes);
         expect(Usuario.actualizar.mock.invocationCallOrder[0]).toBeLessThan(
           supabaseAdmin.actualizarPassword.mock.invocationCallOrder[0],
         );
@@ -579,7 +616,7 @@ describe('POST /usuarios/:id/rol y PUT /usuarios/:id: asignación de roles', () 
         expect(Usuario.eliminar).not.toHaveBeenCalled();
       });
 
-      it('en el otro orden (reset en curso) el ascenso espera: no hay escritura intercalada', async () => {
+      it('reset con GoTrue lento: el bloqueo del usuario NO se retiene durante la llamada (el ascenso avanza)', async () => {
         let abrir;
         supabaseAdmin.actualizarPassword.mockImplementation(
           () =>
@@ -589,22 +626,127 @@ describe('POST /usuarios/:id/rol y PUT /usuarios/:id: asignación de roles', () 
         );
         const reset = request(app).post(`/api/usuarios/${USUARIOS.libre}/reset-password`).then((r) => r);
         for (let k = 0; k < 40 && !abrir; k++) await esperar(25);
-        expect(abrir).toBeDefined(); // el reset ya tiene el bloqueo y está esperando a GoTrue
-        let ascendio = false;
-        const asc = Delegacion.operarSobreUsuario(
+        expect(abrir).toBeDefined(); // el reset ya hizo COMMIT y espera a GoTrue
+        await Delegacion.operarSobreUsuario(
           mockPool,
           { usuario_id: 11, rol_id: IDS.super, rol_nombre: 'super_admin' },
           USUARIOS.libre,
           { rolId: IDS.rhAdmin },
-        ).then(() => {
-          ascendio = true;
-        });
-        await esperar();
-        expect(ascendio).toBe(false);
+        );
         abrir();
         expect((await reset).status).toBe(200);
-        await asc;
         expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.rhAdmin]);
+      });
+    });
+
+    describe('GoTrue FUERA de la transacción: sin conexión retenida y con compensación', () => {
+      const Delegacion = require('../services/delegacionPermisos');
+      const esperar = (ms = 80) => new Promise((r) => setTimeout(r, ms));
+      const SUPER = { usuario_id: 11, rol_id: IDS.super, rol_nombre: 'super_admin' };
+      const lento = (ms, fallo) => () =>
+        new Promise((resolver, rechazar) => setTimeout(() => (fallo ? rechazar(fallo) : resolver()), ms));
+      const operaciones = [
+        ['PUT con contraseña', (id) => request(app).put(`/api/usuarios/${id}`).send({ contraseña: 'Nueva12345', nombre: 'Otro', activo: false, rol_id: IDS.auditor })],
+        ['reset de contraseña', (id) => request(app).post(`/api/usuarios/${id}/reset-password`)],
+      ];
+
+      beforeEach(() => {
+        comoSuperAdmin();
+        // El mock de actualizar escribe en el estado del pool (se revierte con el ROLLBACK y lo ve la compensación)
+        Usuario.actualizar.mockImplementation(async (id, datos) => {
+          Object.assign(mockPool.usuario(Number(id)), datos);
+          return { id: Number(id), ...datos };
+        });
+      });
+
+      it.each(operaciones)('%s: durante la llamada a GoTrue ningún cliente del pool está retenido', async (_n, peticion) => {
+        const retenidas = [];
+        supabaseAdmin.actualizarPassword.mockImplementation(async () => {
+          retenidas.push(mockPool.retenidas());
+        });
+        const r = await peticion(USUARIOS.libre);
+        expect(r.status).toBe(200);
+        expect(retenidas).toEqual([0]);
+      });
+
+      it.each(operaciones)('%s con GoTrue caído o expirado: 502, compensa y el estado es idéntico al inicial', async (_n, peticion) => {
+        const expirado = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+        for (const fallo of [new Error('ECONNREFUSED'), expirado]) {
+          mockPool.reiniciar();
+          const antes = mockPool.foto();
+          supabaseAdmin.actualizarPassword.mockImplementation(lento(30, fallo));
+          const r = await peticion(USUARIOS.libre);
+          expect(r.status).toBe(502);
+          expect(JSON.stringify(r.body)).not.toMatch(/ECONNREFUSED|timeout|Nueva12345/);
+          expect(mockPool.foto()).toEqual(antes);
+          expect(mockPool.retenidas()).toBe(0);
+          // La compensación es una transacción NUEVA (tras el COMMIT) y con el mismo bloqueo del usuario
+          const c = mockPool.consultas;
+          const tras = c.slice(c.indexOf('COMMIT') + 1);
+          expect(tras).toContain('BEGIN');
+          expect(tras.some((q) => /^SELECT id FROM usuarios WHERE id = \$1 FOR UPDATE/.test(q))).toBe(true);
+          expect(tras[tras.length - 1]).toBe('COMMIT');
+        }
+      });
+
+      it('mientras GoTrue está lento otras peticiones avanzan (no hay pool ni bloqueo retenidos)', async () => {
+        supabaseAdmin.actualizarPassword.mockImplementation(lento(400));
+        const lentas = Array.from({ length: 12 }, () =>
+          request(app).post(`/api/usuarios/${USUARIOS.libre}/reset-password`).then((r) => r),
+        );
+        await esperar(150);
+        expect(mockPool.retenidas()).toBe(0);
+        const t0 = Date.now();
+        const otra = await request(app).post(`/api/usuarios/${USUARIOS.sinRol}/rol`).send({ rol_id: IDS.auditor });
+        expect(otra.status).toBe(200);
+        expect(Date.now() - t0).toBeLessThan(300);
+        expect((await Promise.all(lentas)).every((r) => r.status === 200)).toBe(true);
+      });
+
+      it('si la compensación también falla: 500 genérico y console.error con el id, sin secretos', async () => {
+        supabaseAdmin.actualizarPassword.mockImplementation(lento(10, new Error('gotrue caido')));
+        const real = mockPool.connect;
+        let n = 0;
+        jest.spyOn(mockPool, 'connect').mockImplementation(async () => {
+          n++;
+          if (n === 2) throw new Error('pool agotado');
+          return real();
+        });
+        const r = await request(app).put(`/api/usuarios/${USUARIOS.libre}`).send({ contraseña: 'Nueva12345', nombre: 'N' });
+        expect(r.status).toBe(500);
+        expect(JSON.stringify(r.body)).not.toMatch(/pool agotado|gotrue caido|Nueva12345/);
+        const log = console.error.mock.calls.map((c) => c.join(' ')).join('\n');
+        expect(log).toMatch(new RegExp(`usuario ${USUARIOS.libre}`));
+        expect(log).toMatch(/desincronizados/);
+        expect(log).not.toMatch(/Nueva12345/);
+      });
+
+      it('si el usuario cambió mientras GoTrue fallaba, NO se pisa el cambio ajeno: 500 y log', async () => {
+        let falla;
+        supabaseAdmin.actualizarPassword.mockImplementation(
+          () =>
+            new Promise((_ok, no) => {
+              falla = no;
+            }),
+        );
+        const reset = request(app).post(`/api/usuarios/${USUARIOS.libre}/reset-password`).then((r) => r);
+        for (let k = 0; k < 40 && !falla; k++) await esperar(25);
+        expect(falla).toBeDefined();
+        await Delegacion.operarSobreUsuario(mockPool, SUPER, USUARIOS.libre, { rolId: IDS.rhEmpleado });
+        falla(new Error('gotrue caido'));
+        const r = await reset;
+        expect(r.status).toBe(500);
+        expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.rhEmpleado]);
+        expect(console.error.mock.calls.map((c) => c.join(' ')).join('\n')).toMatch(/cambió entretanto/);
+      });
+
+      it('E1: contraseña + rol_id sobre un estado no tomable sigue siendo 403 y no llama a GoTrue', async () => {
+        comoPortalAdmin();
+        const r = await request(app)
+          .put(`/api/usuarios/${USUARIOS.libre}`)
+          .send({ contraseña: 'Nueva12345', rol_id: IDS.rhEmpleado });
+        expect(r.status).toBe(403);
+        expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
       });
     });
   });

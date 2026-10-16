@@ -100,14 +100,14 @@ describe('usuario.controller', () => {
       expect(Usuario.actualizar).not.toHaveBeenCalled();
     });
 
-    it('si GoTrue falla la BD local se revierte (GoTrue va al final, antes del COMMIT)', async () => {
+    it('si GoTrue falla se compensa la BD local y responde 502 (GoTrue va después del COMMIT)', async () => {
       Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_tipo: 'local', auth_uid: 'uid-3' });
       supabaseAdmin.actualizarPassword.mockRejectedValue(new Error('gotrue caido'));
       const res = mockRes();
       await controlador.resetearPassword({ user: SUPER, params: { id: 14 } }, res);
-      expect(res.status).toHaveBeenCalledWith(500);
-      expect(mockPool.consultas).toContain('ROLLBACK');
-      expect(mockPool.consultas).not.toContain('COMMIT');
+      expect(res.status).toHaveBeenCalledWith(502);
+      expect(JSON.stringify(res.json.mock.calls[0][0])).not.toMatch(/gotrue caido/);
+      expect(mockPool.usuario(14).requiere_cambio_password).toBe(false);
     });
 
     it('usuario inexistente: 404 sin tocar GoTrue', async () => {
