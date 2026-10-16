@@ -60,6 +60,24 @@ describe('config/database (opciones del pool)', () => {
     return grupo.end();
   });
 
+  it('una variable inválida cae al default AVISANDO con console.warn (nombre y valor); una válida o ausente no avisa', () => {
+    const aviso = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const { grupo } = cargar({ PG_POOL_MAX: 'abc', PG_POOL_IDLE_TIMEOUT_MS: '0', PG_POOL_CONNECTION_TIMEOUT_MS: '-5' });
+    expect(grupo.options.max).toBe(10);
+    const textos = aviso.mock.calls.map((c) => c.join(' '));
+    expect(textos.some((t) => t.includes('PG_POOL_MAX') && t.includes('abc') && t.includes('10'))).toBe(true);
+    expect(textos.some((t) => t.includes('PG_POOL_IDLE_TIMEOUT_MS'))).toBe(true);
+    expect(textos.some((t) => t.includes('PG_POOL_CONNECTION_TIMEOUT_MS'))).toBe(true);
+    expect(textos.some((t) => t.includes('PG_IDLE_IN_TRANSACTION_TIMEOUT_MS'))).toBe(false); // ausente: sin aviso
+    aviso.mockClear();
+    return grupo.end().then(() => {
+      const { grupo: otro } = cargar({ PG_POOL_MAX: '25' });
+      expect(aviso).not.toHaveBeenCalled();
+      aviso.mockRestore();
+      return otro.end();
+    });
+  });
+
   it('cada cliente nuevo lleva un listener de error (una sesión cerrada por Postgres no tumba el proceso)', () => {
     const { EventEmitter } = require('events');
     const { grupo } = cargar();

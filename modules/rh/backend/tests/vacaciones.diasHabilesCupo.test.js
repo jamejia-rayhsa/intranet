@@ -90,6 +90,11 @@ async function consulta(dueno, sql, p = []) {
     const fila = estado.solicitudes.find((x) => x.id === Number(p[0]));
     return { rows: fila ? [{ empleado_id: fila.empleado_id }] : [] };
   }
+  if (/^SELECT jefe_inmediato_id FROM empleados WHERE id = \$1$/.test(s)) {
+    // jefe VIGENTE del empleado (autoriza la aprobación); por defecto ninguno
+    const jefe = (estado.jefesVigentes || {})[p[0]];
+    return { rows: [{ jefe_inmediato_id: jefe === undefined ? null : jefe }] };
+  }
   if (/FROM departamentos WHERE id = \$1 FOR UPDATE/.test(s)) {
     await adquirir(`dep${p[0]}`, dueno);
     const d = estado.departamentos[p[0]];
@@ -108,9 +113,10 @@ async function consulta(dueno, sql, p = []) {
     }
     return { rows: estado.calendario.filter((c) => c.activo && c.fecha >= p[0] && c.fecha <= p[1]) };
   }
-  if (/^SELECT \* FROM solicitudes_vacaciones WHERE id = \$1$/.test(s)) {
+  if (/^SELECT s\.\*, e\.jefe_inmediato_id AS jefe_vigente_id FROM solicitudes_vacaciones s LEFT JOIN empleados e ON e\.id = s\.empleado_id WHERE s\.id = \$1$/.test(s)) {
     const fila = estado.solicitudes.find((x) => x.id === Number(p[0]));
-    return { rows: fila ? [{ ...fila }] : [] };
+    const jefe = fila ? (estado.jefesVigentes || {})[fila.empleado_id] : undefined;
+    return { rows: fila ? [{ ...fila, jefe_vigente_id: jefe === undefined ? null : jefe }] : [] };
   }
   if (/FROM solicitudes_vacaciones WHERE id = \$1 FOR UPDATE/.test(s)) {
     await adquirir(`sol${p[0]}`, dueno);

@@ -1,7 +1,14 @@
 import { useState, useEffect } from 'react';
 import { solicitar } from '../utils/api';
+import { usarAuth } from '../context/AuthContext';
 
 export default function PortalAdminRoles() {
+  const { usuario } = usarAuth();
+  // Esta pantalla edita la tabla heredada de permisos y borra roles: el backend lo reserva a
+  // super_admin (los demás editan permisos en /admin/permisos). Se ocultan los botones, y si el
+  // servidor rechaza algo se muestra su mensaje.
+  const esSuperAdmin = Array.isArray(usuario?.roles) && usuario.roles.includes('super_admin');
+  const [error, setError] = useState('');
   const [roles, setRoles] = useState([]);
   const [permisos, setPermisos] = useState([]);
   const [cargando, setCargando] = useState(true);
@@ -22,8 +29,9 @@ export default function PortalAdminRoles() {
       ]);
       if (respuestaRoles.exito) setRoles(respuestaRoles.datos);
       if (respuestaPermisos.exito) setPermisos(respuestaPermisos.datos);
-    } catch (error) {
-      console.error('Error al cargar datos:', error);
+    } catch (err) {
+      console.error('Error al cargar datos:', err);
+      setError(err.message || 'No se pudieron cargar los roles');
     } finally {
       setCargando(false);
     }
@@ -31,6 +39,7 @@ export default function PortalAdminRoles() {
 
   async function crearRol() {
     if (!nombreRol) return;
+    setError('');
     try {
       await solicitar('/roles', {
         metodo: 'POST',
@@ -39,13 +48,15 @@ export default function PortalAdminRoles() {
       setNombreRol('');
       setMostrarFormulario(false);
       cargarDatos();
-    } catch (error) {
-      console.error('Error al crear rol:', error);
+    } catch (err) {
+      console.error('Error al crear rol:', err);
+      setError(err.message || 'No se pudo crear el rol');
     }
   }
 
   async function guardarPermisos() {
     if (!rolSeleccionado) return;
+    setError('');
     try {
       await solicitar(`/roles/${rolSeleccionado.id}/permisos`, {
         metodo: 'PUT',
@@ -54,18 +65,21 @@ export default function PortalAdminRoles() {
       setRolSeleccionado(null);
       setPermisosSeleccionados([]);
       cargarDatos();
-    } catch (error) {
-      console.error('Error al guardar permisos:', error);
+    } catch (err) {
+      console.error('Error al guardar permisos:', err);
+      setError(err.message || 'No se pudieron guardar los permisos');
     }
   }
 
   async function eliminarRol(id) {
     if (confirm('¿Estás seguro de eliminar este rol?')) {
+      setError('');
       try {
         await solicitar(`/roles/${id}`, { metodo: 'DELETE' });
         cargarDatos();
-      } catch (error) {
-        console.error('Error al eliminar rol:', error);
+      } catch (err) {
+        console.error('Error al eliminar rol:', err);
+        setError(err.message || 'No se pudo eliminar el rol');
       }
     }
   }
@@ -91,6 +105,12 @@ export default function PortalAdminRoles() {
         <h1>Administración de Roles y Permisos</h1>
         <button onClick={() => setMostrarFormulario(true)}>Nuevo Rol</button>
       </div>
+
+      {error && (
+        <p role="alert" className="mensaje-error">
+          {error}
+        </p>
+      )}
 
       {mostrarFormulario && (
         <div className="formulario-modal">
@@ -150,10 +170,14 @@ export default function PortalAdminRoles() {
               <td>{rol.nombre}</td>
               <td>{rol.permisos ? rol.permisos.map((p) => p.nombre).join(', ') : '-'}</td>
               <td>
-                <button onClick={() => abrirEdicionPermisos(rol)}>Editar Permisos</button>
-                <button className="boton-eliminar" onClick={() => eliminarRol(rol.id)}>
-                  Eliminar
-                </button>
+                {esSuperAdmin && (
+                  <>
+                    <button onClick={() => abrirEdicionPermisos(rol)}>Editar Permisos</button>
+                    <button className="boton-eliminar" onClick={() => eliminarRol(rol.id)}>
+                      Eliminar
+                    </button>
+                  </>
+                )}
               </td>
             </tr>
           ))}

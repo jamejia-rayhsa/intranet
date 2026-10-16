@@ -8,7 +8,8 @@ const ControladorPermiso = {
       const permisos = await Permiso.obtenerTodos();
       res.json({ exito: true, datos: permisos });
     } catch (error) {
-      res.status(500).json({ exito: false, mensaje: 'Error al listar permisos', error: error.message });
+      console.error('Error al listar permisos:', error.message);
+      res.status(500).json({ exito: false, mensaje: 'Error al listar permisos' });
     }
   },
 
@@ -23,7 +24,8 @@ const ControladorPermiso = {
       const permiso = await Permiso.crear(nombre);
       res.status(201).json({ exito: true, datos: permiso, mensaje: 'Permiso creado exitosamente' });
     } catch (error) {
-      res.status(400).json({ exito: false, mensaje: 'Error al crear permiso', error: error.message });
+      console.error('Error al crear permiso:', error.message);
+      res.status(400).json({ exito: false, mensaje: 'Error al crear permiso' });
     }
   },
 
@@ -41,7 +43,8 @@ const ControladorPermiso = {
       }
       res.json({ exito: true, datos: permiso, mensaje: 'Permiso actualizado exitosamente' });
     } catch (error) {
-      res.status(400).json({ exito: false, mensaje: 'Error al actualizar permiso', error: error.message });
+      console.error('Error al actualizar permiso:', error.message);
+      res.status(400).json({ exito: false, mensaje: 'Error al actualizar permiso' });
     }
   },
 
@@ -53,7 +56,8 @@ const ControladorPermiso = {
       }
       res.json({ exito: true, mensaje: 'Permiso eliminado exitosamente' });
     } catch (error) {
-      res.status(500).json({ exito: false, mensaje: 'Error al eliminar permiso', error: error.message });
+      console.error('Error al eliminar permiso:', error.message);
+      res.status(500).json({ exito: false, mensaje: 'Error al eliminar permiso' });
     }
   },
 

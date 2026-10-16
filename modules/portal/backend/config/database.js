@@ -1,9 +1,17 @@
 const { Pool } = require("pg");
 
 // Lee un entero positivo de una variable de entorno; si falta o no es válido usa el valor por defecto.
+// Una variable definida pero inválida cae al valor por defecto CON aviso (no en silencio).
 function enteroEnv(nombre, defecto) {
-  const valor = Number.parseInt(process.env[nombre], 10);
-  return Number.isInteger(valor) && valor > 0 ? valor : defecto;
+  const crudo = process.env[nombre];
+  const valor = Number.parseInt(crudo, 10);
+  if (Number.isInteger(valor) && valor > 0) return valor;
+  if (crudo !== undefined && crudo !== "") {
+    console.warn(
+      `Variable ${nombre}="${crudo}" no es un entero positivo: se usa el valor por defecto (${defecto})`,
+    );
+  }
+  return defecto;
 }
 
 // Único pool de la aplicación: lo comparten portal, RH, tickets y auditoría.

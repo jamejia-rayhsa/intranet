@@ -20,10 +20,11 @@ const empleadoDeLaSolicitud = async (req) => {
   req.recurso = await SolicitudVacaciones.obtenerPorId(req.params.id);
   return req.recurso && req.recurso.empleado_id;
 };
+// Jefe VIGENTE del empleado (jefe_vigente_id viene del JOIN con empleados), no el guardado al crear
 const esJefeDeLaSolicitud = (req, propio) =>
   Boolean(req.recurso) &&
-  req.recurso.jefe_inmediato_id != null &&
-  String(req.recurso.jefe_inmediato_id) === String(propio.id) &&
+  req.recurso.jefe_vigente_id != null &&
+  String(req.recurso.jefe_vigente_id) === String(propio.id) &&
   String(req.recurso.empleado_id) !== String(propio.id);
 
 router.get(
@@ -61,7 +62,7 @@ router.post(
   empleadoPropioEnPeticion({ ...RH, origen: "body", campo: "empleado_id" }),
   ControladorVacaciones.crear,
 );
-// Aprobar/rechazar: RH o jefe inmediato de la solicitud; nunca el propio solicitante (salvo RH)
+// Aprobar/rechazar: RH o jefe inmediato VIGENTE del solicitante; nunca el propio solicitante (tampoco RH)
 router.put(
   "/:id/responder",
   verificarPermiso("rh", "Vacaciones", "edicion"),
@@ -70,6 +71,8 @@ router.put(
     ...RH,
     obtenerEmpleadoId: empleadoDeLaSolicitud,
     permitirDueno: false,
+    mensajePropio: ControladorVacaciones.MSG_PROPIA,
+    mensajeSinAutoridad: ControladorVacaciones.MSG_SIN_AUTORIDAD,
     permitirSi: esJefeDeLaSolicitud,
   }),
   ControladorVacaciones.responder,

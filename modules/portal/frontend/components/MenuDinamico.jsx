@@ -21,7 +21,7 @@ const SUB_RUTAS = {
     { path: '/rh/vacaciones/listado', label: 'Solicitudes', opcion: 'Vacaciones' },
     { path: '/rh/calendario', label: 'Calendario', opcion: 'Calendario' },
     { path: '/rh/areas', label: 'Áreas', opcion: 'Empleados' },
-    { path: '/rh/departamentos', label: 'Departamentos', opcion: 'Empleados' },
+    { path: '/rh/departamentos', label: 'Departamentos', opcion: 'Departamentos' },
     { path: '/rh/puestos', label: 'Puestos', opcion: 'Empleados' },
     { path: '/rh/ubicaciones', label: 'Ubicaciones', opcion: 'Empleados' },
   ],

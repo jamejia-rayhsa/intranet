@@ -2421,3 +2421,100 @@ Hallazgos abiertos:
 - medio, pendiente (no nuevo) — modules/portal/backend/config/database.js:3-9: pool sin max, connectionTimeoutMillis ni idle_in_transaction_session_timeout. Dentro del módulo el riesgo queda mitigado; la espera por conexión sigue sin límite para todo el portal. Requiere decisión del orquestador (dependencia compartida).
 - medio, pendiente (no nuevo) — routes/vacaciones.routes.js:65-76: RH puede aprobar o rechazar lo propio. Sigue sin decisión explícita.
 - bajo — vacaciones.pool.test.js: la prueba de "una sola conexión" cubre solo crear; responder no tiene aserción de pool.
+
+### [2026-10-15] [revisor] — Revisión final de la rama (Fase 5)
+**Alcance:** `git diff main...HEAD` (61 archivos, HEAD a8d530d). Lectura de code-notes.md, decisions.md (entradas 2026-10-15 de la tarea), hallazgos previos de reviews.md y verificación de los marcados como corregidos. Foco: (1) extensión Fase 4 (delegación de permisos y roles, pool, JSON 400/413, saldo); (2) regla de autoridad por jefe; (3) coherencia init.sql/009/compose/docs, permisos vs menú, contratos front/back, secretos, artefactos y calidad de los tests.
+**Verificado sin hallazgos:** `init.sql` (bloque calendario) idéntico a `009-calendario-laboral.sql` salvo una línea en blanco; compose aplica 009 con `ON_ERROR_STOP`; sin secretos ni artefactos en el diff; `delegacionPermisos` no escribe antes de validar (403 sin cambios parciales en permisos de módulo y en cambio de rol); super_admin sin restricciones; `motivoSinAutoridad` coincide con el middleware y con `listar` (matriz completa en `vacaciones.autoridad.test.js`); el jefe se compara contra el snapshot de la solicitud dentro de la transacción; `periodo` del body ignorado; transacciones de vacaciones sin segunda conexión del pool; respuesta de `responder` tras COMMIT dentro de try; `fecha_regreso >= fecha_final` en backend y front; `envioBloqueado` también en `handleSubmit`; `GET /vacaciones/saldo` valida periodo; `errores.middleware` responde 400/413 sin detalle; `NODE_ENV=production` en staging/prod (sin `detalle`).
+**Pruebas:** `npx jest` 39/39 suites, 764/764 tests; repetido con TZ=America/Mexico_City, Pacific/Kiritimati y Pacific/Pago_Pago: 764/764 en cada una. Sin red, sin `.only`/`.skip`. eslint no ejecutado en esta pasada.
+**Cerrados (verificados):** F1 Fase 2 (portal_admin con Roles:edicion puede auto-otorgarse permisos de RH) → cerrado por delegación; JSON malformado → 500 → cerrado (400); pool sin timeouts (medio) → cerrado (`config/database.js:19-25`); RH que aprueba lo propio (medio) → cerrado en ruta y transacción; `GET /saldo?periodo` (bajo) → cerrado; responder 500 tras COMMIT (medio) → cerrado; contraste de tarjetas de saldo (medio) → cerrado (`--color-texto-medio`).
+**Veredicto: RECHAZADO** (1 crítico abierto, escalado al orquestador). El resto de la lógica de vacaciones y calendario es correcto; el crítico es un único guardia que falta en el alta de empleado.
+
+**Hallazgos**
+
+**Archivo/línea:** modules/rh/backend/controllers/empleado.controller.js:136-150 (ruta modules/rh/backend/routes/empleados.routes.js:33)
+**Problema:** el alta de empleado con `crear_usuario` asigna `rol_id` o `roles[]` directamente con INSERT en `usuario_rol`, sin `exigirRolAsignable` ni `exigirUsuarioNoPrivilegiado`. Quien tiene `rh/Empleados:edicion` (rh_admin en el seed) puede crear una cuenta con rol super_admin, rh_admin o tickets_admin, o con cualquier rol con permisos que no posee. Es la vía de escalada que la delegación de esta rama pretendía cerrar.
+**Severidad:** crítico (viola la decisión de delegación del 2026-10-15, extensión Fase 4, punto C: quien administra roles solo otorga lo que posee y nunca asigna super_admin/rh_admin/tickets_admin; el coder lo marcó como residual en code-notes.md)
+**Fix sugerido:** en `crear` (empleado), antes de crear nada en GoTrue, validar con `Delegacion.exigirRolAsignable(cliente, req.user, rolId)` por cada rol (`rol_id` y `roles`), y escribir el INSERT dentro de la misma transacción; mismo criterio que `usuario.controller.crear`. Prueba: rh_admin con `rol_id` de super_admin → 403 y ningún usuario ni fila en `usuario_rol` creados; super_admin → 201.
+
+**Archivo/línea:** modules/portal/backend/controllers/usuario.controller.js:253-260 (eliminar; ruta usuario.routes.js:15); :124-188 (actualizar: guardas solo si hay `contraseña` o `rol_id`, líneas 138-153)
+**Problema:** `DELETE /usuarios/:id` no comprueba si el objetivo tiene rol privilegiado, y `PUT /usuarios/:id` permite cambiar `activo`, `nombre`, `apellido` o `requiere_cambio_password` de un super_admin o rh_admin sin pasar por `exigirUsuarioNoPrivilegiado`. portal_admin (Usuarios:edicion en el seed) puede desactivar o borrar al super_admin.
+**Severidad:** alto
+**Fix sugerido:** llamar `exigirUsuarioNoPrivilegiado` (o exigir super_admin) en `eliminar` y en `actualizar` para cualquier cambio sobre un usuario privilegiado, antes de escribir. Prueba: portal_admin → DELETE y PUT activo=false sobre super_admin/rh_admin → 403 y fila intacta.
+
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:281-290 (validarUsuarioAdministrable), usado en usuario.controller.js:138-140 (contraseña en PUT) y :217 (reset-password)
+**Problema:** la protección solo compara nombres privilegiados. portal_admin puede resetear la contraseña de cualquier usuario con rol no privilegiado y heredar sus permisos al entrar (por ejemplo auditoria_viewer, bi_admin, tickets_tecnico), que portal_admin no posee. Es la "toma de cuenta" que el propio coder anotó como residual.
+**Severidad:** alto (si el orquestador considera que la regla de posesión cubre la toma de cuenta, sube a crítico)
+**Fix sugerido:** exigir que el rol del objetivo tenga solo permisos que posee el actor (misma comprobación que `exigirRolAsignable`), o restringir reset y cambio de contraseña a super_admin. Prueba: portal_admin → reset sobre un usuario auditoria_viewer → 403.
+
+**Archivo/línea:** modules/portal/frontend/pages/PortalAdminRoles.jsx:50 (llama `PUT /roles/:id/permisos`); modules/portal/backend/controllers/rol.controller.js:99-104 (solo super_admin) y :96-98 (comentario "Ninguna pantalla la usa")
+**Problema:** la pantalla /admin/roles (usada por portal_admin) guarda permisos con la tabla heredada, que ahora responde 403 para no super. El fallo es silencioso (solo `console.error`). El comentario del backend es falso. Además esa tabla no afecta a la autorización, así que la pantalla guardaba algo sin efecto (deuda preexistente).
+**Severidad:** medio
+**Fix sugerido:** quitar el guardado de esa pantalla o redirigirlo a `PUT /api/permisos/rol/:id/modulo/:modulo`; mostrar el mensaje de error en la UI; corregir el comentario de rol.controller.js.
+
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:192-216 (exigirRolAsignable) con usuario.controller.js:54-61, 298 y routes usuario.routes.js:13, 17
+**Problema:** cambio de comportamiento no documentado en decisions.md ni code-notes.md como impacto operativo. portal_admin ya no puede crear usuarios ni asignar rol_empleado, tickets_tecnico o similares (403 "incluye permisos que tú no posees"), porque esos roles tienen permisos de RH o tickets que portal_admin no posee. Puede ser intencional, pero el flujo de alta de empleados estándar pasa a depender de RH.
+**Severidad:** medio
+**Fix sugerido:** decisión del humano: qué roles puede asignar portal_admin; documentarlo en decisions.md y avisar a quien administra usuarios.
+
+**Archivo/línea:** modules/rh/backend/models/solicitudVacaciones.model.js:200 (snapshot de jefe al crear); modules/rh/backend/controllers/vacaciones.controller.js:74-84 y 536; modules/rh/backend/routes/vacaciones.routes.js:23-27
+**Problema:** la autoridad usa `solicitudes_vacaciones.jefe_inmediato_id` (snapshot), no el jefe actual. Si cambia el jefe del empleado, el anterior conserva autoridad sobre las pendientes, el nuevo no, y si el jefe queda vacío solo RH puede responder. La decisión dice "el jefe inmediato del solicitante" (presente), así que el snapshot es una lectura posible pero no explícita.
+**Severidad:** medio (decisión a confirmar)
+**Fix sugerido:** confirmar con el humano; si se quiere el jefe vigente, usar `empleados.jefe_inmediato_id` del solicitante dentro de la transacción (con el mismo orden de bloqueos). En cualquier caso, anotarlo en decisions.md.
+
+**Archivo/línea:** config/database/init.sql (CREATE TABLE empleados, alrededor de la línea 244: `usuario_id INT REFERENCES usuarios(id)` sin UNIQUE); modules/rh/backend/migrations/004-corregir-tabla-empleados.sql:81-91 (el UNIQUE está solo aquí); modules/rh/backend/models/empleado.model.js:262-266 (`obtenerPorUsuarioId` toma `rows[0]` sin orden)
+**Problema:** en un despliegue creado desde init.sql, `empleados.usuario_id` puede repetirse, porque la migración 004 no la aplica docker-compose. La identidad de quien responde (middleware y controlador) depende de que la relación usuario-empleado sea 1:1; con duplicados, el empleado "propio" es arbitrario.
+**Severidad:** medio (preexistente, pero ahora la autoridad de vacaciones depende de ello)
+**Fix sugerido:** añadir `UNIQUE (usuario_id)` con guarda en init.sql (o aplicar 004 en db-init), revisar duplicados existentes antes, y ordenar/limitar `obtenerPorUsuarioId` con un test de duplicado.
+
+**Archivo/línea:** modules/portal/backend/controllers/rol.controller.js:79-92 (eliminar)
+**Problema:** un no super puede borrar cualquier rol no privilegiado, incluido rh_empleado o bi_admin, aunque no posea sus permisos; los usuarios de ese rol quedan sin acceso. Es coherente con la decisión literal (solo se protegen los privilegiados), pero es destructivo.
+**Severidad:** medio (decisión a confirmar)
+**Fix sugerido:** exigir posesión de los permisos del rol para borrarlo, o limitar el borrado a super_admin.
+
+**Archivo/línea:** modules/rh/backend/routes/vacaciones.routes.js:65-76 y modules/rh/backend/middleware/acceso-empleado.middleware.js:77; modules/rh/backend/controllers/vacaciones.controller.js:454-455 (puede_responder)
+**Problema:** (a) RH que intenta responder lo propio recibe "No tienes acceso a este recurso" en vez de MSG_PROPIA, porque el middleware responde antes; (b) `puede_responder` no considera el permiso Vacaciones:edicion que exige la ruta (routes:67), así que un jefe sin ese permiso ve el botón y recibe 403.
+**Severidad:** bajo
+**Fix sugerido:** en el middleware, dejar que el controlador decida con MSG_PROPIA para RH; incluir `tienePermiso(Vacaciones, edicion)` en `puede_responder`.
+
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:87-89, 616 y 687 (empleadoDeLaConsulta)
+**Problema:** `?empleado_id[]=9` pasa `esEnteroInt4` (String(["9"]) = "9") y llega a `Empleado.obtenerPorId` como array, lo que da 500 en disponibilidad y ocupación en vez de 400.
+**Severidad:** bajo
+**Fix sugerido:** rechazar arrays y objetos en `esEnteroInt4` (aceptar solo string o number).
+
+**Archivo/línea:** modules/portal/backend/controllers/usuario.controller.js:19, 37, 119, 200, 248, 280, 314; rol.controller.js:23, 53, 75, 90; permiso.controller.js:26, 44, 56
+**Problema:** rutas preexistentes devuelven `error: error.message` al cliente (mensajes de PostgreSQL). `asignarRol` (usuario.controller.js:314) es un camino nuevo que lo hereda. Departamentos y vacaciones ya lo quitaron.
+**Severidad:** bajo
+**Fix sugerido:** quitar `error: error.message` y registrar en consola, como en departamento.controller.js.
+
+**Archivo/línea:** modules/rh/backend/models/solicitudVacaciones.model.js:25 (`enTransaccion`, `ROLLBACK.catch(() => {})` y `release()` sin error)
+**Problema:** si ROLLBACK falla, la conexión (posiblemente rota) vuelve al pool sin marcarla. Hallazgo anterior sin corregir.
+**Severidad:** bajo
+**Fix sugerido:** capturar el error del ROLLBACK y llamar `cliente.release(errorRollback)` en ese caso.
+
+**Archivo/línea:** modules/portal/backend/controllers/usuario.controller.js:141-188 (cambiarRolDeUsuario hace COMMIT antes de `supabaseAdmin.actualizarPassword` y de `Usuario.actualizar`)
+**Problema:** un fallo posterior devuelve 400 o 500 con el rol ya cambiado; no es un 403 parcial, pero no es atómico.
+**Severidad:** bajo
+**Fix sugerido:** aplicar el rol al final, o compensar si falla la escritura posterior.
+
+**Archivo/línea:** modules/portal/frontend/components/MenuDinamico.jsx:24 (Departamentos con opcion 'Empleados') y modules/rh/backend/routes/departamentos.routes.js:6-11 (exige Departamentos)
+**Problema:** el menú y la API usan permisos distintos. Usuarios con Empleados:consulta ven el enlace y reciben 403; quien tiene Departamentos y no Empleados no lo ve. Preexistente, pero la página ahora edita el cupo de vacaciones.
+**Severidad:** bajo
+**Fix sugerido:** `opcion: 'Departamentos'` en SUB_RUTAS.
+
+**Archivo/línea:** modules/rh/backend/tests/calendario-migracion.test.js (regex sobre SQL); modules/portal/backend/tests/errores.middleware.test.js:59 y database.config.test.js:81 (leen fuente); modules/rh/tests/calendarioLaboral.util.test.js:8 y :216 (leen fuente); modules/rh/backend/tests/vacaciones.pool.test.js:186 (timer de 4 s con pool falso)
+**Problema:** varias pruebas dependen del texto del código y no del comportamiento. No dependen de zona horaria, red ni orden (verificado), pero se rompen con cambios inocuos y no detectan errores del SQL real (ya registrado como F5/F6 en la Fase 2 y como "pruebas que no detectan regresiones" en la Fase 4).
+**Severidad:** bajo
+**Fix sugerido:** sustituir por pruebas de comportamiento o por Postgres real en CI; el timer se puede quitar porque el pool es falso.
+
+**Archivo/línea:** modules/portal/backend/config/database.js:4-7 (enteroEnv)
+**Problema:** un valor inválido de PG_POOL_MAX, PG_POOL_IDLE_TIMEOUT_MS, etc., cae al valor por defecto sin aviso en el log.
+**Severidad:** bajo
+**Fix sugerido:** `console.warn` con el nombre de la variable cuando el valor no es válido.
+
+**Archivo/línea:** config/database/init.sql (bloque e, festivos con `WHERE NOT EXISTS`)
+**Problema:** si RH vacía `calendario_laboral`, el siguiente db-init vuelve a sembrar los festivos. Está documentado en docs/supabase.md.
+**Severidad:** bajo (aceptado)
+**Fix sugerido:** ninguno por ahora; revisar si RH necesita que un vaciado sea definitivo.
+
+**Pendientes sin verificar en esta pasada:** eslint; UI de usuarios y permisos (mensaje del 403); CalendarioLaboralPage, ModalFechaCalendario y CalendarioOcupacion (cubiertos por tester en fases anteriores, no revisados de nuevo); GoTrue real y Azure.
+**Resumen para el orquestador:** 1 crítico (C1, alta de empleado asigna super_admin), 2 altos (eliminar/desactivar privilegiados; toma de cuenta por reset de contraseña), 5 medios, 9 bajos. Veredicto RECHAZADO hasta corregir C1; los altos conviene resolverlos en la misma tanda.

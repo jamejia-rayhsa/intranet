@@ -40,7 +40,7 @@ describe('usuario.controller', () => {
       supabaseAdmin.crearUsuario.mockResolvedValue({ id: 'uid-1' });
       Usuario.crear.mockResolvedValue({ id: 5, correo: 'A@x.com', hash_password: 'h', auth_uid: 'uid-1' });
       const res = mockRes();
-      await controlador.crear({ body }, res);
+      await controlador.crear({ user: SUPER, body }, res);
       const args = supabaseAdmin.crearUsuario.mock.calls[0][0];
       expect(args.correo).toBe('a@x.com');
       expect(args.password).toBe('Secreta123');
@@ -56,17 +56,18 @@ describe('usuario.controller', () => {
       supabaseAdmin.crearUsuario.mockResolvedValue({ id: 'uid-1' });
       Usuario.crear.mockRejectedValue(new Error('fallo insert'));
       const res = mockRes();
-      await controlador.crear({ body }, res);
+      await controlador.crear({ user: SUPER, body }, res);
       expect(supabaseAdmin.eliminarUsuario).toHaveBeenCalledWith('uid-1');
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json.mock.calls[0][0].error).toBe('fallo insert');
+      // Nunca el mensaje interno al cliente
+      expect(res.json.mock.calls[0][0]).toEqual({ exito: false, mensaje: 'Error al crear usuario' });
     });
 
     it('si GoTrue falla no inserta localmente', async () => {
       Usuario.buscarPorCorreo.mockResolvedValue(undefined);
       supabaseAdmin.crearUsuario.mockRejectedValue(new Error('gotrue caido'));
       const res = mockRes();
-      await controlador.crear({ body }, res);
+      await controlador.crear({ user: SUPER, body }, res);
       expect(Usuario.crear).not.toHaveBeenCalled();
       expect(supabaseAdmin.eliminarUsuario).not.toHaveBeenCalled();
     });
@@ -120,7 +121,7 @@ describe('usuario.controller', () => {
       Usuario.buscarPorId.mockResolvedValue({ id: 7, auth_uid: 'uid-7' });
       Usuario.eliminar.mockResolvedValue({ id: 7 });
       const res = mockRes();
-      await controlador.eliminar({ params: { id: 7 } }, res);
+      await controlador.eliminar({ user: SUPER, params: { id: 7 } }, res);
       expect(Usuario.eliminar.mock.invocationCallOrder[0]).toBeLessThan(
         supabaseAdmin.eliminarUsuario.mock.invocationCallOrder[0],
       );
@@ -132,7 +133,7 @@ describe('usuario.controller', () => {
       Usuario.buscarPorId.mockResolvedValue({ id: 8, auth_uid: null });
       Usuario.eliminar.mockResolvedValue({ id: 8 });
       const res = mockRes();
-      await controlador.eliminar({ params: { id: 8 } }, res);
+      await controlador.eliminar({ user: SUPER, params: { id: 8 } }, res);
       expect(supabaseAdmin.eliminarUsuario).not.toHaveBeenCalled();
       expect(res.json.mock.calls[0][0].exito).toBe(true);
     });
@@ -142,7 +143,7 @@ describe('usuario.controller', () => {
       Usuario.eliminar.mockResolvedValue({ id: 9 });
       supabaseAdmin.eliminarUsuario.mockRejectedValue(new Error('gotrue caido'));
       const res = mockRes();
-      await controlador.eliminar({ params: { id: 9 } }, res);
+      await controlador.eliminar({ user: SUPER, params: { id: 9 } }, res);
       expect(res.status).not.toHaveBeenCalled();
       expect(res.json.mock.calls[0][0].exito).toBe(true);
       const aviso = console.warn.mock.calls.flat().join(' ');
@@ -154,7 +155,7 @@ describe('usuario.controller', () => {
       Usuario.buscarPorId.mockResolvedValue(undefined);
       Usuario.eliminar.mockResolvedValue(undefined);
       const res = mockRes();
-      await controlador.eliminar({ params: { id: 1 } }, res);
+      await controlador.eliminar({ user: SUPER, params: { id: 1 } }, res);
       expect(res.status).toHaveBeenCalledWith(404);
       expect(supabaseAdmin.eliminarUsuario).not.toHaveBeenCalled();
     });
@@ -187,7 +188,7 @@ describe('usuario.controller', () => {
     it('sin contraseña no consulta ni toca GoTrue', async () => {
       Usuario.actualizar.mockResolvedValue({ id: 2 });
       const res = mockRes();
-      await controlador.actualizar({ params: { id: 2 }, body: { nombre: 'X' } }, res);
+      await controlador.actualizar({ user: SUPER, params: { id: 2 }, body: { nombre: 'X' } }, res);
       expect(Usuario.buscarPorId).not.toHaveBeenCalled();
       expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
     });

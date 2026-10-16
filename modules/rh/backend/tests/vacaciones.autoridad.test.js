@@ -1,5 +1,5 @@
-// Quién puede aprobar o rechazar vacaciones: jefe inmediato del solicitante, RH y super_admin;
-// nadie lo propio. Rutas y controlador reales; modelos, permisos y auth sustituidos.
+// Quién puede aprobar o rechazar vacaciones: jefe inmediato VIGENTE del solicitante (empleados.jefe_inmediato_id
+// al momento de responder, no el guardado en la solicitud), RH y super_admin; nadie lo propio. Rutas y controlador reales; modelos, permisos y auth sustituidos.
 // La autoridad real se comprueba dentro de la transacción con la solicitud ya bloqueada.
 const request = require("supertest");
 const express = require("express");
@@ -34,6 +34,7 @@ jest.mock("../models/solicitudVacaciones.model", () => ({
   obtenerPorId: jest.fn(),
   enTransaccion: jest.fn(),
   empleadoIdDeSolicitud: jest.fn(),
+  jefeVigenteDeEmpleado: jest.fn(),
   bloquearEmpleado: jest.fn(),
   obtenerParaResponder: jest.fn(),
   bloquearDepartamento: jest.fn(),
@@ -63,21 +64,28 @@ const USUARIOS = {
   300: { empleado: { id: 30 }, rh: true }, // super_admin
   400: { empleado: undefined, rh: true }, // rh sin empleado vinculado
   410: { empleado: undefined, rh: false }, // usuario sin empleado ni RH
+  85: { empleado: { id: 8 }, rh: false, edicionVacaciones: false }, // el jefe 8, pero solo con Vacaciones:consulta
 };
 
 function como(usuarioId) {
   mockUser = { usuario_id: usuarioId, rol_id: 2 };
-  const { empleado, rh } = USUARIOS[usuarioId];
+  const { empleado, rh, edicionVacaciones = true } = USUARIOS[usuarioId];
   Empleado.obtenerPorUsuarioId.mockResolvedValue(empleado);
-  tienePermiso.mockImplementation(async (_u, _m, opcion, tipo) => rh && opcion === "Empleados" && tipo === "edicion");
+  tienePermiso.mockImplementation(async (_u, _m, opcion, tipo) => {
+    if (opcion === "Vacaciones" && tipo === "edicion") return edicionVacaciones;
+    return rh && opcion === "Empleados" && tipo === "edicion";
+  });
 }
 
-// La solicitud, tal como la ve la ruta (sin bloqueo) y tal como la ve la transacción (bloqueada)
+// La solicitud, tal como la ve la ruta (sin bloqueo) y tal como la ve la transacción (bloqueada).
+// `jefeId` = jefe VIGENTE del empleado (empleados.jefe_inmediato_id); `extra.jefe_inmediato_id` = el
+// jefe guardado al crear (histórico: por defecto otro jefe, 77, para probar que NO decide nada).
 function solicitud(empleadoId, jefeId, extra = {}) {
   return {
     id: 1,
     empleado_id: empleadoId,
-    jefe_inmediato_id: jefeId,
+    jefe_vigente_id: jefeId,
+    jefe_inmediato_id: 77,
     estatus: "pendiente",
     departamento_id: null,
     periodo: 2026,
@@ -89,10 +97,18 @@ function solicitud(empleadoId, jefeId, extra = {}) {
     ...extra,
   };
 }
+// La fila bloqueada de la transacción (SELECT * ... FOR UPDATE) NO trae el jefe vigente: se lee aparte
+// con jefeVigenteDeEmpleado. Si el controlador dejara de leerlo, estas pruebas fallan.
+const filaBloqueada = (sol) => {
+  const fila = { ...sol };
+  delete fila.jefe_vigente_id;
+  return fila;
+};
 function preparar(enRuta, enTransaccion = enRuta) {
   Solicitud.obtenerPorId.mockResolvedValue(enRuta);
   Solicitud.empleadoIdDeSolicitud.mockResolvedValue(enTransaccion.empleado_id);
-  Solicitud.obtenerParaResponder.mockResolvedValue(enTransaccion);
+  Solicitud.jefeVigenteDeEmpleado.mockResolvedValue(enTransaccion.jefe_vigente_id);
+  Solicitud.obtenerParaResponder.mockResolvedValue(filaBloqueada(enTransaccion));
   Solicitud.responder.mockImplementation(async (id, estatus) => ({ id, estatus }));
 }
 
@@ -120,6 +136,11 @@ const MATRIZ = [
   ["sin jefe: empleado común", 110, solicitud(6, null), 403],
   ["sin jefe: un jefe de otro equipo", 80, solicitud(6, null), 403],
   ["usuario sin empleado ni RH", 410, solicitud(5, 8), 403],
+  // Jefe VIGENTE: el jefe guardado al crear (77 por defecto, aquí 80) ya no autoriza; el nuevo sí
+  ["jefe anterior (guardado en la solicitud) ya no autoriza", 80, solicitud(5, 9, { jefe_inmediato_id: 8 }), 403],
+  ["jefe vigente aunque no sea el guardado", 90, solicitud(5, 9, { jefe_inmediato_id: 8 }), 200],
+  ["jefe vigente en NULL: el guardado no autoriza", 80, solicitud(5, null, { jefe_inmediato_id: 8 }), 403],
+  ["jefe vigente en NULL: RH sí", 200, solicitud(5, null, { jefe_inmediato_id: 8 }), 200],
 ];
 
 describe("Vacaciones - autoridad para aprobar y rechazar", () => {
@@ -158,7 +179,7 @@ describe("Vacaciones - autoridad para aprobar y rechazar", () => {
         jest.clearAllMocks();
         Solicitud.enTransaccion.mockImplementation(async (fn) => fn({ query: jest.fn() }));
         como(80);
-        preparar(solicitud(5, 8), solicitud(5, 12)); // la ruta veia jefe 8; la fila bloqueada, jefe 12
+        preparar(solicitud(5, 8), solicitud(5, 12)); // la ruta veia jefe 8; en la transaccion el vigente es 12
         const res = await accion();
         expect(res.status).toBe(403);
         expect(res.body.mensaje).toMatch(/autoridad/);
@@ -167,9 +188,57 @@ describe("Vacaciones - autoridad para aprobar y rechazar", () => {
       }
     });
 
+    it("el jefe vigente se lee con el cliente de la transaccion, despues de bloquear la solicitud (nunca con el pool)", async () => {
+      como(80);
+      preparar(solicitud(5, 8));
+      const cliente = { query: jest.fn() };
+      Solicitud.enTransaccion.mockImplementation(async (fn) => fn(cliente));
+      const orden = [];
+      Solicitud.obtenerParaResponder.mockImplementation(async () => {
+        orden.push("solicitud");
+        return filaBloqueada(solicitud(5, 8));
+      });
+      Solicitud.jefeVigenteDeEmpleado.mockImplementation(async (empleadoId, c) => {
+        orden.push("jefe");
+        expect(c).toBe(cliente);
+        expect(empleadoId).toBe(5);
+        return 8;
+      });
+      expect((await aprobar()).status).toBe(200);
+      expect(orden).toEqual(["solicitud", "jefe"]);
+    });
+
+    it("el jefe cambia entre la ruta y la transaccion a otra persona: el anterior pierde, el nuevo ya habia sido rechazado por la ruta", async () => {
+      como(80);
+      preparar(solicitud(5, 8), solicitud(5, 9)); // la ruta veia jefe 8; en la transaccion el vigente es 9
+      const res = await aprobar();
+      expect(res.status).toBe(403);
+      expect(res.body.mensaje).toMatch(/autoridad/);
+      expect(Solicitud.responder).not.toHaveBeenCalled();
+    });
+
+    it("403 de lo propio por la ruta (RH y jefe) con el mensaje especifico, no el generico", async () => {
+      for (const usuario of [200, 300, 80]) {
+        como(usuario);
+        const propia = usuario === 200 ? 20 : usuario === 300 ? 30 : 8;
+        preparar(solicitud(propia, 9));
+        const res = await aprobar();
+        expect(res.status).toBe(403);
+        expect(res.body.mensaje).toBe("No puedes aprobar ni rechazar tu propia solicitud de vacaciones");
+      }
+    });
+
+    it("403 de quien no es el jefe vigente por la ruta: mensaje de autoridad; inexistente: el generico", async () => {
+      como(110);
+      preparar(solicitud(5, 8));
+      expect((await aprobar()).body.mensaje).toBe("No tienes autoridad para responder esta solicitud de vacaciones");
+      Solicitud.obtenerPorId.mockResolvedValue(undefined);
+      expect((await aprobar()).body.mensaje).toBe("No tienes acceso a este recurso");
+    });
+
     it("el jefe llega a serlo entre la ruta y la transaccion: la ruta ya lo rechazo (403)", async () => {
       como(90);
-      preparar(solicitud(5, 8), solicitud(5, 9));
+      preparar(solicitud(5, 8), solicitud(5, 9)); // ruta: jefe 8; transaccion: jefe 9
       expect((await aprobar()).status).toBe(403);
       expect(Solicitud.obtenerParaResponder).not.toHaveBeenCalled();
     });
@@ -177,6 +246,7 @@ describe("Vacaciones - autoridad para aprobar y rechazar", () => {
     it("lo propio: 403 con mensaje claro dentro de la transaccion aunque la ruta lo viera ajeno", async () => {
       como(200);
       preparar(solicitud(5, 8), solicitud(20, 8));
+      Solicitud.empleadoIdDeSolicitud.mockResolvedValue(20);
       const res = await aprobar();
       expect(res.status).toBe(403);
       expect(res.body.mensaje).toMatch(/tu propia solicitud/);
@@ -220,7 +290,7 @@ describe("Vacaciones - autoridad para aprobar y rechazar", () => {
       Solicitud.bloquearEmpleado.mockImplementation(async () => orden.push("empleado"));
       Solicitud.obtenerParaResponder.mockImplementation(async () => {
         orden.push("solicitud");
-        return solicitud(5, 8);
+        return filaBloqueada(solicitud(5, 8));
       });
       expect((await aprobar()).status).toBe(200);
       expect(orden).toEqual(["empleado", "solicitud"]);
@@ -250,6 +320,19 @@ describe("Vacaciones - autoridad para aprobar y rechazar", () => {
     });
     it("jefe: solo las de su equipo; no la propia", async () => {
       expect(await puede(80)).toEqual([true, false, false, false, false]);
+    });
+    it("el listado usa el jefe VIGENTE, no el guardado en la solicitud", async () => {
+      como(80);
+      Solicitud.listar.mockResolvedValue([
+        { ...solicitud(5, 9, { jefe_inmediato_id: 8 }), id: 1 }, // guardado 8, vigente 9: ya no
+        { ...solicitud(6, 8, { jefe_inmediato_id: 9 }), id: 2 }, // guardado 9, vigente 8: ahora si
+      ]);
+      Solicitud.contar.mockResolvedValue(2);
+      const res = await request(app).get("/vacaciones");
+      expect(res.body.datos.solicitudes.map((s) => s.puede_responder)).toEqual([false, true]);
+    });
+    it("sin Vacaciones:edicion (la ruta de responder lo exige) no se ofrece responder, ni al jefe", async () => {
+      expect(await puede(85)).toEqual([false, false, false, false, false]);
     });
     it("solicitante comun: nada", async () => {
       expect(await puede(50)).toEqual([false, false, false, false, false]);

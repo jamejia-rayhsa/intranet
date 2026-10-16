@@ -6,12 +6,12 @@ const Empleado = require("../models/empleado.model");
 
 const MENSAJE_DENEGADO = "No tienes acceso a este recurso";
 
-function denegar(req, res, recurso) {
+function denegar(req, res, recurso, mensaje = MENSAJE_DENEGADO) {
   // Solo ids: nunca contenido del recurso
   console.warn(
     `[Acceso] denegado usuario_id=${req.user && req.user.usuario_id} recurso=${recurso}`,
   );
-  return res.status(403).json({ exito: false, mensaje: MENSAJE_DENEGADO });
+  return res.status(403).json({ exito: false, mensaje });
 }
 
 /** Valida que req.params[nombre] cumpla el patron; si no, 400. */
@@ -26,7 +26,11 @@ function validarParametro(nombre, patron, mensaje) {
 
 // Los ids son INTEGER (int4) en Postgres: un valor mayor haria fallar la consulta con 500
 const INT4_MAX = 2147483647;
-const esEnteroInt4 = (valor) => /^\d+$/.test(String(valor)) && Number(valor) <= INT4_MAX;
+// Solo texto o numero: `["9"]` (de `?campo[]=9`) se convertiria en "9" con String() y pasaria
+const esEnteroInt4 = (valor) =>
+  (typeof valor === "string" || typeof valor === "number") &&
+  /^\d+$/.test(String(valor)) &&
+  Number(valor) <= INT4_MAX;
 
 const validarId = (nombre = "id") => (req, res, next) => {
   if (!esEnteroInt4(req.params[nombre])) {
@@ -47,6 +51,11 @@ const validarPeriodo = (nombre = "periodo") =>
  * @param {boolean} [opciones.soloRH] - solo RH (listados de varios empleados)
  * @param {boolean} [opciones.permitirDueno=true] - false: ni el dueno pasa, tampoco RH ni
  *   super_admin (p. ej. aprobar lo propio)
+ * @param {string} [opciones.mensajePropio] - mensaje del 403 cuando quien actua es el dueno del
+ *   recurso y `permitirDueno` es false (por defecto el mensaje generico)
+ * @param {string} [opciones.mensajeSinAutoridad] - mensaje del 403 cuando el recurso existe, no es del
+ *   usuario y `permitirSi` no lo autoriza (por defecto el mensaje generico; el recurso inexistente
+ *   siempre da el generico)
  * @param {(req, propio) => Promise<boolean>|boolean} [opciones.permitirSi]
  *   regla extra para no-RH (p. ej. jefe inmediato); `propio` = empleado del usuario
  */
@@ -57,6 +66,8 @@ function accesoEmpleado({
   obtenerEmpleadoId,
   soloRH = false,
   permitirDueno = true,
+  mensajePropio,
+  mensajeSinAutoridad,
   permitirSi,
 }) {
   return async (req, res, next) => {
@@ -74,7 +85,7 @@ function accesoEmpleado({
         const duenoRH = await obtenerEmpleadoId(req);
         if (duenoRH === undefined || duenoRH === null) return next();
         const propioRH = await Empleado.obtenerPorUsuarioId(req.user.usuario_id);
-        if (propioRH && String(propioRH.id) === String(duenoRH)) return denegar(req, res, recurso);
+        if (propioRH && String(propioRH.id) === String(duenoRH)) return denegar(req, res, recurso, mensajePropio);
         return next();
       }
       if (soloRH) return denegar(req, res, recurso);
@@ -90,7 +101,7 @@ function accesoEmpleado({
       const esDueno = String(propio.id) === String(duenoId);
       if (permitirDueno && esDueno) return next();
       if (permitirSi && (await permitirSi(req, propio))) return next();
-      return denegar(req, res, recurso);
+      return denegar(req, res, recurso, esDueno && !permitirDueno ? mensajePropio : mensajeSinAutoridad);
     } catch (error) {
       console.error("[Acceso] Error al verificar acceso:", error.message);
       res.status(500).json({ exito: false, mensaje: "Error al verificar acceso" });

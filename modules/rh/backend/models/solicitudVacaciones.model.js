@@ -16,16 +16,21 @@ const SolicitudVacaciones = {
   // Ejecuta fn(cliente) dentro de BEGIN/COMMIT; ante cualquier error hace ROLLBACK y lo relanza.
   async enTransaccion(fn) {
     const cliente = await grupo.connect();
+    // Si el ROLLBACK falla la conexión puede estar rota: se entrega a release(error) para que el
+    // pool la destruya en vez de reutilizarla.
+    let errorRollback;
     try {
       await cliente.query("BEGIN");
       const resultado = await fn(cliente);
       await cliente.query("COMMIT");
       return resultado;
     } catch (error) {
-      await cliente.query("ROLLBACK").catch(() => {});
+      await cliente.query("ROLLBACK").catch((e) => {
+        errorRollback = e;
+      });
       throw error;
     } finally {
-      cliente.release();
+      cliente.release(errorRollback);
     }
   },
 
@@ -46,6 +51,17 @@ const SolicitudVacaciones = {
       [id],
     );
     return resultado.rows[0] ? resultado.rows[0].empleado_id : null;
+  },
+
+  // Jefe inmediato VIGENTE del empleado (empleados.jefe_inmediato_id hoy), o null. Lectura sin bloqueo:
+  // quien autoriza es el jefe vigente al momento de responder, no el guardado en la solicitud.
+  async jefeVigenteDeEmpleado(empleadoId, cliente = grupo) {
+    if (empleadoId === null || empleadoId === undefined) return null;
+    const resultado = await cliente.query(
+      "SELECT jefe_inmediato_id FROM empleados WHERE id = $1",
+      [empleadoId],
+    );
+    return resultado.rows[0] ? resultado.rows[0].jefe_inmediato_id : null;
   },
 
   // Bloquea la fila del departamento (serializa crear/aprobar por departamento).
@@ -216,47 +232,56 @@ const SolicitudVacaciones = {
   },
 
   async obtenerPorId(id) {
-    const consulta = "SELECT * FROM solicitudes_vacaciones WHERE id = $1";
+    // jefe_vigente_id = jefe inmediato ACTUAL del empleado (quien autoriza); jefe_inmediato_id sigue
+    // siendo el dato histórico guardado al crear
+    const consulta = `
+      SELECT s.*, e.jefe_inmediato_id AS jefe_vigente_id
+      FROM solicitudes_vacaciones s
+      LEFT JOIN empleados e ON e.id = s.empleado_id
+      WHERE s.id = $1`;
     const resultado = await grupo.query(consulta, [id]);
     return resultado.rows[0];
   },
 
   async listar(filtros = {}) {
-    let consulta = "SELECT * FROM solicitudes_vacaciones WHERE 1=1";
+    let consulta = `SELECT s.*, e.jefe_inmediato_id AS jefe_vigente_id
+      FROM solicitudes_vacaciones s
+      LEFT JOIN empleados e ON e.id = s.empleado_id
+      WHERE 1=1`;
     const valores = [];
     let contador = 1;
 
     if (!filtros.ver_todo) {
       if (filtros.empleado_o_jefe_id) {
-        consulta += ` AND (empleado_id = $${contador} OR jefe_inmediato_id = $${contador})`;
+        consulta += ` AND (s.empleado_id = $${contador} OR e.jefe_inmediato_id = $${contador})`;
         valores.push(filtros.empleado_o_jefe_id);
         contador++;
       } else if (filtros.empleado_id) {
-        consulta += ` AND empleado_id = $${contador}`;
+        consulta += ` AND s.empleado_id = $${contador}`;
         valores.push(filtros.empleado_id);
         contador++;
       }
     }
 
     if (filtros.estatus) {
-      consulta += ` AND estatus = $${contador}`;
+      consulta += ` AND s.estatus = $${contador}`;
       valores.push(filtros.estatus);
       contador++;
     }
 
     if (filtros.periodo) {
-      consulta += ` AND periodo = $${contador}`;
+      consulta += ` AND s.periodo = $${contador}`;
       valores.push(filtros.periodo);
       contador++;
     }
 
     if (filtros.busqueda) {
-      consulta += ` AND (nombre ILIKE $${contador} OR apellido_paterno ILIKE $${contador} OR numero_nomina ILIKE $${contador})`;
+      consulta += ` AND (s.nombre ILIKE $${contador} OR s.apellido_paterno ILIKE $${contador} OR s.numero_nomina ILIKE $${contador})`;
       valores.push(`%${filtros.busqueda}%`);
       contador++;
     }
 
-    consulta += " ORDER BY fecha_solicitud DESC";
+    consulta += " ORDER BY s.fecha_solicitud DESC";
 
     if (filtros.limite) {
       const desplazamiento = ((filtros.pagina || 1) - 1) * filtros.limite;
@@ -269,36 +294,38 @@ const SolicitudVacaciones = {
   },
 
   async contar(filtros = {}) {
-    let consulta = "SELECT COUNT(*) FROM solicitudes_vacaciones WHERE 1=1";
+    let consulta = `SELECT COUNT(*) FROM solicitudes_vacaciones s
+      LEFT JOIN empleados e ON e.id = s.empleado_id
+      WHERE 1=1`;
     const valores = [];
     let contador = 1;
 
     if (!filtros.ver_todo) {
       if (filtros.empleado_o_jefe_id) {
-        consulta += ` AND (empleado_id = $${contador} OR jefe_inmediato_id = $${contador})`;
+        consulta += ` AND (s.empleado_id = $${contador} OR e.jefe_inmediato_id = $${contador})`;
         valores.push(filtros.empleado_o_jefe_id);
         contador++;
       } else if (filtros.empleado_id) {
-        consulta += ` AND empleado_id = $${contador}`;
+        consulta += ` AND s.empleado_id = $${contador}`;
         valores.push(filtros.empleado_id);
         contador++;
       }
     }
 
     if (filtros.estatus) {
-      consulta += ` AND estatus = $${contador}`;
+      consulta += ` AND s.estatus = $${contador}`;
       valores.push(filtros.estatus);
       contador++;
     }
 
     if (filtros.periodo) {
-      consulta += ` AND periodo = $${contador}`;
+      consulta += ` AND s.periodo = $${contador}`;
       valores.push(filtros.periodo);
       contador++;
     }
 
     if (filtros.busqueda) {
-      consulta += ` AND (nombre ILIKE $${contador} OR apellido_paterno ILIKE $${contador} OR numero_nomina ILIKE $${contador})`;
+      consulta += ` AND (s.nombre ILIKE $${contador} OR s.apellido_paterno ILIKE $${contador} OR s.numero_nomina ILIKE $${contador})`;
       valores.push(`%${filtros.busqueda}%`);
       contador++;
     }

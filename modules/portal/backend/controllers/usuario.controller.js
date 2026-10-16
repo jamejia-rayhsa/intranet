@@ -13,11 +13,8 @@ const ControladorUsuario = {
       const usuarios = await Usuario.obtenerTodos();
       res.json({ exito: true, datos: usuarios });
     } catch (error) {
-      res.status(500).json({
-        exito: false,
-        mensaje: "Error al listar usuarios",
-        error: error.message,
-      });
+      console.error("Error al listar usuarios:", error.message);
+      res.status(500).json({ exito: false, mensaje: "Error al listar usuarios" });
     }
   },
 
@@ -31,11 +28,8 @@ const ControladorUsuario = {
       }
       res.json({ exito: true, datos: sinSecretos(usuario) });
     } catch (error) {
-      res.status(500).json({
-        exito: false,
-        mensaje: "Error al obtener usuario",
-        error: error.message,
-      });
+      console.error("Error al obtener usuario:", error.message);
+      res.status(500).json({ exito: false, mensaje: "Error al obtener usuario" });
     }
   },
 
@@ -52,12 +46,7 @@ const ControladorUsuario = {
 
       // El rol inicial se valida ANTES de crear nada (ni GoTrue ni fila local)
       if (rol_id) {
-        const cliente = await grupo.connect();
-        try {
-          await Delegacion.exigirRolAsignable(cliente, req.user, rol_id);
-        } finally {
-          cliente.release();
-        }
+        await Delegacion.validarRolesAsignables(grupo, req.user, [rol_id]);
       }
 
       const existente = await Usuario.buscarPorCorreo(correo);
@@ -113,11 +102,8 @@ const ControladorUsuario = {
       });
     } catch (error) {
       if (Delegacion.responderErrorDelegacion(res, error)) return;
-      res.status(400).json({
-        exito: false,
-        mensaje: "Error al crear usuario",
-        error: error.message,
-      });
+      console.error("Error al crear usuario:", error.message);
+      res.status(400).json({ exito: false, mensaje: "Error al crear usuario" });
     }
   },
 
@@ -135,7 +121,11 @@ const ControladorUsuario = {
       // Antes de escribir nada: el rol nuevo debe ser asignable por quien edita (y el usuario no puede
       // ser un super_admin/rh_admin/tickets_admin si quien edita no es super_admin). Un rol_id ausente
       // (undefined) ya NO borra el rol del usuario; para quitarlo se envía rol_id null o "".
+      // Cualquier cambio (activo, nombre, contraseña, rol) sobre un usuario con rol privilegiado es solo
+      // de super_admin; la contraseña (tomar la cuenta) además exige poseer los permisos de su rol.
       if (contraseña) {
+        await Delegacion.validarCuentaTomable(grupo, req.user, req.params.id);
+      } else {
         await Delegacion.validarUsuarioAdministrable(grupo, req.user, req.params.id);
       }
       if (rol_id !== undefined) {
@@ -180,7 +170,11 @@ const ControladorUsuario = {
         await supabaseAdmin.actualizarPassword(actual.auth_uid, contraseña);
       }
 
-      const usuario = await Usuario.actualizar(req.params.id, datos);
+      // Sin otros campos (p. ej. solo rol_id) no hay UPDATE que hacer: se devuelve el usuario tal cual
+      const usuario =
+        Object.keys(datos).length > 0
+          ? await Usuario.actualizar(req.params.id, datos)
+          : await Usuario.buscarPorId(req.params.id);
       if (!usuario) {
         return res
           .status(404)
@@ -194,11 +188,8 @@ const ControladorUsuario = {
       });
     } catch (error) {
       if (Delegacion.responderErrorDelegacion(res, error)) return;
-      res.status(400).json({
-        exito: false,
-        mensaje: "Error al actualizar usuario",
-        error: error.message,
-      });
+      console.error("Error al actualizar usuario:", error.message);
+      res.status(400).json({ exito: false, mensaje: "Error al actualizar usuario" });
     }
   },
 
@@ -213,8 +204,8 @@ const ControladorUsuario = {
           .json({ exito: false, mensaje: "Usuario no encontrado" });
       }
 
-      // Resetear la contraseña equivale a tomar la cuenta: no sobre un rol privilegiado
-      await Delegacion.validarUsuarioAdministrable(grupo, req.user, id);
+      // Resetear la contraseña equivale a tomar la cuenta: solo si el actor posee los permisos del rol
+      await Delegacion.validarCuentaTomable(grupo, req.user, id);
 
       if (usuario.auth_tipo !== "local") {
         return res.status(400).json({
@@ -242,11 +233,8 @@ const ControladorUsuario = {
       });
     } catch (error) {
       if (Delegacion.responderErrorDelegacion(res, error)) return;
-      res.status(500).json({
-        exito: false,
-        mensaje: "Error al resetear contraseña",
-        error: error.message,
-      });
+      console.error("Error al resetear contraseña:", error.message);
+      res.status(500).json({ exito: false, mensaje: "Error al resetear contraseña" });
     }
   },
 
@@ -256,6 +244,7 @@ const ControladorUsuario = {
       // autoriza por la fila local, asi que una identidad huerfana en GoTrue
       // recibe 403; invertirlo seria irrecuperable si fallara el borrado local.
       // Un fallo de limpieza en GoTrue se registra y no bloquea la respuesta.
+      await Delegacion.validarUsuarioAdministrable(grupo, req.user, req.params.id);
       const previo = await Usuario.buscarPorId(req.params.id);
       const usuario = await Usuario.eliminar(req.params.id);
       if (!usuario) {
@@ -274,11 +263,9 @@ const ControladorUsuario = {
       }
       res.json({ exito: true, mensaje: "Usuario eliminado exitosamente" });
     } catch (error) {
-      res.status(500).json({
-        exito: false,
-        mensaje: "Error al eliminar usuario",
-        error: error.message,
-      });
+      if (Delegacion.responderErrorDelegacion(res, error)) return;
+      console.error("Error al eliminar usuario:", error.message);
+      res.status(500).json({ exito: false, mensaje: "Error al eliminar usuario" });
     }
   },
 
@@ -308,11 +295,8 @@ const ControladorUsuario = {
       });
     } catch (error) {
       if (Delegacion.responderErrorDelegacion(res, error)) return;
-      res.status(500).json({
-        exito: false,
-        mensaje: "Error al asignar rol",
-        error: error.message,
-      });
+      console.error("Error al asignar rol:", error.message);
+      res.status(500).json({ exito: false, mensaje: "Error al asignar rol" });
     }
   },
 };

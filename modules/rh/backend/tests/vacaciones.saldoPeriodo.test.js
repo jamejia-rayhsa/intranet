@@ -162,3 +162,100 @@ describe("disponibilidad no toma el periodo del cliente", () => {
     expect(Solicitud.calcularSaldo).toHaveBeenCalledWith(5, 2026);
   });
 });
+
+describe("empleado_id que no es un valor escalar (array u objeto): 400, nunca 500", () => {
+  const rutas = [
+    ["/vacaciones/saldo", ""],
+    ["/vacaciones/disponibilidad", "&fecha_inicial=2026-10-19&fecha_final=2026-10-20"],
+    ["/vacaciones/ocupacion", "&desde=2026-10-01&hasta=2026-10-31"],
+  ];
+  const formas = ["empleado_id[]=9", "empleado_id[a]=9", "empleado_id=9&empleado_id=10"];
+
+  describe.each([
+    ["RH", comoRH],
+    ["empleado común", () => comoEmpleado(9)],
+  ])("%s", (_quien, entrar) => {
+    beforeEach(() => {
+      jest.clearAllMocks();
+      entrar();
+      Empleado.obtenerPorId.mockResolvedValue({ id: 9, departamento_id: null });
+      Calendario.listar.mockResolvedValue([]);
+      Solicitud.calcularSaldo.mockResolvedValue({ dias_pendientes: 12 });
+    });
+
+    it.each(rutas.flatMap(([ruta, extra]) => formas.map((forma) => [ruta, forma, extra])))(
+      "%s?%s -> 400 sin tocar la BD",
+      async (ruta, forma, extra) => {
+        const r = await request(app).get(`${ruta}?${forma}${extra}`);
+        expect(r.status).toBe(400);
+        expect(r.body.exito).toBe(false);
+        expect(Empleado.obtenerPorId).not.toHaveBeenCalled();
+        expect(Solicitud.calcularSaldo).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  it("POST con empleado_id arreglo o booleano -> 400 (no se coacciona con Number)", async () => {
+    comoRH();
+    for (const valor of [[9], ["9"], true, { id: 9 }]) {
+      const r = await request(app)
+        .post("/vacaciones")
+        .send({ empleado_id: valor, fecha_inicial: "2026-10-19", fecha_final: "2026-10-20" });
+      expect(r.status).toBe(400);
+    }
+  });
+
+  // El middleware también valida por su cuenta (sin pasar por el controlador)
+  describe("el middleware empleadoPropioEnPeticion rechaza valores no escalares", () => {
+    const { empleadoPropioEnPeticion } = require("../middleware/acceso-empleado.middleware");
+    const middleware = empleadoPropioEnPeticion({ opcion: "Vacaciones", opcionRH: "Empleados", origen: "query" });
+    it.each([[["9"]], [{ a: "9" }], [["9", "10"]], [true]])("empleado_id=%j -> 400 y no llama a next", async (valor) => {
+      comoRH();
+      const res = { status: jest.fn(() => res), json: jest.fn(() => res) };
+      const next = jest.fn();
+      await middleware({ user: { usuario_id: 20 }, query: { empleado_id: valor } }, res, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(next).not.toHaveBeenCalled();
+    });
+    it("un id numérico o de texto válido sí pasa", async () => {
+      comoRH();
+      for (const valor of ["9", 9]) {
+        const next = jest.fn();
+        await middleware({ user: { usuario_id: 20 }, query: { empleado_id: valor } }, { status: jest.fn() }, next);
+        expect(next).toHaveBeenCalled();
+      }
+    });
+  });
+
+  // El controlador valida por su cuenta (defensa en profundidad si cambia el middleware)
+  describe("el controlador no depende del middleware", () => {
+    const Controlador = require("../controllers/vacaciones.controller");
+    const respuesta = () => {
+      const res = { status: jest.fn(() => res), json: jest.fn(() => res) };
+      return res;
+    };
+    it("crear con empleado_id arreglo o booleano -> 400 (Number([9]) valdría 9)", async () => {
+      for (const valor of [[9], true, { id: 9 }]) {
+        jest.clearAllMocks();
+        const res = respuesta();
+        await Controlador.crear(
+          { body: { empleado_id: valor, fecha_inicial: "2026-10-19", fecha_final: "2026-10-20" }, user: { usuario_id: 1 } },
+          res,
+        );
+        expect(res.status).toHaveBeenCalledWith(400);
+        expect(Empleado.obtenerPorUsuarioId).not.toHaveBeenCalled();
+      }
+    });
+    it.each([
+      ["obtenerSaldo", { query: { empleado_id: ["9"] } }],
+      ["disponibilidad", { query: { empleado_id: ["9"], fecha_inicial: "2026-10-19", fecha_final: "2026-10-20" } }],
+      ["ocupacion", { query: { empleado_id: { a: "9" }, desde: "2026-10-01", hasta: "2026-10-31" } }],
+    ])("%s con empleado_id no escalar -> 400", async (metodo, base) => {
+      jest.clearAllMocks();
+      const res = respuesta();
+      await Controlador[metodo]({ ...base, user: { usuario_id: 1 } }, res);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(Empleado.obtenerPorId).not.toHaveBeenCalled();
+    });
+  });
+});

@@ -67,7 +67,8 @@ async function responderError(req, res, error, mensajeGenerico) {
   return res.status(500).json({ exito: false, mensaje: mensajeGenerico });
 }
 
-// Quién puede aprobar o rechazar: el jefe inmediato del solicitante, RH y super_admin; nadie lo propio.
+// Quién puede aprobar o rechazar: el jefe inmediato VIGENTE del solicitante (empleados.jefe_inmediato_id
+// hoy, `jefe_vigente_id`; no el guardado al crear), RH y super_admin; nadie lo propio.
 // Devuelve el mensaje de rechazo (403) o null si puede. Función pura: no consulta la BD.
 const MSG_PROPIA = "No puedes aprobar ni rechazar tu propia solicitud de vacaciones";
 const MSG_SIN_AUTORIDAD = "No tienes autoridad para responder esta solicitud de vacaciones";
@@ -78,10 +79,24 @@ function motivoSinAutoridad(solicitud, empleadoAutoriza, esRH) {
   if (esRH) return null;
   const esJefe =
     empleadoAutoriza &&
-    solicitud.jefe_inmediato_id != null &&
-    String(solicitud.jefe_inmediato_id) === String(empleadoAutoriza.id);
+    solicitud.jefe_vigente_id != null &&
+    String(solicitud.jefe_vigente_id) === String(empleadoAutoriza.id);
   return esJefe ? null : MSG_SIN_AUTORIDAD;
 }
+
+// `?empleado_id=` debe ser un entero int4 en forma de texto o número: arrays (`empleado_id[]=9`) y
+// objetos (`empleado_id[a]=1`) no son un id. Ausente o vacío = el empleado del token.
+const INT4_MAX = 2147483647;
+function empleadoIdDeLaConsultaValido(valor) {
+  if (valor === undefined || valor === null || valor === "") return true;
+  return (
+    (typeof valor === "string" || typeof valor === "number") &&
+    /^\d+$/.test(String(valor)) &&
+    Number(valor) <= INT4_MAX
+  );
+}
+const respuestaEmpleadoInvalido = (res) =>
+  res.status(400).json({ exito: false, mensaje: "Parametro empleado_id no valido" });
 
 // Empleado sobre el que se consulta: el pedido (si el middleware lo permitió) o el del token
 async function empleadoDeLaConsulta(req) {
@@ -170,6 +185,7 @@ const ControladorVacaciones = {
   async obtenerSaldo(req, res) {
     try {
       let { empleado_id, periodo } = req.query;
+      if (!empleadoIdDeLaConsultaValido(empleado_id)) return respuestaEmpleadoInvalido(res);
 
       if (!empleado_id) {
         const empleadoUsuario = await Empleado.obtenerPorUsuarioId(req.user.usuario_id);
@@ -258,6 +274,9 @@ const ControladorVacaciones = {
           });
         }
         empleado_id = empleadoUsuario.id;
+      }
+      if (typeof empleado_id !== "string" && typeof empleado_id !== "number") {
+        return res.status(400).json({ exito: false, mensaje: "El empleado indicado no es válido" });
       }
       const idNumerico = Number(empleado_id);
       if (!Number.isInteger(idNumerico) || idNumerico < 1 || idNumerico > 2147483647) {
@@ -449,10 +468,14 @@ const ControladorVacaciones = {
       const solicitudes = await SolicitudVacaciones.listar(filtros);
       const total = await SolicitudVacaciones.contar(filtros);
 
+      // La ruta de responder exige Vacaciones:edicion: sin él no se ofrece Aprobar/Rechazar
+      const puedeEditar = await tienePermiso(req.user, "rh", "Vacaciones", "edicion");
       const solicitudesEnriquecidas = solicitudes.map((sol) => ({
         ...sol,
         puede_responder:
-          sol.estatus === "pendiente" && motivoSinAutoridad(sol, empleadoUsuario, esAdmin) === null,
+          puedeEditar &&
+          sol.estatus === "pendiente" &&
+          motivoSinAutoridad(sol, empleadoUsuario, esAdmin) === null,
       }));
 
       res.json({
@@ -532,8 +555,15 @@ const ControladorVacaciones = {
         const actual = await SolicitudVacaciones.obtenerParaResponder(req.params.id, cliente);
         if (!actual) throw new ErrorVacaciones(404, "Solicitud no encontrada");
 
-        // Con la fila ya bloqueada: la ruta pudo decidir con datos anteriores
-        const motivoDenegado = motivoSinAutoridad(actual, empleadoAutoriza, esRH);
+        // Con la fila ya bloqueada: la ruta pudo decidir con datos anteriores. Autoriza el jefe VIGENTE
+        // del empleado (SELECT con `cliente`, dentro de la transacción); el jefe guardado en la
+        // solicitud es solo histórico.
+        const jefeVigenteId = await SolicitudVacaciones.jefeVigenteDeEmpleado(actual.empleado_id, cliente);
+        const motivoDenegado = motivoSinAutoridad(
+          { ...actual, jefe_vigente_id: jefeVigenteId },
+          empleadoAutoriza,
+          esRH,
+        );
         if (motivoDenegado) throw new ErrorVacaciones(403, motivoDenegado);
 
         if (actual.estatus !== "pendiente") {
@@ -610,6 +640,7 @@ const ControladorVacaciones = {
   async disponibilidad(req, res) {
     try {
       const { fecha_inicial, fecha_final } = req.query;
+      if (!empleadoIdDeLaConsultaValido(req.query.empleado_id)) return respuestaEmpleadoInvalido(res);
       const rango = validarRango(fecha_inicial, fecha_final);
       if (!rango.ok) return res.status(400).json({ exito: false, mensaje: rango.mensaje });
 
@@ -681,6 +712,7 @@ const ControladorVacaciones = {
   async ocupacion(req, res) {
     try {
       const { desde, hasta } = req.query;
+      if (!empleadoIdDeLaConsultaValido(req.query.empleado_id)) return respuestaEmpleadoInvalido(res);
       const rango = validarRango(desde, hasta);
       if (!rango.ok) return res.status(400).json({ exito: false, mensaje: rango.mensaje });
 
@@ -716,3 +748,5 @@ const ControladorVacaciones = {
 };
 
 module.exports = ControladorVacaciones;
+module.exports.MSG_PROPIA = MSG_PROPIA;
+module.exports.MSG_SIN_AUTORIDAD = MSG_SIN_AUTORIDAD;

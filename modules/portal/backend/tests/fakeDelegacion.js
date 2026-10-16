@@ -3,7 +3,9 @@
 // con una copia del estado: así se comprueba que un rechazo no deja cambios parciales.
 // La verificación contra Postgres real se hizo aparte (ver code-notes.md).
 
-const IDS = { super: 1, portal: 2, rhAdmin: 3, rhEmpleado: 4, ticketsAdmin: 5, auditor: 6 };
+const IDS = { super: 1, portal: 2, rhAdmin: 3, rhEmpleado: 4, ticketsAdmin: 5, auditor: 6, libre: 7 };
+// usuarios: 10 portal_admin, 11 super_admin, 12 rh_empleado, 13 rh_admin, 14 rol_libre, 15 portal_admin, 16 tickets_admin, 17 sin rol
+const USUARIOS = { portal: 10, super: 11, rhEmpleado: 12, rhAdmin: 13, libre: 14, portal2: 15, ticketsAdmin: 16, sinRol: 17 };
 
 function estadoInicial() {
   const roles = [
@@ -39,12 +41,16 @@ function estadoInicial() {
     roles,
     opciones,
     rop,
-    usuarios: [{ id: 10 }, { id: 11 }, { id: 12 }, { id: 13 }],
+    usuarios: [{ id: 10 }, { id: 11 }, { id: 12 }, { id: 13 }, { id: 14 }, { id: 15 }, { id: 16 }, { id: 17 }],
     usuario_rol: [
       { usuario_id: 10, rol_id: 2 }, // portal_admin
       { usuario_id: 11, rol_id: 1 }, // super_admin
-      { usuario_id: 12, rol_id: 4 }, // rh_empleado
+      { usuario_id: 12, rol_id: 4 }, // rh_empleado (permisos que portal_admin NO posee)
       { usuario_id: 13, rol_id: 3 }, // rh_admin
+      { usuario_id: 14, rol_id: 7 }, // rol_libre (sin permisos)
+      { usuario_id: 15, rol_id: 2 }, // otro portal_admin (mismos permisos que el actor)
+      { usuario_id: 16, rol_id: 5 }, // tickets_admin
+      // 17: sin rol
     ],
   };
 }
@@ -162,4 +168,4 @@ function crearPoolFalso() {
   return pool;
 }
 
-module.exports = { crearPoolFalso, IDS };
+module.exports = { crearPoolFalso, IDS, USUARIOS };

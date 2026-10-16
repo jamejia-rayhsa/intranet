@@ -50,6 +50,8 @@ Puntos clave (verificados en `docker-compose.supabase.yml`, `config/nginx/*.conf
 
 Orden interno: `supabase-db` -> `supabase-db-init` (one-shot: carga `config/database/init.sql` solo si no existe `public.usuarios`, y siempre aplica migraciones idempotentes `004`, `005` y `007`) -> `supabase-auth` y `supabase-storage` -> backend. El backend espera a que `db-init` termine con éxito.
 
+Nota sobre `rh/010-empleados-usuario-unico.sql`: agrega `UNIQUE (usuario_id)` a `empleados` solo si no hay usuarios con más de un empleado; si los hay, NO falla: emite un `WARNING` con los ids duplicados y deja la restricción sin crear (hasta que RH los corrija y se relance `db-init`). La autoridad de vacaciones depende de la relación 1:1.
+
 Nota sobre la semilla de festivos (`rh/009-calendario-laboral.sql`): solo inserta los festivos oficiales 2026-2027 si `calendario_laboral` está vacía, así que un festivo borrado por RH no reaparece al relanzar `db-init`; si se vacía por completo la tabla, la siguiente ejecución volverá a sembrarlos.
 
 ### Migraciones nuevas con el entorno ya levantado

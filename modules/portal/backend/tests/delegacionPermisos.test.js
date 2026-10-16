@@ -1,6 +1,6 @@
 const request = require('supertest');
 const express = require('express');
-const { crearPoolFalso, IDS } = require('./fakeDelegacion');
+const { crearPoolFalso, IDS, USUARIOS } = require('./fakeDelegacion');
 
 let mockUser;
 const mockPool = crearPoolFalso();
@@ -31,6 +31,7 @@ jest.mock('../models/usuario.model', () => ({
   buscarPorCorreo: jest.fn(),
   actualizar: jest.fn(async (id) => ({ id: Number(id) })),
   crear: jest.fn(),
+  eliminar: jest.fn(async (id) => ({ id: Number(id) })),
 }));
 jest.mock('../models/permiso.model', () => ({}));
 jest.mock('../services/supabaseAdmin.service', () => ({
@@ -54,6 +55,9 @@ const comoSuperAdmin = () => {
 };
 const comoPortalAdmin = () => {
   mockUser = { usuario_id: 10, rol_id: IDS.portal, rol_nombre: 'portal_admin' };
+};
+const comoRhAdmin = () => {
+  mockUser = { usuario_id: 13, rol_id: IDS.rhAdmin, rol_nombre: 'rh_admin' };
 };
 // opcion_id: 1 portal/Roles, 2 portal/Usuarios, 3 rh/Empleados, 4 rh/Vacaciones, 5 rh/Calendario, 6 tickets/Tickets
 const put = (rol, modulo, permisos) =>
@@ -236,86 +240,89 @@ describe('POST /usuarios/:id/rol y PUT /usuarios/:id: asignación de roles', () 
       ['super_admin', IDS.super],
       ['rh_admin', IDS.rhAdmin],
       ['tickets_admin', IDS.ticketsAdmin],
-    ])('no puede asignarse el rol %s: 403 y su rol no cambia', async (_n, rol) => {
-      const r = await asignar(10, rol);
+    ])('no puede asignar el rol privilegiado %s a otro usuario común: 403 y su rol no cambia', async (_n, rol) => {
+      const r = await asignar(USUARIOS.libre, rol);
       expect(r.status).toBe(403);
       expect(r.body.mensaje).toMatch(/No puedes asignar el rol/);
-      expect(mockPool.rolDe(10)).toEqual([IDS.portal]);
+      expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.libre]);
     });
 
-    it('tampoco se lo asigna a otro usuario', async () => {
-      const r = await asignar(12, IDS.super);
+    it.each([
+      ['super_admin', IDS.super],
+      ['rh_admin', IDS.rhAdmin],
+      ['tickets_admin', IDS.ticketsAdmin],
+    ])('tampoco puede asignarse a sí mismo el rol %s', async (_n, rol) => {
+      const r = await asignar(USUARIOS.portal, rol);
       expect(r.status).toBe(403);
-      expect(mockPool.rolDe(12)).toEqual([IDS.rhEmpleado]);
+      expect(mockPool.rolDe(USUARIOS.portal)).toEqual([IDS.portal]);
     });
 
-    it('no puede asignar rh_empleado (incluye permisos de rh que no posee)', async () => {
-      const r = await asignar(12, IDS.rhEmpleado);
-      expect(r.status).toBe(200); // ya lo tiene: no cambia nada
-      const r2 = await asignar(10, IDS.rhEmpleado);
+    it('DECISIÓN DEL HUMANO: puede asignar un rol NO privilegiado aunque tenga más permisos que él (rh_empleado)', async () => {
+      const r = await asignar(USUARIOS.libre, IDS.rhEmpleado);
+      expect(r.status).toBe(200);
+      expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.rhEmpleado]);
+      expect((await asignar(USUARIOS.sinRol, IDS.auditor)).status).toBe(200);
+      expect(mockPool.rolDe(USUARIOS.sinRol)).toEqual([IDS.auditor]);
+    });
+
+    it('no puede cambiarse ni quitarse a sí mismo el rol (auto-elevación), ni siquiera a uno no privilegiado', async () => {
+      for (const rol of [IDS.rhEmpleado, IDS.libre, IDS.portal + 100]) {
+        const r = await asignar(USUARIOS.portal, rol);
+        expect([403, 404]).toContain(r.status);
+        expect(mockPool.rolDe(USUARIOS.portal)).toEqual([IDS.portal]);
+      }
+      const r1 = await asignar(USUARIOS.portal, IDS.rhEmpleado);
+      expect(r1.status).toBe(403);
+      expect(r1.body.mensaje).toMatch(/tu propio rol/);
+      const r2 = await request(app).put(`/api/usuarios/${USUARIOS.portal}`).send({ rol_id: IDS.rhEmpleado, nombre: 'Yo' });
       expect(r2.status).toBe(403);
-      expect(r2.body.mensaje).toMatch(/rh\/Vacaciones/);
-      expect(mockPool.rolDe(10)).toEqual([IDS.portal]);
+      const r3 = await request(app).put(`/api/usuarios/${USUARIOS.portal}`).send({ rol_id: null });
+      expect(r3.status).toBe(403);
+      expect(mockPool.rolDe(USUARIOS.portal)).toEqual([IDS.portal]);
+      expect(Usuario.actualizar).not.toHaveBeenCalled();
     });
 
-    it('puede asignar un rol cuyos permisos posee por completo (portal_admin, rol sin permisos)', async () => {
-      expect((await asignar(12, IDS.portal)).status).toBe(200);
-      expect(mockPool.rolDe(12)).toEqual([IDS.portal]);
-      expect((await asignar(10, 7)).status).toBe(200);
-      expect(mockPool.rolDe(10)).toEqual([7]);
+    it('guardar su propio usuario con el mismo rol (sin cambio) sigue siendo posible', async () => {
+      const r = await request(app).put(`/api/usuarios/${USUARIOS.portal}`).send({ rol_id: IDS.portal, nombre: 'Yo' });
+      expect(r.status).toBe(200);
+      expect(mockPool.rolDe(USUARIOS.portal)).toEqual([IDS.portal]);
     });
 
     it('no puede cambiar ni quitar el rol de un super_admin ni de un rh_admin', async () => {
-      expect((await asignar(11, IDS.portal)).status).toBe(403);
-      expect(mockPool.rolDe(11)).toEqual([IDS.super]);
-      const r = await request(app).put('/api/usuarios/13').send({ rol_id: null, nombre: 'X' });
+      expect((await asignar(USUARIOS.super, IDS.portal)).status).toBe(403);
+      expect(mockPool.rolDe(USUARIOS.super)).toEqual([IDS.super]);
+      const r = await request(app).put(`/api/usuarios/${USUARIOS.rhAdmin}`).send({ rol_id: null, nombre: 'X' });
       expect(r.status).toBe(403);
-      expect(mockPool.rolDe(13)).toEqual([IDS.rhAdmin]);
+      expect(mockPool.rolDe(USUARIOS.rhAdmin)).toEqual([IDS.rhAdmin]);
       expect(Usuario.actualizar).not.toHaveBeenCalled();
     });
 
-    it('PUT /usuarios/:id con otro rol privilegiado: 403 antes de escribir nada', async () => {
-      const r = await request(app).put('/api/usuarios/12').send({ rol_id: IDS.super, nombre: 'Nuevo' });
+    it('PUT /usuarios/:id con un rol privilegiado: 403 antes de escribir nada', async () => {
+      const r = await request(app).put(`/api/usuarios/${USUARIOS.rhEmpleado}`).send({ rol_id: IDS.super, nombre: 'Nuevo' });
       expect(r.status).toBe(403);
       expect(Usuario.actualizar).not.toHaveBeenCalled();
-      expect(mockPool.rolDe(12)).toEqual([IDS.rhEmpleado]);
+      expect(mockPool.rolDe(USUARIOS.rhEmpleado)).toEqual([IDS.rhEmpleado]);
     });
 
-    it('PUT /usuarios/:id editando solo el nombre de un rh_admin conservando su rol funciona (sin cambio de rol)', async () => {
-      const r = await request(app).put('/api/usuarios/13').send({ rol_id: IDS.rhAdmin, nombre: 'Nuevo' });
+    it('PUT /usuarios/:id sin rol_id no borra el rol del usuario', async () => {
+      const r = await request(app).put(`/api/usuarios/${USUARIOS.libre}`).send({ nombre: 'Solo nombre' });
       expect(r.status).toBe(200);
-      expect(mockPool.rolDe(13)).toEqual([IDS.rhAdmin]);
+      expect(mockPool.rolDe(USUARIOS.libre)).toEqual([IDS.libre]);
     });
 
-    it('PUT /usuarios/:id sin rol_id ya no borra el rol del usuario', async () => {
-      const r = await request(app).put('/api/usuarios/12').send({ nombre: 'Solo nombre' });
+    it('PUT /usuarios/:id solo con rol_id null: quita el rol y responde 200 limpio (sin UPDATE vacío)', async () => {
+      const r = await request(app).put(`/api/usuarios/${USUARIOS.libre}`).send({ rol_id: null });
       expect(r.status).toBe(200);
-      expect(mockPool.rolDe(12)).toEqual([IDS.rhEmpleado]);
-    });
-
-    it('PUT /usuarios/:id con rol_id null quita el rol de un usuario común', async () => {
-      const r = await request(app).put('/api/usuarios/12').send({ rol_id: null });
-      expect(r.status).toBe(200);
-      expect(mockPool.rolDe(12)).toEqual([]);
-    });
-
-    it('no puede resetear la contraseña de un super_admin ni de un rh_admin (tomaría la cuenta)', async () => {
-      expect((await request(app).post('/api/usuarios/11/reset-password')).status).toBe(403);
-      expect((await request(app).post('/api/usuarios/13/reset-password')).status).toBe(403);
-      expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
-      expect((await request(app).post('/api/usuarios/12/reset-password')).status).toBe(200);
-    });
-
-    it('PUT con contraseña sobre un super_admin: 403 sin tocar GoTrue', async () => {
-      const r = await request(app).put('/api/usuarios/11').send({ contraseña: 'Nueva12345' });
-      expect(r.status).toBe(403);
-      expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
+      expect(r.body.exito).toBe(true);
+      expect(r.body.error).toBeUndefined();
+      expect(mockPool.rolDe(USUARIOS.libre)).toEqual([]);
+      expect(Usuario.actualizar).not.toHaveBeenCalled();
     });
 
     it('usuario o rol inexistentes -> 404; rol_id inválido -> 400', async () => {
       expect((await asignar(999, IDS.portal)).status).toBe(404);
-      expect((await asignar(12, 999)).status).toBe(404);
-      expect((await asignar(12, 'abc')).status).toBe(400);
+      expect((await asignar(USUARIOS.libre, 999)).status).toBe(404);
+      expect((await asignar(USUARIOS.libre, 'abc')).status).toBe(400);
     });
 
     it('crear usuario con rol_id super_admin: 403 antes de crear nada en GoTrue', async () => {
@@ -325,20 +332,138 @@ describe('POST /usuarios/:id/rol y PUT /usuarios/:id: asignación de roles', () 
       expect(r.status).toBe(403);
       expect(supabaseAdmin.crearUsuario).not.toHaveBeenCalled();
     });
+
+    it('crear usuario con un rol no privilegiado con más permisos (rh_empleado): 201 con ese rol', async () => {
+      Usuario.buscarPorCorreo.mockResolvedValue(undefined);
+      supabaseAdmin.crearUsuario.mockResolvedValue({ id: 'uid-50' });
+      Usuario.crear.mockResolvedValue({ id: 50, correo: 'a@x.com' });
+      const r = await request(app)
+        .post('/api/usuarios')
+        .send({ correo: 'a@x.com', nombre: 'A', contraseña: 'Secreta123', rol_id: IDS.rhEmpleado });
+      expect(r.status).toBe(201);
+      expect(mockPool.rolDe(50)).toEqual([IDS.rhEmpleado]);
+    });
+  });
+
+  describe('portal_admin sobre usuarios con rol privilegiado (desactivar, borrar, editar)', () => {
+    beforeEach(comoPortalAdmin);
+
+    const PRIVILEGIADOS = [
+      ['super_admin', USUARIOS.super],
+      ['rh_admin', USUARIOS.rhAdmin],
+      ['tickets_admin', USUARIOS.ticketsAdmin],
+    ];
+
+    it.each(PRIVILEGIADOS)('desactivar a un %s: 403 y no se escribe nada', async (_n, id) => {
+      const r = await request(app).put(`/api/usuarios/${id}`).send({ activo: false });
+      expect(r.status).toBe(403);
+      expect(Usuario.actualizar).not.toHaveBeenCalled();
+    });
+
+    it.each(PRIVILEGIADOS)('editar nombre/apellido/requiere_cambio_password de un %s: 403', async (_n, id) => {
+      for (const cuerpo of [{ nombre: 'X' }, { apellido: 'Y' }, { requiere_cambio_password: false }]) {
+        expect((await request(app).put(`/api/usuarios/${id}`).send(cuerpo)).status).toBe(403);
+      }
+      expect(Usuario.actualizar).not.toHaveBeenCalled();
+    });
+
+    it.each(PRIVILEGIADOS)('borrar a un %s: 403, ni fila local ni GoTrue', async (_n, id) => {
+      const r = await request(app).delete(`/api/usuarios/${id}`);
+      expect(r.status).toBe(403);
+      expect(Usuario.eliminar).not.toHaveBeenCalled();
+      expect(supabaseAdmin.eliminarUsuario).not.toHaveBeenCalled();
+    });
+
+    it.each(PRIVILEGIADOS)('resetear o cambiar la contraseña de un %s: 403 sin tocar GoTrue', async (_n, id) => {
+      expect((await request(app).post(`/api/usuarios/${id}/reset-password`)).status).toBe(403);
+      expect((await request(app).put(`/api/usuarios/${id}`).send({ contraseña: 'Nueva12345' })).status).toBe(403);
+      expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
+    });
+
+    it('un usuario común sí se puede desactivar, editar y borrar', async () => {
+      expect((await request(app).put(`/api/usuarios/${USUARIOS.libre}`).send({ activo: false, nombre: 'Z' })).status).toBe(200);
+      expect(Usuario.actualizar).toHaveBeenCalledTimes(1);
+      expect((await request(app).delete(`/api/usuarios/${USUARIOS.libre}`)).status).toBe(200);
+      expect(Usuario.eliminar).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('rh_admin (privilegiado, no super_admin) sobre usuarios privilegiados, incluido él mismo', () => {
+    beforeEach(comoRhAdmin);
+
+    it('no puede desactivarse, editarse ni borrarse a sí mismo ni a un super_admin', async () => {
+      for (const id of [USUARIOS.rhAdmin, USUARIOS.super]) {
+        expect((await request(app).put(`/api/usuarios/${id}`).send({ activo: false })).status).toBe(403);
+        expect((await request(app).delete(`/api/usuarios/${id}`)).status).toBe(403);
+      }
+      expect(Usuario.actualizar).not.toHaveBeenCalled();
+      expect(Usuario.eliminar).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('toma de cuenta: reset/cambio de contraseña de cuentas con más permisos que el actor', () => {
+    beforeEach(comoPortalAdmin);
+
+    it('portal_admin NO puede resetear la contraseña de un rh_empleado (permisos de RH que no posee): 403', async () => {
+      const r = await request(app).post(`/api/usuarios/${USUARIOS.rhEmpleado}/reset-password`);
+      expect(r.status).toBe(403);
+      expect(r.body.mensaje).toMatch(/permisos que tú no posees/);
+      expect(r.body.mensaje).toMatch(/rh\/Vacaciones/);
+      expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
+    });
+
+    it('ni cambiarla por PUT con contraseña (y sin escribir nada más)', async () => {
+      const r = await request(app)
+        .put(`/api/usuarios/${USUARIOS.rhEmpleado}`)
+        .send({ contraseña: 'Nueva12345', nombre: 'Tomada' });
+      expect(r.status).toBe(403);
+      expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
+      expect(Usuario.actualizar).not.toHaveBeenCalled();
+    });
+
+    it('sí puede con cuentas cuyo rol no pasa de sus permisos: rol sin permisos, su mismo rol y sin rol', async () => {
+      for (const id of [USUARIOS.libre, USUARIOS.portal2, USUARIOS.sinRol, USUARIOS.portal]) {
+        const r = await request(app).post(`/api/usuarios/${id}/reset-password`);
+        expect(r.status).toBe(200);
+      }
+      expect(supabaseAdmin.actualizarPassword).toHaveBeenCalledTimes(4);
+    });
+
+    it('editar el nombre (sin contraseña) de un usuario con más permisos sigue permitido', async () => {
+      expect((await request(app).put(`/api/usuarios/${USUARIOS.rhEmpleado}`).send({ nombre: 'Nuevo' })).status).toBe(200);
+    });
   });
 
   describe('super_admin', () => {
     beforeEach(comoSuperAdmin);
 
     it('puede asignar cualquier rol, incluido super_admin, y cambiar el rol de otro super_admin', async () => {
-      expect((await asignar(12, IDS.super)).status).toBe(200);
-      expect(mockPool.rolDe(12)).toEqual([IDS.super]);
-      expect((await asignar(13, IDS.rhEmpleado)).status).toBe(200);
-      expect(mockPool.rolDe(13)).toEqual([IDS.rhEmpleado]);
+      expect((await asignar(USUARIOS.rhEmpleado, IDS.super)).status).toBe(200);
+      expect(mockPool.rolDe(USUARIOS.rhEmpleado)).toEqual([IDS.super]);
+      expect((await asignar(USUARIOS.rhAdmin, IDS.rhEmpleado)).status).toBe(200);
+      expect(mockPool.rolDe(USUARIOS.rhAdmin)).toEqual([IDS.rhEmpleado]);
     });
 
-    it('puede resetear la contraseña de un rh_admin', async () => {
-      expect((await request(app).post('/api/usuarios/13/reset-password')).status).toBe(200);
+    it('puede resetear la contraseña de cualquiera, también de un rh_admin y de un rh_empleado', async () => {
+      expect((await request(app).post(`/api/usuarios/${USUARIOS.rhAdmin}/reset-password`)).status).toBe(200);
+      expect((await request(app).post(`/api/usuarios/${USUARIOS.rhEmpleado}/reset-password`)).status).toBe(200);
+    });
+
+    it('puede desactivar, editar y borrar a usuarios privilegiados', async () => {
+      expect((await request(app).put(`/api/usuarios/${USUARIOS.rhAdmin}`).send({ activo: false })).status).toBe(200);
+      expect((await request(app).delete(`/api/usuarios/${USUARIOS.ticketsAdmin}`)).status).toBe(200);
+    });
+  });
+
+  describe('errores sin detalle interno', () => {
+    beforeEach(comoSuperAdmin);
+
+    it('un fallo inesperado responde un mensaje genérico, sin error.message', async () => {
+      Usuario.actualizar.mockRejectedValue(new Error('duplicate key value violates unique constraint "x"'));
+      const r = await request(app).put(`/api/usuarios/${USUARIOS.libre}`).send({ nombre: 'Z' });
+      expect(r.status).toBe(400);
+      expect(JSON.stringify(r.body)).not.toMatch(/duplicate key|constraint/);
+      expect(r.body.error).toBeUndefined();
     });
   });
 });
@@ -364,10 +489,18 @@ describe('/roles: roles privilegiados', () => {
       expect(Rol.actualizar).not.toHaveBeenCalled();
     });
 
-    it('conserva crear, renombrar y eliminar roles comunes', async () => {
+    it('conserva crear y renombrar roles comunes', async () => {
       expect((await request(app).post('/api/roles').send({ nombre: 'nuevo' })).status).toBe(201);
       expect((await request(app).put('/api/roles/7').send({ nombre: 'otro_nombre' })).status).toBe(200);
-      expect((await request(app).delete('/api/roles/7')).status).toBe(200);
+    });
+
+    it('DECISIÓN DEL HUMANO: NO puede borrar ningún rol, tampoco uno común (solo super_admin)', async () => {
+      for (const id of [IDS.libre, IDS.rhEmpleado, IDS.auditor, IDS.portal]) {
+        const r = await request(app).delete(`/api/roles/${id}`);
+        expect(r.status).toBe(403);
+        expect(r.body.mensaje).toMatch(/super_admin/);
+      }
+      expect(Rol.eliminar).not.toHaveBeenCalled();
     });
 
     it('PUT /roles/:id/permisos (tabla heredada) solo para super_admin', async () => {
@@ -380,10 +513,19 @@ describe('/roles: roles privilegiados', () => {
   describe('super_admin', () => {
     beforeEach(comoSuperAdmin);
 
-    it('puede todo, incluida la tabla heredada', async () => {
+    it('puede todo, incluida la tabla heredada y borrar roles', async () => {
       expect((await request(app).put(`/api/roles/${IDS.rhAdmin}`).send({ nombre: 'rh_admin2' })).status).toBe(200);
       expect((await request(app).post('/api/roles').send({ nombre: 'rh_admin3' })).status).toBe(201);
       expect((await request(app).put(`/api/roles/${IDS.auditor}/permisos`).send({ permisos_ids: [1] })).status).toBe(200);
+      expect((await request(app).delete(`/api/roles/${IDS.libre}`)).status).toBe(200);
+      expect(Rol.eliminar).toHaveBeenCalledTimes(1);
+    });
+
+    it('un fallo inesperado de la BD no filtra el mensaje interno', async () => {
+      Rol.eliminar.mockRejectedValue(new Error('violates foreign key constraint "usuario_rol_rol_id_fkey"'));
+      const r = await request(app).delete(`/api/roles/${IDS.libre}`);
+      expect(r.status).toBe(500);
+      expect(JSON.stringify(r.body)).not.toMatch(/foreign key|constraint/);
     });
   });
 });
