@@ -13,6 +13,9 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-15] orquestador → decisions.md — Fase 3 lista para GO/NO-GO (pantalla del calendario laboral y cupo en Departamentos)
+- [2026-10-15] revisor → reviews.md — Calendario laboral Fase 3: revisión (APROBADO CON OBSERVACIONES; sin críticos; medios: super_admin sin rol_nombre, contraste otro mes 4,02:1, sin pruebas de componente)
+- [2026-10-15] orquestador → decisions.md — GO a la Fase 3 (pantalla del calendario); F1 y JSON malformado quedan como deuda
 - [2026-10-15] orquestador → decisions.md — Fase 2 lista para GO/NO-GO (calendario laboral: BD, API, permisos, semilla); pendientes F1 y JSON malformado
 - [2026-10-15] revisor → reviews.md — Calendario laboral Fase 2: revisión (APROBADO CON OBSERVACIONES; sin críticos; 1 alto preexistente escalado: portal_admin puede auto-otorgarse permisos de RH; medios F2-F6)
 - [2026-10-15] coder → code-notes.md — Calendario laboral Fase 2: migración 009, API /api/calendario-laboral, permisos Calendario/Departamentos, semilla de 14 festivos y 56 tests
@@ -138,3 +141,7 @@
 - [2026-10-15] tester → tests.md — Calendario laboral Fase 2: regresión (jest 28 suites / 443 tests, eslint 0 errores)
 - [2026-10-15] tester → decisions.md — PARA RESOLVER: JSON malformado devuelve 500 en lugar de 400 en el backend del portal (menor, preexistente)
 - [2026-10-15] [coder] Correcciones de la revisión de la Fase 2 (cupo en API departamentos, semilla NOT EXISTS, tests de paridad) -> code-notes.md
+- [2026-10-15] [coder] Fase 3 pantalla del calendario laboral (página, modal, util con tests, cupo en Departamentos) -> code-notes.md
+- [2026-10-15] tester → tests.md — Calendario laboral Fase 3: pantalla /rh/calendario y cupo en Departamentos integrados (Postgres 16 + backend real + build de Vite; Chromium 156 + Firefox 157; 8+4 combinaciones de zona horaria 32/32; 403 empleado; axe); sin fallos funcionales, 5 menores (responsive 721–799 px, texto sin espacios, columna de Departamentos a 768, contraste, label-in-name)
+- [2026-10-15] tester → decisions.md — PARA RESOLVER: F1–F5 menores de la Fase 3 del calendario (responsive y accesibilidad) y si la API debe ocultar inactivos a empleados
+- [2026-10-15] [coder] Correcciones de la revisión de la Fase 3 del calendario (super_admin, contraste, util de permisos con tests, F1-F5, API oculta inactivos a no editores) -> code-notes.md

@@ -1,4 +1,5 @@
 const CalendarioLaboral = require("../models/calendarioLaboral.model");
+const { tienePermiso } = require("../../../portal/backend/middleware/permisos.middleware");
 const { registrarAccion } = require("../../../auditoria/backend/services/auditoria.service");
 
 const TIPOS = CalendarioLaboral.TIPOS_CALENDARIO;
@@ -97,7 +98,9 @@ const ControladorCalendarioLaboral = {
       return res.status(400).json({ exito: false, mensaje: `El tipo debe ser uno de: ${TIPOS.join(", ")}` });
     }
     try {
-      const datos = await CalendarioLaboral.listar({ desde, hasta, tipo });
+      // Las fechas inactivas solo las ven quienes pueden editar el calendario (o super_admin)
+      const puedeEditar = await tienePermiso(req.user, "rh", "Calendario", "edicion");
+      const datos = await CalendarioLaboral.listar({ desde, hasta, tipo, soloActivos: !puedeEditar });
       res.json({ exito: true, datos });
     } catch (error) {
       errorInterno(res, "listar el calendario laboral", error);

@@ -2260,3 +2260,63 @@ Sin fallos. Falla preexistente (no relacionada): 2 tests de empleado.controller.
 **Problema:** la decisión 9 pide auditar los rechazos por cupo y la 2 revalidar al aprobar; ambos son alcance de la Fase 4 y todavía no existen. Se anota para que no se pierdan.
 **Severidad:** bajo
 **Fix sugerido:** incluirlos en el plan de la Fase 4 (auditar rechazos por cupo con `registrarAccion` verificado, guardia `WHERE estatus='pendiente'` y bloqueo al aprobar).
+
+### [2026-10-15] [revisor] — Calendario laboral Fase 3 (pantalla, modal, utilidades de fechas, CrudPage, tests): APROBADO CON OBSERVACIONES; sin críticos
+**Archivo/línea:** modules/rh/frontend/pages/CalendarioLaboralPage.jsx:91; modules/rh/frontend/styles/calendario.css:98; modules/rh/tests/calendarioLaboral.util.test.js:1-9, :45-48
+**Problema:** revisión de la Fase 3 contra decisions.md (2026-10-15 calendario y GO fase 3) y code-notes.md (entrada "Fase 3 pantalla del calendario"). Sin violaciones de decisiones: el backend es la autoridad (routes/calendario.routes.js: GET consulta; POST/PUT/DELETE edicion), no hay `new Date(texto)` en la lógica de fechas (solo Date.UTC y fechaHoy con getters locales), no hay `dangerouslySetInnerHTML` (XSS: nombre/descripción salen por render de React), CrudPage aplica min/step solo si se declaran y defecto solo en alta (sin regresión en AreasPage, PuestosPage, etc.), MenuDinamico SUB_RUTAS usa opcion `Calendario` en módulo `rh`, igual que la semilla de la migración 009. Verificado: jest calendarioLaboral.util.test.js 21/21 OK; eslint de los archivos tocados 0 errores. Resuelve parcialmente F2 (reviews.md:2222): el cupo ya es editable desde Departamentos.
+**Severidad:** bajo (veredicto global: APROBADO CON OBSERVACIONES; 0 críticos, 0 altos; 1 medio de permisos, 1 medio de contraste, 2 medios de cobertura/UX, resto bajos)
+**Fix sugerido:** atender los hallazgos siguientes; ninguno bloquea el cierre de la fase. Ver entradas separadas.
+
+### [2026-10-15] [revisor] — Fase 3: el rol super_admin nunca se detecta en la pantalla del calendario (rol_nombre no existe en el perfil)
+**Archivo/línea:** modules/rh/frontend/pages/CalendarioLaboralPage.jsx:91-97 (mismo patrón preexistente en modules/portal/frontend/components/MenuDinamico.jsx:146)
+**Problema:** `usuario?.rol_nombre` es siempre undefined: `/auth/perfil` devuelve `roles` (array de strings) y COLUMNAS_PUBLICAS de usuario.model.js no incluye `rol_nombre`; por tanto un super_admin sin filas de Calendario en rol_opcion_permisos ve la pantalla en solo lectura, aunque el backend (verificarPermiso) le permita escribir.
+**Severidad:** medio
+**Fix sugerido:** `const esSuperAdmin = usuario?.roles?.includes("super_admin");` en la página (y evaluar el mismo cambio en MenuDinamico, fuera de esta fase). Añadir prueba o nota en tests.md del caso super_admin sin fila de permiso.
+
+### [2026-10-15] [revisor] — Fase 3: números de días de meses vecinos no cumplen AA (contraste 4,02:1 y 3,48:1)
+**Archivo/línea:** modules/rh/frontend/styles/calendario.css:98 (`.calendario__celda--otro-mes .calendario__num`, usa --color-texto-claro #718096)
+**Problema:** el texto #718096 da 4,02:1 sobre blanco y 3,48:1 sobre el fondo de fin de semana #eceff3 (calculado con WCAG 2.x), por debajo de 4,5:1 para texto normal (el número tiene 0,85rem en negrita, no cuenta como grande). Las demás combinaciones revisadas pasan: chips y avisos 8,2-8,3:1; "Hoy" y botón primario 13:1; botón peligro 4,83:1; encabezados 7,1:1; subtítulo 6,7:1; marcas inactivas (opacidad 0,85) 5,6-5,9:1; anillo de foco #2563eb 5,2:1 sobre blanco y 4,5:1 sobre #eceff3 (≥3:1 no textual).
+**Severidad:** medio
+**Fix sugerido:** usar var(--color-texto-medio) (#4a5568, 7,5:1 sobre blanco) para los números de otro mes, o un gris de ~#5b6474 si se quiere diferenciarlos visualmente sin perder AA; recalcular sobre #eceff3.
+
+### [2026-10-15] [revisor] — Fase 3: no hay pruebas del componente (permisos de edición, modal, teclado, errores)
+**Archivo/línea:** modules/rh/tests/calendarioLaboral.util.test.js:1 (cobertura solo de utils; sin archivo de pruebas para CalendarioLaboralPage.jsx ni ModalFechaCalendario.jsx)
+**Problema:** la lógica de permisos de edición (puedeEditar, líneas 92-97), la de baja con confirmación, los 409/404 del modal y el enrutado de teclado solo se verificaron con un harness Chromium fuera del repo (code-notes.md, 38/38); un cambio futuro en esa lógica no lo detecta jest.
+**Severidad:** medio
+**Fix sugerido:** añadir pruebas de componente con @testing-library/react (si el proyecto la tiene; si no, añadir pocas pruebas al test de utils que cubran puedeEditar como función pura extraída) para: lectura sin controles, edición con permiso edicion, super_admin, modal con 409, y confirmación de baja.
+
+### [2026-10-15] [revisor] — Fase 3: la prueba de fechaHoy no discrimina zona horaria y el test depende de leer el fuente
+**Archivo/línea:** modules/rh/tests/calendarioLaboral.util.test.js:45-48 (fechaHoy) y :8-9 (carga por regex)
+**Problema:** (a) no hay TZ fijada en Jest, así que en un runner en UTC la prueba pasa aunque fechaHoy usara toISOString (regresión invisible); (b) la carga usa `/^export (?:const|function) (\w+)/` y `replace(/^export /gm, "")`: un `export default`, `export let`, `export { … }` o `export class` añadido al util rompe el test con un error poco claro o exporta menos funciones sin avisar.
+**Severidad:** bajo
+**Fix sugerido:** (a) ejecutar esa prueba con TZ fija (p. ej. `TZ=America/Mexico_City` en el script de test o en el propio `it` con una fecha que cruce medianoche UTC y verificar que el resultado no depende de la zona); (b) añadir una aserción de que `nombres.length` coincide con la lista esperada de exports, o cambiar a un transform ESM si el proyecto lo permite.
+
+### [2026-10-15] [revisor] — Fase 3: errores de carga silenciosos (permisos y respuesta sin exito)
+**Archivo/línea:** modules/rh/frontend/pages/CalendarioLaboralPage.jsx:101-103 (permisos) y :113 (listado con exito=false)
+**Problema:** si `/permisos/mis-permisos` falla, el usuario editor ve la pantalla en solo lectura sin ningún aviso; si el listado responde `exito:false`, se muestra un calendario vacío sin mensaje (solo los errores lanzados llegan a errorCarga).
+**Severidad:** bajo
+**Fix sugerido:** en el catch de permisos mostrar un aviso "No se pudieron cargar tus permisos; la edición no está disponible" y en el then del listado tratar `!r.exito` como error (`setErrorCarga(r.mensaje || ...)`).
+
+### [2026-10-15] [revisor] — Fase 3: respuesta no JSON del proxy se muestra como texto técnico
+**Archivo/línea:** modules/rh/frontend/pages/CalendarioLaboralPage.jsx:114 (origen en modules/portal/frontend/utils/api.js:28, `respuesta.json()` sin protección)
+**Problema:** si el proxy devuelve HTML (502/504), `solicitar` lanza un SyntaxError y el usuario ve "Unexpected token '<'…" en la alerta de carga.
+**Severidad:** bajo
+**Fix sugerido:** en `solicitar`, envolver `respuesta.json()` en try/catch y lanzar un error con mensaje genérico y `status`; en la página, mensaje fijo "No se pudo cargar el calendario" si no hay mensaje del servidor.
+
+### [2026-10-15] [revisor] — Fase 3: con una sola fecha en el día no se puede agregar otra desde la cuadrícula
+**Archivo/línea:** modules/rh/frontend/pages/CalendarioLaboralPage.jsx:173-179 (el panel de día solo aparece con 2 o más, :281)
+**Problema:** un día con una fecha abre directamente su edición; para agregar un segundo tipo en ese día el usuario debe usar "Agregar fecha" y reescribir la fecha a mano.
+**Severidad:** bajo
+**Fix sugerido:** mostrar el panel de día también con 1 elemento, o añadir "Agregar otra en esta fecha" dentro del modal de edición cuando la fecha ya tiene otros elementos.
+
+### [2026-10-15] [revisor] — Fase 3: foco perdido tras eliminar desde la lista
+**Archivo/línea:** modules/rh/frontend/pages/CalendarioLaboralPage.jsx:319 (botón "Editar" de la lista) y modules/rh/frontend/components/ModalFechaCalendario.jsx:83-84 (baja)
+**Problema:** useFocoModal devuelve el foco al elemento que abrió el modal; si ese botón de la lista desaparece tras la baja (el item ya no existe), el foco queda en body y un usuario de teclado pierde su posición.
+**Severidad:** bajo
+**Fix sugerido:** tras una baja, enfocar el encabezado de la lista ("Fechas de <mes>", con tabIndex=-1) o el contenedor de la rejilla en lugar de depender del elemento de apertura.
+
+### [2026-10-15] [revisor] — Fase 3: edición sin control de concurrencia (last-write-wins)
+**Archivo/línea:** modules/rh/frontend/components/ModalFechaCalendario.jsx:56-66 (PUT con cuerpo completo)
+**Problema:** dos RH editando la misma fecha se pisan sin aviso: el PUT envía todos los campos y el backend no compara `fecha_actualizacion` previa.
+**Severidad:** bajo
+**Fix sugerido:** enviar `fecha_actualizacion` previa y, en el backend, comparar en el UPDATE (WHERE fecha_actualizacion = $n) y responder 409 con "La fecha cambió mientras la editabas"; o dejarlo documentado como aceptado (tabla con pocos editores).

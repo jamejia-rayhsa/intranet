@@ -125,6 +125,46 @@ describe("Calendario laboral - listar", () => {
     expect(sqlsDeDatos()).toHaveLength(0);
   });
 
+  it("un empleado (solo consulta) no recibe fechas inactivas: el SQL filtra activo = TRUE", async () => {
+    mockUser = { usuario_id: 9, rol_id: 8, rol_nombre: "rh_empleado" };
+    mockPermisos = ["consulta"];
+    mockRespuestas = [{ rows: [FILA] }];
+    await request(app).get("/api/calendario-laboral?desde=2026-01-01");
+    const [sql, valores] = sqlsDeDatos()[0];
+    expect(sql).toMatch(/WHERE fecha >= \$1::date AND activo = TRUE/);
+    expect(valores).toEqual(["2026-01-01"]);
+  });
+
+  it("un editor (edicion) recibe también las inactivas: sin filtro de activo", async () => {
+    mockRespuestas = [{ rows: [FILA] }];
+    await request(app).get("/api/calendario-laboral");
+    expect(sqlsDeDatos()[0][0]).not.toMatch(/activo = TRUE/);
+  });
+
+  it("super_admin sin filas de permiso también ve las inactivas", async () => {
+    mockUser = { usuario_id: 1, rol_id: 1, rol_nombre: "super_admin" };
+    mockPermisos = [];
+    mockRespuestas = [{ rows: [FILA] }];
+    await request(app).get("/api/calendario-laboral");
+    expect(sqlsDeDatos()[0][0]).not.toMatch(/activo = TRUE/);
+  });
+
+  it("si falla la consulta del permiso de edición responde 500 genérico", async () => {
+    mockRespuestas = [];
+    grupo.query.mockImplementation(async (sql) => {
+      if (/rol_opcion_permisos/.test(sql)) {
+        if (grupo.query.mock.calls.filter(([q]) => /rol_opcion_permisos/.test(q)).length >= 2) {
+          throw new Error("conexion caida");
+        }
+        return { rows: [{ existe: 1 }] };
+      }
+      return { rows: [] };
+    });
+    const res = await request(app).get("/api/calendario-laboral");
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(res.body)).not.toMatch(/conexion/);
+  });
+
   it("un fallo de la BD responde 500 genérico sin el mensaje de Postgres", async () => {
     mockRespuestas = [new Error('relation "calendario_laboral" does not exist')];
     const res = await request(app).get("/api/calendario-laboral");

@@ -18,6 +18,7 @@ export default function DepartamentosPage() {
       columnas={[
         { key: "nombre", label: "Nombre" },
         { key: "area_nombre", label: "Área" },
+        { key: "cupo_vacaciones", label: "Cupo de vacaciones" },
         { key: "descripcion", label: "Descripción" },
       ]}
       camposFormulario={[
@@ -27,6 +28,15 @@ export default function DepartamentosPage() {
           label: "Área",
           tipo: "select",
           opciones: areas.map(a => ({ value: a.id, label: a.nombre })),
+        },
+        {
+          name: "cupo_vacaciones",
+          label: "Cupo de vacaciones (personas a la vez)",
+          tipo: "number",
+          required: true,
+          min: 1,
+          step: 1,
+          defecto: 1,
         },
         { name: "descripcion", label: "Descripción", tipo: "textarea" },
       ]}

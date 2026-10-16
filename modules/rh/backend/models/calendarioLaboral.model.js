@@ -10,7 +10,7 @@ const TIPOS_CALENDARIO = ["oficial", "otorgado", "evento"];
 const TIPOS_NO_HABILES = ["oficial", "otorgado"];
 
 const CalendarioLaboral = {
-  async listar({ desde, hasta, tipo } = {}) {
+  async listar({ desde, hasta, tipo, soloActivos } = {}) {
     const condiciones = [];
     const valores = [];
     if (desde) {
@@ -25,6 +25,7 @@ const CalendarioLaboral = {
       valores.push(tipo);
       condiciones.push(`tipo = $${valores.length}`);
     }
+    if (soloActivos) condiciones.push("activo = TRUE");
     const donde = condiciones.length ? `WHERE ${condiciones.join(" AND ")}` : "";
     const resultado = await grupo.query(
       `SELECT ${COLUMNAS} FROM calendario_laboral ${donde} ORDER BY fecha, tipo, id`,
