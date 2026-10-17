@@ -13,6 +13,7 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-17] orquestador → decisions.md — Publicación y despliegue a staging del calendario laboral (PR #11)
 - [2026-10-16] orquestador → decisions.md — Tipo 'Día Actividad Empresa' listo para GO/NO-GO
 - [2026-10-16] tester → tests.md — Tipo actividad empresa: prueba integrada (011 con db-init real x2 sobre datos antiguos, E2E 69/69 x21 combinaciones Chromium+Firefox+TZ, regresión ta/tb/tc/aut/cruzada, responsive+axe, jest 958, eslint 0 errores); 1 FAIL menor
 - [2026-10-16] tester → decisions.md — PARA RESOLVER F-ACT-1 (menor): aviso 'Ninguna solicitud incluye esta fecha' engañoso con actividad inactiva/no hábil
