@@ -24,7 +24,8 @@ BEGIN
     SELECT conname FROM pg_constraint
     WHERE conrelid = 'calendario_laboral'::regclass
       AND contype = 'c'
-      AND pg_get_constraintdef(oid) LIKE '%tipo%'
+      AND conkey = ARRAY[(SELECT attnum FROM pg_attribute
+                          WHERE attrelid = 'calendario_laboral'::regclass AND attname = 'tipo')]::smallint[]
   LOOP
     EXECUTE format('ALTER TABLE calendario_laboral DROP CONSTRAINT %I', restriccion.conname);
   END LOOP;

@@ -334,15 +334,32 @@ describe("Día Actividad Empresa - aviso de solicitudes afectadas", () => {
     expect(U.mensajeAvisosActividad({ solicitudes_aprobadas: 0, solicitudes_pendientes: 1 })).not.toMatch(/\d solicitudes? aprobadas?/);
   });
 
-  it("en cero dice que ninguna solicitud incluye la fecha", () => {
-    expect(U.mensajeAvisosActividad({ solicitudes_aprobadas: 0, solicitudes_pendientes: 0 })).toMatch(/Ninguna solicitud/);
+  it("'Ninguna solicitud' solo con motivo sin_solicitudes; sin motivo y en cero no afirma nada", () => {
+    expect(U.mensajeAvisosActividad({ solicitudes_aprobadas: 0, solicitudes_pendientes: 0, motivo: "sin_solicitudes" })).toBe(
+      "Ninguna solicitud de vacaciones, aprobada o pendiente, incluye esta fecha.",
+    );
+    expect(U.mensajeAvisosActividad({ solicitudes_aprobadas: 0, solicitudes_pendientes: 0 })).toBeNull();
+  });
+
+  it("inactiva y no hábil: texto veraz, nunca 'Ninguna', y con conteos si existen solicitudes", () => {
+    const base = { solicitudes_aprobadas: 0, solicitudes_pendientes: 0 };
+    expect(U.mensajeAvisosActividad({ ...base, motivo: "inactiva" })).toBe("Esta fecha ya no bloquea vacaciones.");
+    expect(U.mensajeAvisosActividad({ ...base, motivo: "no_habil" })).toBe(
+      "Esta fecha cae en un día no hábil y no bloquea vacaciones.",
+    );
+    const inactiva = U.mensajeAvisosActividad({ solicitudes_aprobadas: 1, solicitudes_pendientes: 2, motivo: "inactiva" });
+    expect(inactiva).toMatch(/^Esta fecha ya no bloquea vacaciones\. Hay 1 solicitud aprobada y 2 solicitudes pendientes de vacaciones que incluyen esta fecha; no se modificaron\.$/);
+    expect(inactiva).not.toMatch(/Ninguna/);
+    const noHabil = U.mensajeAvisosActividad({ solicitudes_aprobadas: 0, solicitudes_pendientes: 1, motivo: "no_habil" });
+    expect(noHabil).toMatch(/día no hábil y no bloquea vacaciones\. Hay 1 solicitud pendiente/);
+    expect(noHabil).not.toMatch(/Ninguna|aprobada/);
   });
 
   it("sin aviso (otros tipos) devuelve null; avisos null (fallo del cálculo) da texto de respaldo; basura se ignora", () => {
     expect(U.mensajeAvisosActividad(undefined)).toBeNull();
     expect(U.mensajeAvisosActividad("texto")).toBeNull();
     expect(U.mensajeAvisosActividad(null)).toMatch(/no se pudo calcular/);
-    expect(U.mensajeAvisosActividad({ solicitudes_aprobadas: "x", solicitudes_pendientes: -0.5 })).toMatch(/Ninguna solicitud/);
+    expect(U.mensajeAvisosActividad({ solicitudes_aprobadas: "x", solicitudes_pendientes: -0.5 })).toBeNull();
   });
 });
 

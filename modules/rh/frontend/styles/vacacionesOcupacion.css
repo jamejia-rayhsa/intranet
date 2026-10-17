@@ -36,7 +36,7 @@
 .ocupacion__marca--bloqueado .ocupacion__icono { display: none; }
 /* Bloqueado: en estrecho "Bloq" (el detalle del mes siempre muestra «Bloqueado: nombre» completo) */
 .ocupacion .ocupacion__marca--bloqueado { max-width: 100%; padding: 0 0.05rem; overflow: hidden; }
-.ocupacion__marca--bloqueado .calendario__marca-texto { font-size: 0.52rem; font-weight: 700; letter-spacing: -0.02em; }
+.ocupacion__marca--bloqueado .calendario__marca-texto { font-size: 0.625rem; font-weight: 700; letter-spacing: -0.04em; }
 .ocupacion__bloq-largo { display: none; }
 .ocupacion__leyenda .calendario__marca { font-size: 0.78rem; padding: 0.1rem 0.45rem; white-space: normal; }
 .ocupacion__leyenda li { min-width: 0; }

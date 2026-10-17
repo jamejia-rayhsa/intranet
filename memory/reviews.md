@@ -2613,3 +2613,48 @@ Hallazgos abiertos:
 **Fix sugerido:** unir los roles del actor (posesión por unión) y ORDER BY determinista, con tests multirrol.
 
 **Pruebas (detalle):** `npx jest` de delegacionPermisos, usuario.controller y empleado.altaRoles: 122/122. Mutantes (copia de HEAD): M1 sin posesión en exigirRolAsignable → detectado; M2 posesión contra el propio rol → detectado; M3 toma de cuenta sin roles finales → sobrevive, pero es equivalente porque exigirRolAsignable ya exige posesión del rol final; M4 nombre privilegiado sensible a mayúsculas → sobrevive (F6); M5 compensación sin restaurar roles → detectado; M6 compensación sin comprobar estado ajeno → detectado; M7 compensación omitida → detectado (5 fallos); M8 alta de empleado sin validar roles → detectado; M9 PUT sin posesión de rol → detectado (26 fallos).
+
+### [2026-10-16] [revisor] — Tipo actividad empresa
+**Alcance:** commit 1e537e9 (migración 011, validación al crear y aprobar, avisos de POST/PUT, `fechas_bloqueadas` y calendario de ocupación). Contra decisions.md (2026-10-16, puntos 1-6) y code-notes.md ("Tipo actividad empresa").
+**Veredicto:** APROBADO CON OBSERVACIONES. 0 críticos, 0 altos. Ninguna violación de decisión: el bloqueo aplica solo a día hábil (lun-vie sin oficial/otorgado, `actividadesEnDiasHabiles` sobre `listarDiasHabiles`), se valida al crear y al aprobar, la solicitud queda pendiente tras el 409 (ROLLBACK antes de responder), el aviso solo cuenta, sin nombres y sin cambiar el 201/200 (`calcularAvisos` no lanza), las lecturas nuevas usan `cliente` y no añaden candados (orden sin ciclos), fechas como texto (`to_char`, `Date.UTC`, sin `new Date(texto)` en lo añadido), TIPOS back/front iguales (4) e init.sql replica la 011 (test). Jest `modules/rh` 20 suites / 507 tests OK al ejecutarlo en esta revisión.
+
+**Hallazgos:**
+
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:76 (responderError), 166 (aprobar) y 374 (crear)
+**Problema:** decisions.md (2026-10-16, punto 2) pide "409, código ACTIVIDAD_EMPRESA", pero el cuerpo del 409 solo lleva `{exito, mensaje}`; el código viaja solo en `/disponibilidad.conflicto`. Mismo patrón que CUPO_LLENO (preexistente en la rama).
+**Severidad:** medio
+**Fix sugerido:** añadir `codigo` (aditivo) al JSON de responderError cuando el error lo tenga, o que el orquestador confirme que el código es solo interno y corrija el texto de decisions.md. No es violación de la regla de bloqueo, pero sí del contrato escrito; no escalo como crítico.
+
+**Archivo/línea:** modules/rh/backend/controllers/calendarioLaboral.controller.js:95-100 y modules/rh/frontend/utils/calendarioLaboral.js:507
+**Problema:** para una actividad en sábado/domingo, festivo o inactiva, el backend devuelve ceros por diseño y el front muestra "Ninguna solicitud de vacaciones, aprobada o pendiente, incluye esta fecha", lo que puede ser falso (una solicitud sí puede cubrir ese sábado).
+**Severidad:** bajo
+**Fix sugerido:** distinguir "sin efecto" (p. ej. `avisos: {sin_efecto: true}`) y mostrar un mensaje neutro ("esta fecha no bloquea vacaciones: fin de semana/festivo/inactiva").
+
+**Archivo/línea:** modules/rh/backend/migrations/011-calendario-actividad.sql:27 (y config/database/init.sql:865)
+**Problema:** el DROP recorre todo CHECK de `calendario_laboral` cuya definición contenga `tipo` (LIKE '%tipo%'). Hoy solo existe el de tipo, pero un CHECK futuro sobre una columna como `tipo_dia` se eliminaría en silencio al re-ejecutar db-init.
+**Severidad:** bajo
+**Fix sugerido:** filtrar por columna: `conkey = ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = 'calendario_laboral'::regclass AND attname = 'tipo')]::smallint[]`, y/o `RAISE NOTICE` con el nombre eliminado.
+
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:~340-375 (lectura de actividades dentro de la transacción de crear) con modules/rh/backend/controllers/calendarioLaboral.controller.js:140 (INSERT en autocommit)
+**Problema:** carrera registrar-actividad vs COMMIT de una solicitud en curso (ya anotada por el coder). Una actividad confirmada entre la lectura y el COMMIT deja una pendiente sobre un día bloqueado; el aviso puede no contarla (y lo mismo al revés con una aprobación concurrente). No se aprueba nada que viole la regla: la aprobación revalida con 409.
+**Severidad:** bajo
+**Fix sugerido:** aceptable tal cual. Opcional: candado de aplicación compartido (`pg_advisory_xact_lock`) que tomen crear/aprobar y que tome exclusivo la escritura de tipo actividad. Documentar la ventana como conocida.
+
+**Archivo/línea:** modules/rh/frontend/styles/vacacionesOcupacion.css:34 y :39 (y :64 en el bloque de container)
+**Problema:** en celdas estrechas el texto visible es "Bloq" a 0.52rem (~8,3 px), tamaño ilegible en pantalla; el color, el borde y la negrita sí distinguen el bloqueo, y el detalle del mes muestra el texto completo. Mismo patrón que "Lleno".
+**Severidad:** bajo
+**Fix sugerido:** subir el tamaño (≥ 0,6rem si cabe en 26 px) o validar con lectura visual en Chromium/Firefox a 320/360 px.
+
+**Archivo/línea:** modules/rh/backend/tests/vacaciones.diasHabilesCupo.test.js:871-1080 y modules/rh/backend/tests/calendario-migracion.test.js:111-141
+**Problema:** no hay caso de rango que cruce año con actividad (p. ej. 2026-12-28 a 2027-01-05 con actividad el 2026-12-31 que bloquea, y festivo 2027-01-01 que no bloquea), y la migración 011 se prueba solo por regex (la ejecución real en Postgres consta solo en code-notes, no es automatizada).
+**Severidad:** bajo
+**Fix sugerido:** añadir ese caso de cruce de año y, si hay Postgres de CI, una prueba de la 011 contra BD real (dos ejecuciones + datos antiguos).
+
+**Archivo/línea:** modules/rh/frontend/components/ModalFechaCalendario.jsx:15
+**Problema:** el JSDoc de `onGuardado` dice `(mensaje)`; ahora recibe `(mensaje, aviso)`.
+**Severidad:** bajo
+**Fix sugerido:** actualizar la firma en el comentario.
+
+**Revisado sin hallazgos:** regresiones en vacaciones (orden 0 hábiles -> actividad -> traslape -> saldo -> cupo, igual en /disponibilidad; `periodo` y autoridad sin cambios); `RECHAZO_ACTIVIDAD` (17 caracteres) cabe en `accion VARCHAR(20)` y `registro_id` es VARCHAR(100); el aviso de POST/PUT solo lo ve quien puede editar el calendario; `esSeleccionable` excluye la fecha bloqueada; `--cal-actividad-*` definidas en `.calendario` (el aviso de VacacionesPage usa colores en línea); contraste #4c1d95 sobre #ede9fe (9,23:1).
+
+**Pruebas (detalle):** `npx jest modules/rh --silent --ci`: 20 suites, 507/507 OK. No se ejecutaron mutaciones ni Postgres (solo lectura).

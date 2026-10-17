@@ -13,6 +13,10 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-16] orquestador → decisions.md — Tipo 'Día Actividad Empresa' listo para GO/NO-GO
+- [2026-10-16] tester → tests.md — Tipo actividad empresa: prueba integrada (011 con db-init real x2 sobre datos antiguos, E2E 69/69 x21 combinaciones Chromium+Firefox+TZ, regresión ta/tb/tc/aut/cruzada, responsive+axe, jest 958, eslint 0 errores); 1 FAIL menor
+- [2026-10-16] tester → decisions.md — PARA RESOLVER F-ACT-1 (menor): aviso 'Ninguna solicitud incluye esta fecha' engañoso con actividad inactiva/no hábil
+- [2026-10-16] [revisor] → reviews.md#tipo-actividad-empresa — Tipo actividad empresa: APROBADO CON OBSERVACIONES (0 críticos, 0 altos; 1 medio: 409 sin código; 6 bajos)
 - [2026-10-16] orquestador → decisions.md — Nuevo tipo de fecha 'Día Actividad Empresa' que bloquea vacaciones para todos (diseño)
 - [2026-10-16] [coder] → code-notes.md — Tipo 'Día Actividad Empresa': migración 011, bloqueo al crear/aprobar, avisos y UI (jest 958, mutaciones, Postgres y Chromium)
 - [2026-10-15] orquestador → decisions.md — Cierre de la tarea de calendario laboral y bloqueo de vacaciones: lista para GO/NO-GO final
@@ -176,3 +180,4 @@
 - [2026-10-15] tester → decisions.md — PARA RESOLVER F-A (crítico: rh_admin crea super_admin por alta de empleado), F-B/F-C (altos: portal_admin borra/desactiva super_admin y toma cuentas), F-D (el HEAD usa snapshot del jefe, no jefe vigente), F-E (menores)
 - [2026-10-15] [coder] Correcciones de la revisión final (F-A..F-E: alta de empleado con roles, usuarios privilegiados, toma de cuenta, jefe vigente, UNIQUE usuario_id) -> code-notes.md
 - [2026-10-15] [coder] Segunda ronda de la revisión final (E1 atómico con FOR UPDATE y estado final, permisos de roles privilegiados solo super, esAdmin por permiso, jefe FOR SHARE) -> code-notes.md
+- [2026-10-16] [coder] Correcciones del tipo actividad (codigo en 409, avisos.motivo, migración 011 por columna, Bloq 10 px, cruce de año) -> code-notes.md

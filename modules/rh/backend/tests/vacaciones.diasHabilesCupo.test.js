@@ -110,6 +110,7 @@ async function consulta(dueno, sql, p = []) {
       return {
         rows: estado.calendario
           .filter((c) => c.activo && c.tipo === p[0] && c.fecha >= p[1] && c.fecha <= p[2])
+          .sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0)) // ORDER BY fecha, id
           .map((c) => ({ fecha: c.fecha, nombre: c.nombre })),
       };
     }
@@ -872,6 +873,7 @@ describe("Vacaciones - Día Actividad Empresa", () => {
       estado.calendario.push(ACTIVIDAD);
       const res = await crear({ fecha_inicial: "2026-10-19", fecha_final: "2026-10-23" });
       expect(res.status).toBe(409);
+      expect(res.body.codigo).toBe("ACTIVIDAD_EMPRESA");
       expect(res.body.mensaje).toMatch(/21\/10\/2026/);
       expect(res.body.mensaje).toMatch(/Inventario general/);
       expect(res.body.mensaje).toMatch(/Día Actividad Empresa/);
@@ -909,6 +911,51 @@ describe("Vacaciones - Día Actividad Empresa", () => {
         { fecha: "2026-10-22", tipo: "evento", nombre: "Evento", activo: true },
       );
       expect((await crear({ fecha_inicial: "2026-10-19", fecha_final: "2026-10-23" })).status).toBe(201);
+    });
+
+    it("los demás 409 (traslape) no llevan codigo ACTIVIDAD_EMPRESA", async () => {
+      estado.solicitudes.push(pendiente(con("2026-10-19", "2026-10-23")));
+      const res = await crear({ fecha_inicial: "2026-10-20", fecha_final: "2026-10-21" });
+      expect(res.status).toBe(409);
+      expect(res.body).not.toHaveProperty("codigo");
+    });
+
+    describe("rango que cruza de año (2026-12-28 a 2027-01-05)", () => {
+      const CRUCE = { fecha_inicial: "2026-12-28", fecha_final: "2027-01-05" };
+      const FESTIVO = { fecha: "2027-01-01", tipo: "oficial", nombre: "Año Nuevo", activo: true };
+
+      it("actividad del lado de 2026 bloquea con su fecha y código", async () => {
+        estado.calendario.push(FESTIVO, { ...ACTIVIDAD, fecha: "2026-12-31", nombre: "Cierre" });
+        const res = await crear(CRUCE);
+        expect(res.status).toBe(409);
+        expect(res.body.codigo).toBe("ACTIVIDAD_EMPRESA");
+        expect(res.body.mensaje).toMatch(/31\/12\/2026/);
+      });
+
+      it("actividad del lado de 2027 bloquea", async () => {
+        estado.calendario.push(FESTIVO, { ...ACTIVIDAD, fecha: "2027-01-04", nombre: "Arranque" });
+        const res = await crear(CRUCE);
+        expect(res.status).toBe(409);
+        expect(res.body.codigo).toBe("ACTIVIDAD_EMPRESA");
+        expect(res.body.mensaje).toMatch(/04\/01\/2027/);
+      });
+
+      it("con actividad en cada lado informa la primera (31/12/2026)", async () => {
+        estado.calendario.push(
+          { ...ACTIVIDAD, fecha: "2027-01-04", nombre: "Arranque" },
+          { ...ACTIVIDAD, fecha: "2026-12-31", nombre: "Cierre" },
+        );
+        const res = await crear(CRUCE);
+        expect(res.status).toBe(409);
+        expect(res.body.mensaje).toMatch(/31\/12\/2026/);
+      });
+
+      it("actividad sobre el festivo 2027-01-01 NO bloquea y el rango cuenta 6 días hábiles", async () => {
+        estado.calendario.push(FESTIVO, { ...ACTIVIDAD, fecha: "2027-01-01", nombre: "Puente" });
+        const res = await crear(CRUCE);
+        expect(res.status).toBe(201);
+        expect(res.body.datos.dias_a_disfrutar).toBe(6);
+      });
     });
 
     it("orden de validación: 0 hábiles (400) -> actividad (409) -> traslape -> saldo -> cupo", async () => {
@@ -991,6 +1038,7 @@ describe("Vacaciones - Día Actividad Empresa", () => {
       estado.calendario.push(ACTIVIDAD);
       const res = await responderSol(sol.id, { estatus: "aprobado" });
       expect(res.status).toBe(409);
+      expect(res.body.codigo).toBe("ACTIVIDAD_EMPRESA");
       expect(res.body.mensaje).toMatch(/21\/10\/2026/);
       expect(res.body.mensaje).toMatch(/Inventario general/);
       expect(sol.estatus).toBe("pendiente");

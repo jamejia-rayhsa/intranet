@@ -492,7 +492,8 @@ const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
 
 /**
  * Texto del aviso que devuelve POST/PUT del calendario cuando el tipo es 'actividad'
- * (`avisos: {solicitudes_aprobadas, solicitudes_pendientes}`). Solo conteos, sin nombres.
+ * (`avisos: {solicitudes_aprobadas, solicitudes_pendientes, motivo?}` con motivo 'sin_solicitudes' |
+ * 'inactiva' | 'no_habil'). Solo conteos, sin nombres.
  * Devuelve null si no hay aviso que mostrar (otros tipos) y un texto de respaldo si el servidor no
  * pudo calcularlo (avisos null).
  */
@@ -503,14 +504,26 @@ export function mensajeAvisosActividad(avisos) {
   if (!avisos || typeof avisos !== 'object') return null;
   const aprobadas = Number.isInteger(avisos.solicitudes_aprobadas) ? avisos.solicitudes_aprobadas : 0;
   const pendientes = Number.isInteger(avisos.solicitudes_pendientes) ? avisos.solicitudes_pendientes : 0;
-  if (aprobadas === 0 && pendientes === 0) {
-    return 'Ninguna solicitud de vacaciones, aprobada o pendiente, incluye esta fecha.';
-  }
   const partes = [];
   if (aprobadas > 0) partes.push(plural(aprobadas, 'solicitud aprobada', 'solicitudes aprobadas'));
   if (pendientes > 0) partes.push(plural(pendientes, 'solicitud pendiente', 'solicitudes pendientes'));
+  const hay = partes.length > 0;
+  const lista = partes.join(' y ');
+  if (avisos.motivo === 'inactiva' || avisos.motivo === 'no_habil') {
+    const base =
+      avisos.motivo === 'inactiva'
+        ? 'Esta fecha ya no bloquea vacaciones.'
+        : 'Esta fecha cae en un día no hábil y no bloquea vacaciones.';
+    return hay ? `${base} Hay ${lista} de vacaciones que incluyen esta fecha; no se modificaron.` : base;
+  }
+  if (!hay) {
+    // Solo con 'sin_solicitudes' se afirma que no hay ninguna; sin motivo (servidor antiguo) no se asegura nada
+    return avisos.motivo === 'sin_solicitudes'
+      ? 'Ninguna solicitud de vacaciones, aprobada o pendiente, incluye esta fecha.'
+      : null;
+  }
   return (
-    `Atención: hay ${partes.join(' y ')} de vacaciones que incluyen esta fecha. No se modificaron: ` +
+    `Atención: hay ${lista} de vacaciones que incluyen esta fecha. No se modificaron: ` +
     'las aprobadas se conservan y las pendientes no se podrán aprobar mientras la fecha siga bloqueada. RH decide qué hacer con ellas.'
   );
 }

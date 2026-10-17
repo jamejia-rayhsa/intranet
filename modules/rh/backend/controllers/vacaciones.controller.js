@@ -73,7 +73,10 @@ async function responderError(req, res, error, mensajeGenerico) {
         console.error("Error al registrar auditoría:", errorAuditoria.message);
       }
     }
-    return res.status(error.estado).json({ exito: false, mensaje: error.message });
+    // `codigo` es aditivo: el frontend sigue leyendo `mensaje`; solo ACTIVIDAD_EMPRESA se expone
+    const cuerpo = { exito: false, mensaje: error.message };
+    if (error.codigo === "ACTIVIDAD_EMPRESA") cuerpo.codigo = error.codigo;
+    return res.status(error.estado).json(cuerpo);
   }
   console.error(`${mensajeGenerico}:`, error.message);
   return res.status(500).json({ exito: false, mensaje: mensajeGenerico });

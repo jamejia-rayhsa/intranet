@@ -86,20 +86,25 @@ function errorInterno(res, contexto, error) {
 
 /**
  * Aviso para RH al registrar o editar un Día Actividad Empresa: cuántas solicitudes aprobadas y
- * pendientes incluyen esa fecha como día hábil. Solo conteos (sin nombres); NO modifica solicitudes.
+ * pendientes incluyen esa fecha (aunque la fecha no bloquee) y el motivo si no hay efecto o no hay solicitudes. Solo conteos (sin nombres); NO modifica solicitudes.
  * Devuelve undefined si la fila no es una actividad y null si el cálculo falla (la escritura ya se
  * hizo: un fallo aquí no puede convertir el éxito en error).
  */
 async function calcularAvisos(fila) {
   if (!fila || fila.tipo !== CalendarioLaboral.TIPO_BLOQUEO) return undefined;
-  const sinEfecto = { solicitudes_aprobadas: 0, solicitudes_pendientes: 0 };
   try {
-    // Inactiva, sábado/domingo o festivo/descanso del mismo día: no bloquea nada
-    if (!fila.activo || esFinDeSemana(fila.fecha)) return sinEfecto;
-    const noHabiles = await CalendarioLaboral.obtenerFechasNoHabiles(fila.fecha, fila.fecha);
-    if (noHabiles.length > 0) return sinEfecto;
+    // motivo: por qué la fecha no bloquea (inactiva, fin de semana/festivo/descanso) o, si bloquea y no
+    // hay solicitudes, 'sin_solicitudes'. Si bloquea y hay solicitudes no lleva motivo.
+    let motivo = null;
+    if (!fila.activo) motivo = "inactiva";
+    else if (esFinDeSemana(fila.fecha)) motivo = "no_habil";
+    else if ((await CalendarioLaboral.obtenerFechasNoHabiles(fila.fecha, fila.fecha)).length > 0) motivo = "no_habil";
+    // Siempre se cuenta (informativo: las solicitudes siguen existiendo aunque la fecha no bloquee)
     const conteo = await SolicitudVacaciones.contarSolicitudesEnFecha(fila.fecha);
-    return { solicitudes_aprobadas: conteo.aprobadas, solicitudes_pendientes: conteo.pendientes };
+    const avisos = { solicitudes_aprobadas: conteo.aprobadas, solicitudes_pendientes: conteo.pendientes };
+    if (motivo) avisos.motivo = motivo;
+    else if (conteo.aprobadas === 0 && conteo.pendientes === 0) avisos.motivo = "sin_solicitudes";
+    return avisos;
   } catch (error) {
     console.error("[Calendario] Error al calcular los avisos de la actividad:", error.message);
     return null;

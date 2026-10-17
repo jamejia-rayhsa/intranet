@@ -119,7 +119,9 @@ describe("Migración 011 tipo actividad del calendario", () => {
 
   it("es idempotente: sale si ya admite actividad y busca la restricción por definición (no por nombre)", () => {
     expect(sql011).toMatch(/IF EXISTS \( SELECT 1 FROM pg_constraint WHERE conrelid = 'calendario_laboral'::regclass AND contype = 'c' AND conname = 'calendario_laboral_tipo_check' AND pg_get_constraintdef\(oid\) LIKE '%actividad%' \) THEN RETURN;/);
-    expect(sql011).toMatch(/pg_get_constraintdef\(oid\) LIKE '%tipo%'/);
+    // Filtra por la COLUMNA tipo (conkey), no por texto de la definición: un CHECK ajeno no se borra
+    expect(sql011).toMatch(/conkey = ARRAY\[\(SELECT attnum FROM pg_attribute WHERE attrelid = 'calendario_laboral'::regclass AND attname = 'tipo'\)\]::smallint\[\]/);
+    expect(sql011).not.toMatch(/LIKE '%tipo%'/);
     expect(sql011).toMatch(/DROP CONSTRAINT %I/);
   });
 

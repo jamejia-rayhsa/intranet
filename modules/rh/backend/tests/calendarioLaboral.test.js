@@ -362,6 +362,7 @@ describe("Calendario laboral - tipo actividad (Día Actividad Empresa)", () => {
     const res = await request(app).post("/api/calendario-laboral").send(cuerpo);
     expect(res.status).toBe(201);
     expect(res.body.avisos).toEqual({ solicitudes_aprobadas: 2, solicitudes_pendientes: 1 });
+    expect(res.body.avisos).not.toHaveProperty("motivo");
     expect(JSON.stringify(res.body)).not.toMatch(/Secreto/);
     const sqls = nombresDeSql();
     expect(sqls[2]).toMatch(/FROM solicitudes_vacaciones/);
@@ -391,25 +392,36 @@ describe("Calendario laboral - tipo actividad (Día Actividad Empresa)", () => {
     expect(nombresDeSql().some((q) => /solicitudes_vacaciones/.test(q))).toBe(false);
   });
 
-  it("actividad en sábado o domingo: avisos en cero y sin consultar solicitudes", async () => {
-    mockRespuestas = [{ rows: [{ ...ACTIVIDAD, fecha: "2026-10-31" }] }];
-    const res = await request(app).post("/api/calendario-laboral").send({ ...cuerpo, fecha: "2026-10-31" });
-    expect(res.body.avisos).toEqual({ solicitudes_aprobadas: 0, solicitudes_pendientes: 0 });
-    expect(nombresDeSql().some((q) => /solicitudes_vacaciones/.test(q))).toBe(false);
-  });
-
-  it("actividad el mismo día de un festivo oficial: avisos en cero", async () => {
-    mockRespuestas = [{ rows: [ACTIVIDAD] }, { rows: [{ fecha: "2026-10-28" }] }];
+  it("actividad hábil sin solicitudes: ceros con motivo 'sin_solicitudes'", async () => {
+    mockRespuestas = [{ rows: [ACTIVIDAD] }, { rows: [] }, { rows: [{ aprobadas: 0, pendientes: 0 }] }];
     const res = await request(app).post("/api/calendario-laboral").send(cuerpo);
-    expect(res.body.avisos).toEqual({ solicitudes_aprobadas: 0, solicitudes_pendientes: 0 });
-    expect(nombresDeSql().some((q) => /FROM solicitudes_vacaciones/.test(q))).toBe(false);
+    expect(res.body.avisos).toEqual({ solicitudes_aprobadas: 0, solicitudes_pendientes: 0, motivo: "sin_solicitudes" });
   });
 
-  it("actividad inactiva: avisos en cero", async () => {
-    mockRespuestas = [{ rows: [{ ...ACTIVIDAD, activo: false }] }, { rows: [] }, { rows: [{ aprobadas: 5, pendientes: 5 }] }];
+  it("actividad en sábado: cuenta las solicitudes (informativo) con motivo 'no_habil'", async () => {
+    mockRespuestas = [{ rows: [{ ...ACTIVIDAD, fecha: "2026-10-31" }] }, { rows: [{ aprobadas: 1, pendientes: 2 }] }];
+    const res = await request(app).post("/api/calendario-laboral").send({ ...cuerpo, fecha: "2026-10-31" });
+    expect(res.body.avisos).toEqual({ solicitudes_aprobadas: 1, solicitudes_pendientes: 2, motivo: "no_habil" });
+  });
+
+  it("actividad el mismo día de un festivo oficial: motivo 'no_habil' y conteos reales", async () => {
+    mockRespuestas = [{ rows: [ACTIVIDAD] }, { rows: [{ fecha: "2026-10-28" }] }, { rows: [{ aprobadas: 0, pendientes: 0 }] }];
+    const res = await request(app).post("/api/calendario-laboral").send(cuerpo);
+    expect(res.body.avisos).toEqual({ solicitudes_aprobadas: 0, solicitudes_pendientes: 0, motivo: "no_habil" });
+  });
+
+  it("actividad inactiva: cuenta las solicitudes que incluyen la fecha, con motivo 'inactiva'", async () => {
+    mockRespuestas = [{ rows: [{ ...ACTIVIDAD, activo: false }] }, { rows: [{ aprobadas: 1, pendientes: 2 }] }];
     const res = await request(app).post("/api/calendario-laboral").send({ ...cuerpo, activo: false });
-    expect(res.body.avisos).toEqual({ solicitudes_aprobadas: 0, solicitudes_pendientes: 0 });
-    expect(nombresDeSql().some((q) => /FROM solicitudes_vacaciones/.test(q))).toBe(false);
+    expect(res.body.avisos).toEqual({ solicitudes_aprobadas: 1, solicitudes_pendientes: 2, motivo: "inactiva" });
+    expect(nombresDeSql().some((q) => /FROM solicitudes_vacaciones/.test(q))).toBe(true);
+  });
+
+  it("PUT que desactiva una actividad existente informa las solicitudes y el motivo 'inactiva'", async () => {
+    mockRespuestas = [{ rows: [ACTIVIDAD] }, { rows: [{ ...ACTIVIDAD, activo: false }] }, { rows: [{ aprobadas: 1, pendientes: 2 }] }];
+    const res = await request(app).put("/api/calendario-laboral/9").send({ activo: false });
+    expect(res.status).toBe(200);
+    expect(res.body.avisos).toEqual({ solicitudes_aprobadas: 1, solicitudes_pendientes: 2, motivo: "inactiva" });
   });
 
   it("si falla el cálculo del aviso, la escritura ya hecha responde 201 con avisos null y sin filtrar el error", async () => {

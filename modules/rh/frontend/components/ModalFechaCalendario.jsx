@@ -12,8 +12,8 @@ const MAX_DESCRIPCION = 1000;
 
 /**
  * Modal de alta/edición/baja de una fecha del calendario laboral.
- * @param {{ item: object|null, fechaInicial: string, onCerrar: () => void, onGuardado: (mensaje: string) => void }} props
- *   item = fila a editar (null = alta).
+ * @param {{ item: object|null, fechaInicial: string, onCerrar: () => void, onGuardado: (mensaje: string, aviso: string|null) => void }} props
+ *   item = fila a editar (null = alta). `aviso` = texto de mensajeAvisosActividad (solo tipo actividad) o null.
  */
 export default function ModalFechaCalendario({ item, fechaInicial, onCerrar, onGuardado }) {
   const dialogoRef = useFocoModal(true);

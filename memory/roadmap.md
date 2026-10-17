@@ -64,4 +64,4 @@
 
 # Tarea adicional (2026-10-16): tipo "Día Actividad Empresa" (bloquea vacaciones)
 > Misma rama `feat/calendariolaboral-vacaciones`. Una sola fase: coder (BD+API+UI) → revisor + tester → commit → GO/NO-GO del humano.
-- **Situación:** EN CURSO (coder). Diseño en decisions.md (2026-10-16).
+- **Situación:** LISTA PARA GO/NO-GO (coder + revisor + tester; ver decisions.md 2026-10-16).
