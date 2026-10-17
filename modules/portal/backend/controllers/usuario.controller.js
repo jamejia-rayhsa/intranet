@@ -1,4 +1,5 @@
 const Usuario = require("../models/usuario.model");
+const Delegacion = require("../services/delegacionPermisos");
 const { grupo } = require("../config/database");
 const supabaseAdmin = require("../services/supabaseAdmin.service");
 const sinSecretos = require("../utils/sinSecretos");
@@ -12,11 +13,8 @@ const ControladorUsuario = {
       const usuarios = await Usuario.obtenerTodos();
       res.json({ exito: true, datos: usuarios });
     } catch (error) {
-      res.status(500).json({
-        exito: false,
-        mensaje: "Error al listar usuarios",
-        error: error.message,
-      });
+      console.error("Error al listar usuarios:", error.message);
+      res.status(500).json({ exito: false, mensaje: "Error al listar usuarios" });
     }
   },
 
@@ -30,11 +28,8 @@ const ControladorUsuario = {
       }
       res.json({ exito: true, datos: sinSecretos(usuario) });
     } catch (error) {
-      res.status(500).json({
-        exito: false,
-        mensaje: "Error al obtener usuario",
-        error: error.message,
-      });
+      console.error("Error al obtener usuario:", error.message);
+      res.status(500).json({ exito: false, mensaje: "Error al obtener usuario" });
     }
   },
 
@@ -47,6 +42,12 @@ const ControladorUsuario = {
           exito: false,
           mensaje: "Correo, nombre y contraseña son obligatorios",
         });
+      }
+
+      // El rol inicial se valida ANTES de crear nada (ni GoTrue ni fila local)
+      const conRol = rol_id !== undefined && rol_id !== null && rol_id !== "";
+      if (conRol) {
+        await Delegacion.validarRolesAsignables(grupo, req.user, [rol_id]);
       }
 
       const existente = await Usuario.buscarPorCorreo(correo);
@@ -88,7 +89,7 @@ const ControladorUsuario = {
         throw errorInsert;
       }
 
-      if (rol_id) {
+      if (conRol) {
         await grupo.query(
           "INSERT INTO usuario_rol (usuario_id, rol_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
           [usuario.id, rol_id],
@@ -101,11 +102,9 @@ const ControladorUsuario = {
         mensaje: "Usuario creado exitosamente",
       });
     } catch (error) {
-      res.status(400).json({
-        exito: false,
-        mensaje: "Error al crear usuario",
-        error: error.message,
-      });
+      if (Delegacion.responderErrorDelegacion(res, error)) return;
+      console.error("Error al crear usuario:", error.message);
+      res.status(400).json({ exito: false, mensaje: "Error al crear usuario" });
     }
   },
 
@@ -120,6 +119,11 @@ const ControladorUsuario = {
         requiere_cambio_password,
       } = req.body;
 
+      // Validación y escritura en UNA transacción con el usuario bloqueado (FOR UPDATE): la regla se
+      // evalúa contra el estado FINAL (roles tras el cambio) y el actual, sin ventana frente a un ascenso
+      // concurrente. Si el estado final es tomable solo por super_admin: 403 sin NINGÚN cambio (ni rol,
+      // ni contraseña, ni llamada a GoTrue). Un rol_id ausente (undefined) no borra el rol; para
+      // quitarlo se envía null o "".
       const datos = {};
       if (nombre !== undefined) datos.nombre = nombre;
       if (apellido !== undefined) datos.apellido = apellido;
@@ -132,37 +136,42 @@ const ControladorUsuario = {
 
       // TODO(supabase): este endpoint no permite cambiar correo; si se agrega,
       // sincronizarlo en GoTrue (el contrato de supabaseAdmin aun no lo ofrece).
-      if (contraseña) {
-        const actual = await Usuario.buscarPorId(req.params.id);
-        if (!actual) {
-          return res
-            .status(404)
-            .json({ exito: false, mensaje: "Usuario no encontrado" });
-        }
-        if (!actual.auth_uid) {
-          return res.status(409).json({
-            exito: false,
-            mensaje: "El usuario no tiene cuenta en Supabase Auth",
-          });
-        }
-        await supabaseAdmin.actualizarPassword(actual.auth_uid, contraseña);
-      }
-
-      const usuario = await Usuario.actualizar(req.params.id, datos);
-      if (!usuario) {
+      let authUid = null;
+      const { encontrado, valor: usuario } = await Delegacion.operarSobreUsuario(
+        grupo,
+        req.user,
+        req.params.id,
+        {
+          rolId: rol_id === undefined ? undefined : rol_id === null || rol_id === "" ? null : rol_id,
+          tomaCuenta: Boolean(contraseña),
+          // Solo BD, dentro de la transacción (con el usuario bloqueado)
+          escribir: async (cliente) => {
+            if (contraseña) {
+              const actual = await Usuario.buscarPorId(req.params.id, cliente);
+              if (!actual) return null;
+              if (!actual.auth_uid) {
+                throw new Delegacion.ErrorDelegacion(
+                  409,
+                  "El usuario no tiene cuenta en Supabase Auth",
+                );
+              }
+              authUid = actual.auth_uid;
+            }
+            // Sin otros campos (p. ej. solo rol_id) no hay UPDATE que hacer: se devuelve el usuario tal cual
+            return Object.keys(datos).length > 0
+              ? Usuario.actualizar(req.params.id, datos, cliente)
+              : Usuario.buscarPorId(req.params.id, cliente);
+          },
+          // GoTrue DESPUÉS del COMMIT y sin conexión del pool; si falla, se compensa la BD
+          externo: contraseña
+            ? () => supabaseAdmin.actualizarPassword(authUid, contraseña)
+            : undefined,
+        },
+      );
+      if (!encontrado || !usuario) {
         return res
           .status(404)
           .json({ exito: false, mensaje: "Usuario no encontrado" });
-      }
-
-      await grupo.query("DELETE FROM usuario_rol WHERE usuario_id = $1", [
-        req.params.id,
-      ]);
-      if (rol_id) {
-        await grupo.query(
-          "INSERT INTO usuario_rol (usuario_id, rol_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-          [req.params.id, rol_id],
-        );
       }
 
       res.json({
@@ -171,43 +180,49 @@ const ControladorUsuario = {
         mensaje: "Usuario actualizado exitosamente",
       });
     } catch (error) {
-      res.status(400).json({
-        exito: false,
-        mensaje: "Error al actualizar usuario",
-        error: error.message,
-      });
+      if (Delegacion.responderErrorDelegacion(res, error)) return;
+      console.error("Error al actualizar usuario:", error.message);
+      res.status(400).json({ exito: false, mensaje: "Error al actualizar usuario" });
     }
   },
 
   async resetearPassword(req, res) {
     try {
       const { id } = req.params;
-      const usuario = await Usuario.buscarPorId(id);
+      const contraseñaTemporal = generarContraseñaTemporal();
 
-      if (!usuario) {
+      // Resetear la contraseña equivale a tomar la cuenta: solo si el actor posee los permisos del rol.
+      // Valida y escribe en BD bajo el bloqueo del usuario; GoTrue va DESPUÉS del COMMIT (con compensación).
+      let authUid = null;
+      const { encontrado } = await Delegacion.operarSobreUsuario(grupo, req.user, id, {
+        tomaCuenta: true,
+        escribir: async (cliente) => {
+          const usuario = await Usuario.buscarPorId(id, cliente);
+          if (!usuario) return null;
+          if (usuario.auth_tipo !== "local") {
+            throw new Delegacion.ErrorDelegacion(
+              400,
+              "Solo se puede resetear contraseña de usuarios locales",
+            );
+          }
+          if (!usuario.auth_uid) {
+            throw new Delegacion.ErrorDelegacion(
+              409,
+              "El usuario no tiene cuenta en Supabase Auth",
+            );
+          }
+          authUid = usuario.auth_uid;
+          await Usuario.actualizar(id, { requiere_cambio_password: true }, cliente);
+          return true;
+        },
+        // La contraseña vive solo en GoTrue
+        externo: () => supabaseAdmin.actualizarPassword(authUid, contraseñaTemporal),
+      });
+      if (!encontrado) {
         return res
           .status(404)
           .json({ exito: false, mensaje: "Usuario no encontrado" });
       }
-
-      if (usuario.auth_tipo !== "local") {
-        return res.status(400).json({
-          exito: false,
-          mensaje: "Solo se puede resetear contraseña de usuarios locales",
-        });
-      }
-
-      const contraseñaTemporal = generarContraseñaTemporal();
-      if (!usuario.auth_uid) {
-        return res.status(409).json({
-          exito: false,
-          mensaje: "El usuario no tiene cuenta en Supabase Auth",
-        });
-      }
-
-      // La contraseña vive solo en GoTrue
-      await supabaseAdmin.actualizarPassword(usuario.auth_uid, contraseñaTemporal);
-      await Usuario.actualizar(id, { requiere_cambio_password: true });
 
       res.json({
         exito: true,
@@ -215,11 +230,9 @@ const ControladorUsuario = {
         mensaje: "Contraseña reseteada exitosamente",
       });
     } catch (error) {
-      res.status(500).json({
-        exito: false,
-        mensaje: "Error al resetear contraseña",
-        error: error.message,
-      });
+      if (Delegacion.responderErrorDelegacion(res, error)) return;
+      console.error("Error al resetear contraseña:", error.message);
+      res.status(500).json({ exito: false, mensaje: "Error al resetear contraseña" });
     }
   },
 
@@ -229,9 +242,21 @@ const ControladorUsuario = {
       // autoriza por la fila local, asi que una identidad huerfana en GoTrue
       // recibe 403; invertirlo seria irrecuperable si fallara el borrado local.
       // Un fallo de limpieza en GoTrue se registra y no bloquea la respuesta.
-      const previo = await Usuario.buscarPorId(req.params.id);
-      const usuario = await Usuario.eliminar(req.params.id);
-      if (!usuario) {
+      // Valida (no privilegiado) y borra bajo el mismo bloqueo del usuario
+      const { encontrado, valor } = await Delegacion.operarSobreUsuario(
+        grupo,
+        req.user,
+        req.params.id,
+        {
+          escribir: async (cliente) => {
+            const previo = await Usuario.buscarPorId(req.params.id, cliente);
+            const usuario = await Usuario.eliminar(req.params.id, cliente);
+            return { previo, usuario };
+          },
+        },
+      );
+      const previo = valor && valor.previo;
+      if (!encontrado || !valor.usuario) {
         return res
           .status(404)
           .json({ exito: false, mensaje: "Usuario no encontrado" });
@@ -247,11 +272,9 @@ const ControladorUsuario = {
       }
       res.json({ exito: true, mensaje: "Usuario eliminado exitosamente" });
     } catch (error) {
-      res.status(500).json({
-        exito: false,
-        mensaje: "Error al eliminar usuario",
-        error: error.message,
-      });
+      if (Delegacion.responderErrorDelegacion(res, error)) return;
+      console.error("Error al eliminar usuario:", error.message);
+      res.status(500).json({ exito: false, mensaje: "Error al eliminar usuario" });
     }
   },
 
@@ -267,29 +290,22 @@ const ControladorUsuario = {
         });
       }
 
-      const usuario = await Usuario.buscarPorId(id);
-      if (!usuario) {
+      // Valida (rol asignable por quien lo pide, usuario no privilegiado) y escribe en una transacción
+      const existe = await Delegacion.cambiarRolDeUsuario(grupo, req.user, id, rol_id);
+      if (!existe) {
         return res
           .status(404)
           .json({ exito: false, mensaje: "Usuario no encontrado" });
       }
-
-      await grupo.query("DELETE FROM usuario_rol WHERE usuario_id = $1", [id]);
-      await grupo.query(
-        "INSERT INTO usuario_rol (usuario_id, rol_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-        [id, rol_id],
-      );
 
       res.json({
         exito: true,
         mensaje: "Rol asignado exitosamente",
       });
     } catch (error) {
-      res.status(500).json({
-        exito: false,
-        mensaje: "Error al asignar rol",
-        error: error.message,
-      });
+      if (Delegacion.responderErrorDelegacion(res, error)) return;
+      console.error("Error al asignar rol:", error.message);
+      res.status(500).json({ exito: false, mensaje: "Error al asignar rol" });
     }
   },
 };

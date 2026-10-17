@@ -1,0 +1,99 @@
+const request = require("supertest");
+const express = require("express");
+
+jest.mock("../../../portal/backend/middleware/auth.middleware", () => ({
+  authenticateJWT: (req, _res, next) => {
+    req.user = { usuario_id: 5, rol_id: 3, rol_nombre: "rh_admin" };
+    next();
+  },
+}));
+jest.mock("../../../portal/backend/middleware/permisos.middleware", () => ({
+  verificarPermiso: () => (_req, _res, next) => next(),
+}));
+jest.mock("../../../portal/backend/config/database", () => ({
+  grupo: { query: jest.fn() },
+}));
+
+const { grupo } = require("../../../portal/backend/config/database");
+
+const app = express();
+app.use(express.json());
+app.use("/api/departamentos", require("../routes/departamentos.routes"));
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  jest.spyOn(console, "error").mockImplementation(() => {});
+});
+
+describe("Departamentos - cupo_vacaciones", () => {
+  it("el listado devuelve cupo_vacaciones (SELECT d.*)", async () => {
+    grupo.query.mockResolvedValue({ rows: [{ id: 1, nombre: "TI", cupo_vacaciones: 2 }] });
+    const res = await request(app).get("/api/departamentos");
+    expect(res.status).toBe(200);
+    expect(res.body.datos[0].cupo_vacaciones).toBe(2);
+    expect(grupo.query.mock.calls[0][0]).toMatch(/SELECT d\.\*/);
+  });
+
+  it("PUT actualiza el cupo con SQL parametrizado (acepta cadena numérica)", async () => {
+    grupo.query.mockResolvedValue({ rows: [{ id: 1, cupo_vacaciones: 3 }] });
+    const res = await request(app).put("/api/departamentos/1").send({ cupo_vacaciones: "3" });
+    expect(res.status).toBe(200);
+    const [sql, params] = grupo.query.mock.calls[0];
+    expect(sql).toMatch(/cupo_vacaciones = \$1/);
+    expect(params).toEqual([3, "1"]);
+  });
+
+  it("POST crea con el cupo indicado", async () => {
+    grupo.query.mockResolvedValue({ rows: [{ id: 9, cupo_vacaciones: 4 }] });
+    const res = await request(app).post("/api/departamentos").send({ nombre: "Ventas", cupo_vacaciones: 4 });
+    expect(res.status).toBe(201);
+    expect(grupo.query.mock.calls[0][1]).toEqual(["Ventas", null, 4]);
+  });
+
+  it("POST sin cupo conserva el INSERT original (usa el DEFAULT 1)", async () => {
+    grupo.query.mockResolvedValue({ rows: [{ id: 9 }] });
+    await request(app).post("/api/departamentos").send({ nombre: "Ventas" });
+    expect(grupo.query.mock.calls[0][0]).not.toMatch(/cupo_vacaciones/);
+  });
+
+  it.each([[0], [-1], [1.5], ["abc"], [null], [""], [2147483648], [true]])(
+    "cupo inválido %p -> 400 sin tocar la BD (PUT y POST)",
+    async (cupo) => {
+      const put = await request(app).put("/api/departamentos/1").send({ cupo_vacaciones: cupo });
+      const post = await request(app).post("/api/departamentos").send({ nombre: "X", cupo_vacaciones: cupo });
+      expect(put.status).toBe(400);
+      expect(post.status).toBe(400);
+      expect(put.body.exito).toBe(false);
+      expect(grupo.query).not.toHaveBeenCalled();
+    }
+  );
+});
+
+describe("Departamentos - errores genéricos (sin error.message)", () => {
+  const SECRETO = 'duplicate key value violates unique constraint "departamentos_nombre_key"';
+
+  it.each([
+    ["get", "/api/departamentos", 500, undefined],
+    ["post", "/api/departamentos", 400, { nombre: "X" }],
+    ["put", "/api/departamentos/1", 400, { nombre: "X" }],
+    ["delete", "/api/departamentos/1", 500, undefined],
+    ["post", "/api/departamentos/importar", 500, { filas: [{ nombre: "X" }] }],
+  ])("%s %s -> %i sin filtrar el mensaje de Postgres", async (metodo, url, estado, cuerpo) => {
+    grupo.query.mockRejectedValue(new Error(SECRETO));
+    const res = await request(app)[metodo](url).send(cuerpo);
+    expect(res.status).toBe(estado);
+    expect(res.body.exito).toBe(false);
+    expect(JSON.stringify(res.body)).not.toContain("duplicate key");
+    expect(res.body.error).toBeUndefined();
+  });
+
+  it("importar: el error por fila tampoco filtra el mensaje de Postgres", async () => {
+    grupo.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockRejectedValueOnce(new Error(SECRETO));
+    const res = await request(app).post("/api/departamentos/importar").send({ filas: [{ nombre: "X" }] });
+    expect(res.status).toBe(200);
+    expect(res.body.datos.errores).toHaveLength(1);
+    expect(JSON.stringify(res.body)).not.toContain("duplicate key");
+  });
+});

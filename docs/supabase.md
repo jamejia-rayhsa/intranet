@@ -50,6 +50,12 @@ Puntos clave (verificados en `docker-compose.supabase.yml`, `config/nginx/*.conf
 
 Orden interno: `supabase-db` -> `supabase-db-init` (one-shot: carga `config/database/init.sql` solo si no existe `public.usuarios`, y siempre aplica migraciones idempotentes `004`, `005` y `007`) -> `supabase-auth` y `supabase-storage` -> backend. El backend espera a que `db-init` termine con éxito.
 
+Nota sobre `rh/010-empleados-usuario-unico.sql`: agrega `UNIQUE (usuario_id)` a `empleados` solo si no hay usuarios con más de un empleado; si los hay, NO falla: emite un `WARNING` con los ids duplicados y deja la restricción sin crear (hasta que RH los corrija y se relance `db-init`). La autoridad de vacaciones depende de la relación 1:1.
+
+Nota sobre la semilla de festivos (`rh/009-calendario-laboral.sql`): solo inserta los festivos oficiales 2026-2027 si `calendario_laboral` está vacía, así que un festivo borrado por RH no reaparece al relanzar `db-init`; si se vacía por completo la tabla, la siguiente ejecución volverá a sembrarlos.
+
+Nota sobre `rh/011-calendario-actividad.sql`: amplía el CHECK de `calendario_laboral.tipo` para admitir `actividad` (Día Actividad Empresa, que bloquea las vacaciones de todos). Es idempotente (busca la restricción por definición, no por nombre), no modifica datos y se puede relanzar con `db-init` sin efectos. Requiere la 009.
+
 ### Migraciones nuevas con el entorno ya levantado
 
 `supabase-db-init` es un servicio de una sola ejecución: aplica `init.sql` (solo si la BD está vacía) y las migraciones idempotentes **cada vez que se levanta**, no mientras el entorno sigue arriba. Si cambias de rama o haces `git pull` y trae una migración nueva (p. ej. `portal/006-eventos-noticias.sql`), la BD que ya está corriendo **no la tiene** y la app falla al usar las columnas nuevas (síntoma: error al crear/guardar). Hay que volver a ejecutar el `db-init`:
@@ -66,6 +72,8 @@ Comprueba el resultado con `docker logs intranet_supabase_db_init | grep -E "apl
 **Al crear una migración nueva:** además del archivo en `modules/<módulo>/backend/migrations/`, (1) refleja el cambio en `config/database/init.sql` para instalaciones nuevas y (2) agrega en `docker-compose.supabase.yml`, dentro de `supabase-db-init`, el volumen `/sql/<archivo>:ro` y la línea `psql -v ON_ERROR_STOP=1 -f /sql/<archivo>` con su `echo`. Sin ese montaje la migración nunca se aplica.
 
 Variables: plantilla en `.env.supabase.example` (se añaden al `.env.<entorno>`). `POSTGRES_DB` del backend debe ser `postgres`.
+
+**Pool de conexiones del backend** (`modules/portal/backend/config/database.js`, un solo pool que comparten portal, RH, tickets y auditoría). Variables opcionales: `PG_POOL_MAX` (10), `PG_POOL_IDLE_TIMEOUT_MS` (30000), `PG_POOL_CONNECTION_TIMEOUT_MS` (5000: con el pool agotado la petición falla a los 5 s con 500 genérico en vez de colgarse) y `PG_IDLE_IN_TRANSACTION_TIMEOUT_MS` (30000: Postgres cierra la sesión con una transacción abierta e inactiva). No hay `statement_timeout` global (reportes y auditoría pueden tardar). Una transacción no debe esperar a servicios externos (Storage, GoTrue, n8n) entre `BEGIN` y `COMMIT`.
 
 ## 3. Secretos
 

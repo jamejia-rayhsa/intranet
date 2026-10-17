@@ -26,7 +26,7 @@ jest.mock("../controllers/empleadoHijo.controller", () => {
 });
 jest.mock("../controllers/permisos.controller", () => ({ listar: ok, obtener: ok, crear: ok, responder: ok }));
 jest.mock("../controllers/vacaciones.controller", () => ({
-  obtenerSaldo: ok, listar: ok, obtener: ok, crear: ok, responder: ok,
+  obtenerSaldo: ok, listar: ok, obtener: ok, crear: ok, responder: ok, disponibilidad: ok, ocupacion: ok,
 }));
 
 const { tienePermiso } = require("../../../portal/backend/middleware/permisos.middleware");
@@ -140,6 +140,17 @@ describe("RH: empleados, permisos de ausencia y vacaciones por propietario", () 
       comoRH();
       expect((await request(app).get("/vacaciones/saldo?empleado_id=6")).status).toBe(200);
     });
+    it.each(["disponibilidad", "ocupacion"])(
+      "%s: antes de /:id; empleado_id ajeno 403, propio y sin id ok, RH ok",
+      async (ruta) => {
+        comoEmpleado(5);
+        expect((await request(app).get(`/vacaciones/${ruta}`)).status).toBe(200);
+        expect((await request(app).get(`/vacaciones/${ruta}?empleado_id=5`)).status).toBe(200);
+        expect((await request(app).get(`/vacaciones/${ruta}?empleado_id=6`)).status).toBe(403);
+        comoRH();
+        expect((await request(app).get(`/vacaciones/${ruta}?empleado_id=6`)).status).toBe(200);
+      },
+    );
     it("crear: por otro empleado 403; propio ok; RH ok", async () => {
       comoEmpleado(5);
       expect((await request(app).post("/vacaciones").send({ empleado_id: 6 })).status).toBe(403);
@@ -148,7 +159,7 @@ describe("RH: empleados, permisos de ausencia y vacaciones por propietario", () 
       expect((await request(app).post("/vacaciones").send({ empleado_id: 6 })).status).toBe(200);
     });
     it("GET /:id: dueno, jefe inmediato y RH; otro 403", async () => {
-      Solicitud.obtenerPorId.mockResolvedValue({ id: 1, empleado_id: 5, jefe_inmediato_id: 8 });
+      Solicitud.obtenerPorId.mockResolvedValue({ id: 1, empleado_id: 5, jefe_vigente_id: 8, jefe_inmediato_id: 77 });
       comoEmpleado(5);
       expect((await request(app).get("/vacaciones/1")).status).toBe(200);
       comoEmpleado(8);
@@ -159,7 +170,7 @@ describe("RH: empleados, permisos de ausencia y vacaciones por propietario", () 
       expect((await request(app).get("/vacaciones/1")).status).toBe(200);
     });
     it("responder: jefe inmediato y RH si; solicitante, otro empleado e inexistente 403", async () => {
-      Solicitud.obtenerPorId.mockResolvedValue({ id: 1, empleado_id: 5, jefe_inmediato_id: 8 });
+      Solicitud.obtenerPorId.mockResolvedValue({ id: 1, empleado_id: 5, jefe_vigente_id: 8, jefe_inmediato_id: 77 });
       comoEmpleado(8);
       expect((await request(app).put("/vacaciones/1/responder").send({ estatus: "aprobado" })).status).toBe(200);
       comoEmpleado(5);
@@ -172,8 +183,31 @@ describe("RH: empleados, permisos de ausencia y vacaciones por propietario", () 
       comoRH();
       expect((await request(app).put("/vacaciones/1/responder").send({ estatus: "aprobado" })).status).toBe(200);
     });
+    it("responder: RH y super_admin no responden lo propio; lo ajeno y sin empleado si", async () => {
+      Solicitud.obtenerPorId.mockResolvedValue({ id: 1, empleado_id: 20, jefe_vigente_id: null, jefe_inmediato_id: null });
+      comoRH();
+      Empleado.obtenerPorUsuarioId.mockResolvedValue({ id: 20 });
+      expect((await request(app).put("/vacaciones/1/responder").send({ estatus: "aprobado" })).status).toBe(403);
+      Empleado.obtenerPorUsuarioId.mockResolvedValue({ id: 21 });
+      expect((await request(app).put("/vacaciones/1/responder").send({ estatus: "aprobado" })).status).toBe(200);
+      Empleado.obtenerPorUsuarioId.mockResolvedValue(undefined);
+      expect((await request(app).put("/vacaciones/1/responder").send({ estatus: "aprobado" })).status).toBe(200);
+      // inexistente: RH pasa al controlador (404)
+      Solicitud.obtenerPorId.mockResolvedValue(undefined);
+      Empleado.obtenerPorUsuarioId.mockResolvedValue({ id: 20 });
+      expect((await request(app).put("/vacaciones/2/responder").send({ estatus: "aprobado" })).status).toBe(200);
+    });
+    it("jefe VIGENTE: el jefe guardado al crear ya no lee ni responde; el nuevo si", async () => {
+      Solicitud.obtenerPorId.mockResolvedValue({ id: 1, empleado_id: 5, jefe_vigente_id: 9, jefe_inmediato_id: 8 });
+      comoEmpleado(8);
+      expect((await request(app).get("/vacaciones/1")).status).toBe(403);
+      expect((await request(app).put("/vacaciones/1/responder").send({ estatus: "aprobado" })).status).toBe(403);
+      comoEmpleado(9);
+      expect((await request(app).get("/vacaciones/1")).status).toBe(200);
+      expect((await request(app).put("/vacaciones/1/responder").send({ estatus: "aprobado" })).status).toBe(200);
+    });
     it("el jefe de si mismo no se auto-aprueba", async () => {
-      Solicitud.obtenerPorId.mockResolvedValue({ id: 1, empleado_id: 8, jefe_inmediato_id: 8 });
+      Solicitud.obtenerPorId.mockResolvedValue({ id: 1, empleado_id: 8, jefe_vigente_id: 8, jefe_inmediato_id: 8 });
       comoEmpleado(8);
       expect((await request(app).put("/vacaciones/1/responder").send({ estatus: "aprobado" })).status).toBe(403);
     });

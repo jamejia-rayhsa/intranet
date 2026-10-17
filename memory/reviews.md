@@ -2206,3 +2206,455 @@ Sin fallos. Falla preexistente (no relacionada): 2 tests de empleado.controller.
 **Lo que requiere Postgres real o navegador (no verificado aquí):** paginación con `?tipo=` y desempate (F2); FOR UPDATE y no deadlock entre subida y reordenar; ROLLBACK real; filtro `noticia_id` en DELETE; `ORDER BY` de imágenes; TIMESTAMPTZ; límites de nginx con una subida real de 5 MB y 10 MB en staging; foco del modal en navegador y lector de pantalla.
 
 **Pendiente para el orquestador:** nada crítico ni alto. Recomiendo corregir F1 (la auditoría de contenido contradice la política de la fase) y F2 (paginación) antes del GO a staging; el resto puede ir como deuda con la nota en roadmap.
+
+### [2026-10-15] [revisor] — Calendario laboral Fase 2: revisión general (APROBADO CON OBSERVACIONES; sin críticos; 1 alto preexistente escalado; 3 medios, 2 bajos)
+**Archivo/línea:** modules/rh/backend/{migrations/009-calendario-laboral.sql, models/calendarioLaboral.model.js, controllers/calendarioLaboral.controller.js, routes/calendario.routes.js, tests/calendarioLaboral.test.js, tests/calendario-migracion.test.js}, config/database/init.sql:667-783, docker-compose.supabase.yml:83,106, modules/portal/backend/app.js:49
+**Problema:** revisión de la Fase 2 contra decisions.md (2026-10-15) y code-notes.md. Verificado: SQL parametrizado (columnas fijas, valores en `$n`); `to_char` y `Date.UTC` sin desfase de zona; 400/409/404/500 sin `error.message` al cliente; `rh_empleado` solo `Calendario:consulta` y 403 real en escritura (`verificarPermiso` no mockeado en los tests); `portal_admin` sin `Departamentos`; `departamento_id` con backfill; `cupo_vacaciones INT NOT NULL DEFAULT 1 CHECK (>= 1)`; auditoría INSERT/UPDATE/DELETE desde el controlador sin descripción; `ON CONFLICT` respaldado por PK de `rol_opcion_permisos` y `UNIQUE(modulo_id,nombre)`; cuerpo SQL de init.sql (líneas 667-783) idéntico al de 009 (solo cambia la cabecera, comprobado con diff); compose y app.js correctos. Los 14 festivos son correctos (1.er lunes feb 2026-02-02 / 2027-02-01; 3.er lunes mar 2026-03-16 / 2027-03-15; 3.er lunes nov 2026-11-16 / 2027-11-15; fijos 1-may, 16-sep, 25-dic, 1-ene). Jest: `calendarioLaboral.test.js` + `calendario-migracion.test.js` = 56/56 OK.
+**Severidad:** medio (veredicto global)
+**Fix sugerido:** aplicar los hallazgos F2-F6 antes de la Fase 4; F1 requiere decisión del humano/orquestador. Sin cambios de código hechos por el revisor.
+
+### [2026-10-15] [revisor] — F1: portal_admin puede auto-otorgarse cualquier permiso de RH (preexistente, escalado)
+**Archivo/línea:** config/database/init.sql:412-421 (portal_admin = todas las opciones de `portal`, incluida `Roles` consulta+edición); modules/portal/backend/routes/permiso.routes.js:43-60 (PUT `/rol/:rol_id/modulo/:modulo` guarda cualquier módulo; solo exige `portal/Roles:edicion`)
+**Problema:** decisión 8 de decisions.md limita a portal_admin a la opción `Calendario` "sin otros permisos de RH", pero con `portal/Roles:edicion` puede escribir `rol_opcion_permisos` de cualquier rol y darse `rh/Vacaciones`, `rh/Empleados`, `rh/Departamentos`, etc. El límite de la decisión no se cumple en la práctica; el diff no lo empeora (portal_admin ya tenía ese camino), pero la Fase 2 le concede `Calendario:edicion` apoyándose en esa restricción.
+**Severidad:** alto
+**Fix sugerido:** (decisión del humano) o bien (a) que PUT de permisos exija que el usuario tenga la opción de cada módulo que modifica, o que solo `super_admin` edite módulos distintos de `portal`; o bien (b) registrar en decisions.md que portal_admin puede administrar permisos de RH y ajustar la decision 8. ESCALADO al orquestador.
+
+### [2026-10-15] [revisor] — F2: el cupo de vacaciones no se puede editar desde la API ni la UI
+**Archivo/línea:** modules/rh/backend/models/departamento.model.js:4-9 (crear) y :20-47 (actualizar, ignora `cupo_vacaciones`); modules/rh/backend/routes/departamentos.routes.js:9-13
+**Problema:** la columna `departamentos.cupo_vacaciones` existe y `obtenerTodos` la devuelve (`d.*`), pero ningún endpoint la escribe ni la valida. La decisión 1 pide que la opción `Departamentos` se siembre "para poder editarlo", y hoy RH solo podría cambiar el cupo con SQL directo.
+**Severidad:** medio
+**Fix sugerido:** aceptar `cupo_vacaciones` en crear/actualizar de departamentos (entero >= 1, si no 400 con mensaje claro) con prueba; o registrar en roadmap.md que se completa antes de la Fase 4 (que es la que lo consume).
+
+### [2026-10-15] [revisor] — F3: los festivos borrados por RH reaparecen en cada despliegue
+**Archivo/línea:** modules/rh/backend/migrations/009-calendario-laboral.sql:99-114; config/database/init.sql:768-783; docker-compose.supabase.yml:106-107 (db-init re-ejecuta 009 en cada `up`, ver docs/supabase.md:55)
+**Problema:** la semilla usa `ON CONFLICT (fecha, tipo) DO NOTHING`. Desactivar un festivo (`activo=false`) sobrevive, pero si RH lo BORRA, el siguiente `supabase-db-init` lo vuelve a insertar. Es un efecto silencioso en cada despliegue.
+**Severidad:** medio
+**Fix sugerido:** sembrar solo una vez (tabla de control o marca de versión de semilla) y documentar en docs/supabase.md que el calendario se corrige con `activo=false`, no borrando; o añadir a la API la regla de no borrar festivos oficiales.
+
+### [2026-10-15] [revisor] — F4: el backfill de departamento_id se re-ejecuta en cada despliegue y no refleja el departamento al solicitar
+**Archivo/línea:** modules/rh/backend/migrations/009-calendario-laboral.sql:37-43; config/database/init.sql:708-714; (ausencia) modules/rh/backend/models/solicitudVacaciones.model.js y controllers/vacaciones.controller.js no escriben `departamento_id` (grep sin resultados)
+**Problema:** (a) el UPDATE se ejecuta en cada db-init y rellena `departamento_id` NULL con el departamento ACTUAL del empleado, así que también captura solicitudes creadas después de la migración; si un empleado cambió de área entre despliegues, su histórico se reasigna. (b) La decisión 5 pide guardar `departamento_id` al crear la solicitud; eso aún no ocurre, así que toda solicitud nueva queda NULL hasta el siguiente despliegue. Hoy no hay consumidor (el cupo es Fase 4), por eso es medio y no alto.
+**Severidad:** medio
+**Fix sugerido:** escribir `departamento_id` (el del empleado al crear) en el INSERT de `solicitudVacaciones`, con prueba; y limitar el backfill a una sola pasada (p. ej. solo filas con `fecha_solicitud` anterior a la migración, o con bandera de semilla). Antes de la Fase 4.
+
+### [2026-10-15] [revisor] — F5: tests de migración por regex; no comparan init.sql con 009 y el test de festivos es circular
+**Archivo/línea:** modules/rh/backend/tests/calendario-migracion.test.js:19-42 (regex sobre ambos archivos), :56-59 (permisos de init.sql solo por dos regex), :13-16 (lista de festivos duplicada del propio SQL)
+**Problema:** nada detecta que init.sql y 009 diverjan (hoy son idénticos, lo comprobé con diff), y el test de festivos compara el SQL contra la misma lista escrita a mano: no valida que las fechas sean las correctas (lo hice a mano: son correctas).
+**Severidad:** medio
+**Fix sugerido:** comparar el cuerpo de ambos bloques normalizado (quitando cabeceras y espacios) y generar las fechas de referencia con la regla (n-ésimo lunes, fijos) en lugar de listarlas.
+
+### [2026-10-15] [revisor] — F6: el SQL real (CHECK, UNIQUE, ON CONFLICT, to_char, idempotencia) no tiene prueba automática
+**Archivo/línea:** modules/rh/backend/tests/calendarioLaboral.test.js:44-57 (mock de `grupo.query`), :100-107 (`to_char` solo se comprueba como texto del SQL)
+**Problema:** 56 pruebas con mocks prueban controlador, validación y permisos (verificarPermiso real, bien), pero no que Postgres aplique CHECK/UNIQUE, que la migración sea idempotente o que `to_char` devuelva `YYYY-MM-DD`. Esto se verificó a mano con Postgres 16 desechable (code-notes), no en CI.
+**Severidad:** medio
+**Fix sugerido:** prueba de integración opcional (docker-compose.test.yml) que aplique init.sql y 009 dos veces y compruebe 14 festivos, 23505 en duplicado, CHECK cupo>=1 y `fecha` devuelta como texto.
+
+### [2026-10-15] [revisor] — F7: departamento.controller.js devuelve error.message al cliente (preexistente, ahora alcanzable por rh_admin)
+**Archivo/línea:** modules/rh/backend/controllers/departamento.controller.js:15, :36, :59, :78, :102
+**Problema:** las respuestas de error incluyen `error: error.message` (en importar, `error` de Postgres se filtra). Antes solo `super_admin` pasaba; con el permiso `Departamentos` sembrado, `rh_admin` también llega ahí. El diseño de calendario sí lo evita.
+**Severidad:** bajo
+**Fix sugerido:** quitar `error.message` de las respuestas y dejar el detalle en console, como en calendarioLaboral.controller.js:79-82.
+
+### [2026-10-15] [revisor] — F8: pendientes para la Fase 4 (no son hallazgos de Fase 2)
+**Archivo/línea:** modules/rh/backend/controllers/calendarioLaboral.controller.js (sin auditoría de bloqueos); modules/rh/backend/controllers/vacaciones.controller.js (sin revalidación de cupo al aprobar)
+**Problema:** la decisión 9 pide auditar los rechazos por cupo y la 2 revalidar al aprobar; ambos son alcance de la Fase 4 y todavía no existen. Se anota para que no se pierdan.
+**Severidad:** bajo
+**Fix sugerido:** incluirlos en el plan de la Fase 4 (auditar rechazos por cupo con `registrarAccion` verificado, guardia `WHERE estatus='pendiente'` y bloqueo al aprobar).
+
+### [2026-10-15] [revisor] — Calendario laboral Fase 3 (pantalla, modal, utilidades de fechas, CrudPage, tests): APROBADO CON OBSERVACIONES; sin críticos
+**Archivo/línea:** modules/rh/frontend/pages/CalendarioLaboralPage.jsx:91; modules/rh/frontend/styles/calendario.css:98; modules/rh/tests/calendarioLaboral.util.test.js:1-9, :45-48
+**Problema:** revisión de la Fase 3 contra decisions.md (2026-10-15 calendario y GO fase 3) y code-notes.md (entrada "Fase 3 pantalla del calendario"). Sin violaciones de decisiones: el backend es la autoridad (routes/calendario.routes.js: GET consulta; POST/PUT/DELETE edicion), no hay `new Date(texto)` en la lógica de fechas (solo Date.UTC y fechaHoy con getters locales), no hay `dangerouslySetInnerHTML` (XSS: nombre/descripción salen por render de React), CrudPage aplica min/step solo si se declaran y defecto solo en alta (sin regresión en AreasPage, PuestosPage, etc.), MenuDinamico SUB_RUTAS usa opcion `Calendario` en módulo `rh`, igual que la semilla de la migración 009. Verificado: jest calendarioLaboral.util.test.js 21/21 OK; eslint de los archivos tocados 0 errores. Resuelve parcialmente F2 (reviews.md:2222): el cupo ya es editable desde Departamentos.
+**Severidad:** bajo (veredicto global: APROBADO CON OBSERVACIONES; 0 críticos, 0 altos; 1 medio de permisos, 1 medio de contraste, 2 medios de cobertura/UX, resto bajos)
+**Fix sugerido:** atender los hallazgos siguientes; ninguno bloquea el cierre de la fase. Ver entradas separadas.
+
+### [2026-10-15] [revisor] — Fase 3: el rol super_admin nunca se detecta en la pantalla del calendario (rol_nombre no existe en el perfil)
+**Archivo/línea:** modules/rh/frontend/pages/CalendarioLaboralPage.jsx:91-97 (mismo patrón preexistente en modules/portal/frontend/components/MenuDinamico.jsx:146)
+**Problema:** `usuario?.rol_nombre` es siempre undefined: `/auth/perfil` devuelve `roles` (array de strings) y COLUMNAS_PUBLICAS de usuario.model.js no incluye `rol_nombre`; por tanto un super_admin sin filas de Calendario en rol_opcion_permisos ve la pantalla en solo lectura, aunque el backend (verificarPermiso) le permita escribir.
+**Severidad:** medio
+**Fix sugerido:** `const esSuperAdmin = usuario?.roles?.includes("super_admin");` en la página (y evaluar el mismo cambio en MenuDinamico, fuera de esta fase). Añadir prueba o nota en tests.md del caso super_admin sin fila de permiso.
+
+### [2026-10-15] [revisor] — Fase 3: números de días de meses vecinos no cumplen AA (contraste 4,02:1 y 3,48:1)
+**Archivo/línea:** modules/rh/frontend/styles/calendario.css:98 (`.calendario__celda--otro-mes .calendario__num`, usa --color-texto-claro #718096)
+**Problema:** el texto #718096 da 4,02:1 sobre blanco y 3,48:1 sobre el fondo de fin de semana #eceff3 (calculado con WCAG 2.x), por debajo de 4,5:1 para texto normal (el número tiene 0,85rem en negrita, no cuenta como grande). Las demás combinaciones revisadas pasan: chips y avisos 8,2-8,3:1; "Hoy" y botón primario 13:1; botón peligro 4,83:1; encabezados 7,1:1; subtítulo 6,7:1; marcas inactivas (opacidad 0,85) 5,6-5,9:1; anillo de foco #2563eb 5,2:1 sobre blanco y 4,5:1 sobre #eceff3 (≥3:1 no textual).
+**Severidad:** medio
+**Fix sugerido:** usar var(--color-texto-medio) (#4a5568, 7,5:1 sobre blanco) para los números de otro mes, o un gris de ~#5b6474 si se quiere diferenciarlos visualmente sin perder AA; recalcular sobre #eceff3.
+
+### [2026-10-15] [revisor] — Fase 3: no hay pruebas del componente (permisos de edición, modal, teclado, errores)
+**Archivo/línea:** modules/rh/tests/calendarioLaboral.util.test.js:1 (cobertura solo de utils; sin archivo de pruebas para CalendarioLaboralPage.jsx ni ModalFechaCalendario.jsx)
+**Problema:** la lógica de permisos de edición (puedeEditar, líneas 92-97), la de baja con confirmación, los 409/404 del modal y el enrutado de teclado solo se verificaron con un harness Chromium fuera del repo (code-notes.md, 38/38); un cambio futuro en esa lógica no lo detecta jest.
+**Severidad:** medio
+**Fix sugerido:** añadir pruebas de componente con @testing-library/react (si el proyecto la tiene; si no, añadir pocas pruebas al test de utils que cubran puedeEditar como función pura extraída) para: lectura sin controles, edición con permiso edicion, super_admin, modal con 409, y confirmación de baja.
+
+### [2026-10-15] [revisor] — Fase 3: la prueba de fechaHoy no discrimina zona horaria y el test depende de leer el fuente
+**Archivo/línea:** modules/rh/tests/calendarioLaboral.util.test.js:45-48 (fechaHoy) y :8-9 (carga por regex)
+**Problema:** (a) no hay TZ fijada en Jest, así que en un runner en UTC la prueba pasa aunque fechaHoy usara toISOString (regresión invisible); (b) la carga usa `/^export (?:const|function) (\w+)/` y `replace(/^export /gm, "")`: un `export default`, `export let`, `export { … }` o `export class` añadido al util rompe el test con un error poco claro o exporta menos funciones sin avisar.
+**Severidad:** bajo
+**Fix sugerido:** (a) ejecutar esa prueba con TZ fija (p. ej. `TZ=America/Mexico_City` en el script de test o en el propio `it` con una fecha que cruce medianoche UTC y verificar que el resultado no depende de la zona); (b) añadir una aserción de que `nombres.length` coincide con la lista esperada de exports, o cambiar a un transform ESM si el proyecto lo permite.
+
+### [2026-10-15] [revisor] — Fase 3: errores de carga silenciosos (permisos y respuesta sin exito)
+**Archivo/línea:** modules/rh/frontend/pages/CalendarioLaboralPage.jsx:101-103 (permisos) y :113 (listado con exito=false)
+**Problema:** si `/permisos/mis-permisos` falla, el usuario editor ve la pantalla en solo lectura sin ningún aviso; si el listado responde `exito:false`, se muestra un calendario vacío sin mensaje (solo los errores lanzados llegan a errorCarga).
+**Severidad:** bajo
+**Fix sugerido:** en el catch de permisos mostrar un aviso "No se pudieron cargar tus permisos; la edición no está disponible" y en el then del listado tratar `!r.exito` como error (`setErrorCarga(r.mensaje || ...)`).
+
+### [2026-10-15] [revisor] — Fase 3: respuesta no JSON del proxy se muestra como texto técnico
+**Archivo/línea:** modules/rh/frontend/pages/CalendarioLaboralPage.jsx:114 (origen en modules/portal/frontend/utils/api.js:28, `respuesta.json()` sin protección)
+**Problema:** si el proxy devuelve HTML (502/504), `solicitar` lanza un SyntaxError y el usuario ve "Unexpected token '<'…" en la alerta de carga.
+**Severidad:** bajo
+**Fix sugerido:** en `solicitar`, envolver `respuesta.json()` en try/catch y lanzar un error con mensaje genérico y `status`; en la página, mensaje fijo "No se pudo cargar el calendario" si no hay mensaje del servidor.
+
+### [2026-10-15] [revisor] — Fase 3: con una sola fecha en el día no se puede agregar otra desde la cuadrícula
+**Archivo/línea:** modules/rh/frontend/pages/CalendarioLaboralPage.jsx:173-179 (el panel de día solo aparece con 2 o más, :281)
+**Problema:** un día con una fecha abre directamente su edición; para agregar un segundo tipo en ese día el usuario debe usar "Agregar fecha" y reescribir la fecha a mano.
+**Severidad:** bajo
+**Fix sugerido:** mostrar el panel de día también con 1 elemento, o añadir "Agregar otra en esta fecha" dentro del modal de edición cuando la fecha ya tiene otros elementos.
+
+### [2026-10-15] [revisor] — Fase 3: foco perdido tras eliminar desde la lista
+**Archivo/línea:** modules/rh/frontend/pages/CalendarioLaboralPage.jsx:319 (botón "Editar" de la lista) y modules/rh/frontend/components/ModalFechaCalendario.jsx:83-84 (baja)
+**Problema:** useFocoModal devuelve el foco al elemento que abrió el modal; si ese botón de la lista desaparece tras la baja (el item ya no existe), el foco queda en body y un usuario de teclado pierde su posición.
+**Severidad:** bajo
+**Fix sugerido:** tras una baja, enfocar el encabezado de la lista ("Fechas de <mes>", con tabIndex=-1) o el contenedor de la rejilla en lugar de depender del elemento de apertura.
+
+### [2026-10-15] [revisor] — Fase 3: edición sin control de concurrencia (last-write-wins)
+**Archivo/línea:** modules/rh/frontend/components/ModalFechaCalendario.jsx:56-66 (PUT con cuerpo completo)
+**Problema:** dos RH editando la misma fecha se pisan sin aviso: el PUT envía todos los campos y el backend no compara `fecha_actualizacion` previa.
+**Severidad:** bajo
+**Fix sugerido:** enviar `fecha_actualizacion` previa y, en el backend, comparar en el UPDATE (WHERE fecha_actualizacion = $n) y responder 409 con "La fecha cambió mientras la editabas"; o dejarlo documentado como aceptado (tabla con pocos editores).
+
+### [2026-10-15] [revisor] — Fase 4 vacaciones (días hábiles, cupo por departamento, calendario de ocupación): VEREDICTO NO APROBADO
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:190-223; modules/rh/frontend/pages/VacacionesPage.jsx:286 (y hallazgos siguientes)
+**Problema:** revisión contra decisions.md (2026-10-15, GO Fase 4) y code-notes.md (Fase 4 backend y frontend). Hay 1 crítico (violación de decisión: el periodo lo fija el cliente) que se escala al orquestador, 1 alto (agotamiento del pool dentro de transacción), 6 medios y 4 bajos. Lo verificado y correcto: conteo por día hábil con fechas texto y Date.UTC; límites inclusivos; cupo 1/2; exclusión de la propia solicitud al aprobar; departamento NULL sin cupo ni bloqueo; orden de bloqueos sin ciclo (responder: solicitud -> departamento; crear: solo departamento; nada toma departamento -> solicitud); guardia de estado en SQL y en controlador; COMMIT/ROLLBACK/release en enTransaccion; RECHAZO_CUPO se audita después del ROLLBACK y sin nombres de compañeros; sin IDOR en /disponibilidad y /ocupacion (empleadoPropioEnPeticion, 403 ajeno); sin sinks de HTML crudo en los archivos nuevos; sin new Date(texto) con getters locales en el código nuevo. Tests: 4 suites (112 tests) pasan al ejecutarlas.
+**Severidad:** crítico (por el hallazgo de periodo; ver siguiente entrada)
+**Fix sugerido:** corregir el crítico y el alto antes de publicar; los medios pueden diferirse con decisión explícita del orquestador.
+
+### [2026-10-15] [revisor] — Vacaciones: el periodo lo fija el cliente y descuenta de otro saldo (viola decisión de periodo)
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:190 y :223 (`parseInt(periodo) || anioDeFecha(fecha_inicial)`), :111 (revalidación usa `solicitud.periodo`), :323; modules/rh/frontend/pages/VacacionesPage.jsx:286 (`periodo` del selector enviado en el body)
+**Problema:** el periodo de la solicitud sale del body y no del año de `fecha_inicial`; con body `periodo` distinto, el saldo y el periodo guardado son los de ese año (2026-12-28 con periodo 2027 o 2035 descuenta de otro saldo, y 2035 da más días por antigüedad). La vista previa (/disponibilidad) usa el año de fecha_inicial, así que el servidor y la pantalla no coinciden. decisions.md (2026-10-15, puntos 4 y 5) fija "el periodo sigue siendo el año de fecha_inicial". El origen es HEAD (líneas 88-89), pero Fase 4 lo conserva y lo usa para el saldo y la revalidación al aprobar.
+**Severidad:** crítico — violación de decisión (escalado al orquestador)
+**Fix sugerido:** calcular `periodo = anioDeFecha(fecha_inicial)` en crear y revalidar, e ignorar o rechazar (400) un body.periodo distinto; en la UI, quitar el selector del envío y basar el saldo mostrado y el gate de Enviar en el año de fecha_inicial. Pruebas: periodo del body distinto -> el saldo y el periodo guardado son los del año de fecha_inicial; solicitud 2026-12-28..2027-01-04 con body periodo 2035 no usa el saldo de 2035.
+
+### [2026-10-15] [revisor] — Vacaciones: lectura de empleado sin la transacción dentro de BEGIN agota el pool y puede colgar el portal
+**Archivo/línea:** modules/rh/backend/models/solicitudVacaciones.model.js:111 (`Empleado.obtenerPorId` dentro de calcularSaldo sin `cliente`); llamadas en modules/rh/backend/controllers/vacaciones.controller.js:109 (revalidarAprobacion) y :269 (crear); pool sin límites en modules/portal/backend/config/database.js:3
+**Problema:** dentro de la transacción (un cliente del pool) calcularSaldo pide una segunda conexión del pool para leer el empleado. Con 10 transacciones simultáneas del mismo departamento (9 esperando el FOR UPDATE y 1 con el lock), la que tiene el lock no consigue conexión y todo queda esperando sin límite (el pool por defecto tiene 10 y no hay connectionTimeoutMillis), con lo que también se bloquea el resto del portal. Los tests no lo detectan porque Empleado está mockeado.
+**Severidad:** alto
+**Fix sugerido:** pasar `cliente` a `Empleado.obtenerPorId` (o leer el empleado antes del BEGIN y pasar sus datos); definir `max` y `connectionTimeoutMillis` en el pool. Prueba: Postgres real con pool de 2 conexiones y dos aprobaciones concurrentes del mismo departamento, sin Empleado mockeado.
+
+### [2026-10-15] [revisor] — Vacaciones: responder devuelve 500 después de confirmar la aprobación
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:496 (`await Empleado.obtenerPorId(anterior.empleado_id)` fuera del try de notificación)
+**Problema:** tras el COMMIT, si esa lectura falla, el controlador responde 500 "Error al responder solicitud" aunque la aprobación ya quedó guardada; un reintento devuelve 409 y se pierden la notificación y la auditoría de UPDATE.
+**Severidad:** medio
+**Fix sugerido:** meter la lectura dentro del try de notificación (o devolver el resultado confirmado aunque falle la notificación) y garantizar que la auditoría del UPDATE se intente siempre tras el COMMIT. Prueba: fallo simulado en Empleado.obtenerPorId tras el COMMIT -> 200 y auditoría registrada.
+
+### [2026-10-15] [revisor] — Vacaciones: RH puede aprobar o rechazar su propia solicitud (preexistente, sin decisión explícita)
+**Archivo/línea:** modules/rh/backend/routes/vacaciones.routes.js:65-76 (accesoEmpleado deja pasar a RH antes de `permitirDueno: false`); modules/rh/backend/controllers/vacaciones.controller.js:464-494 (responder no compara solicitante y aprobador); modules/rh/backend/controllers/vacaciones.controller.js:408-411 y modules/rh/frontend/pages/VacacionesListadoPage.jsx (puede_responder = esAdmin también sobre la propia)
+**Problema:** un usuario con permiso de RH puede aprobar su propia solicitud, consumiendo cupo y saldo sin revisión de otra persona. El comentario de la ruta dice "nunca el propio solicitante (salvo RH)", pero no hay decisión en decisions.md que lo permita explícitamente. No se modificó en esta fase; es preexistente.
+**Severidad:** medio
+**Fix sugerido:** decidir con el orquestador. Si no se permite: responder 403 en el controlador cuando `anterior.empleado_id` es el empleado del aprobador (también para RH), y poner puede_responder = false en el listado para la propia solicitud. Prueba de regresión correspondiente.
+
+### [2026-10-15] [revisor] — Vacaciones: crear sin serialización por empleado cuando no hay departamento, y lectura del departamento fuera de la transacción
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:225 (empleado leído fuera de la transacción), :243-249 (lock solo si hay departamento), :260-276 (traslape y saldo sin lock de empleado)
+**Problema:** dos creaciones simultáneas del mismo empleado sin departamento pueden pasar traslape y saldo a la vez (el code-notes lo marca como límite aceptado, no verificado). Además, el departamento se lee antes de la transacción y se guarda en el INSERT aunque haya cambiado antes del lock, así que el cupo puede aplicarse al departamento equivocado. Lo mismo afecta el saldo entre aprobaciones de dos departamentos distintos del mismo empleado.
+**Severidad:** medio
+**Fix sugerido:** dentro de la transacción, bloquear la fila del empleado (`SELECT ... FROM empleados WHERE id = $1 FOR UPDATE`) como primer paso de crear, releer departamento_id después de ese bloqueo y usar ese valor para el lock y el INSERT. El orden empleado -> departamento no crea ciclo con solicitud -> departamento mientras nadie tome departamento -> empleado.
+
+### [2026-10-15] [revisor] — Vacaciones: pruebas que no detectan regresiones de periodo, guardias SQL ni pool
+**Archivo/línea:** modules/rh/backend/tests/vacaciones.diasHabilesCupo.test.js:85, :103 (simulador con regex sobre el texto SQL), :161 (guardia del simulador), :415-416 y :498 (orden de bloqueos), :165 (SQL no simulado); modules/rh/backend/tests/acceso-empleados-permisos-vacaciones.test.js (controlador mockeado)
+**Problema:** (a) el simulador bloquea solo si el SQL coincide con la regex; un cambio inocuo del texto (alias, espacios) hace fallar los tests por "SQL no simulado" y no por la regla, y quitar FOR UPDATE se detecta por accidente. (b) La guardia `AND estatus = 'pendiente'` del UPDATE de responder no se prueba aislada: el precheck del controlador (línea 474) la oculta. (c) Empleado está mockeado, así que no se prueba el pool dentro de la transacción (alto anterior). (d) Ningún test envía body.periodo distinto del año de fecha_inicial, por eso el crítico no se detecta. (e) El SQL real de ocupacionPorDia, listar, responder y del cupo se verificó con un harness fuera del repo, sin prueba automática de regresión. (f) La prueba de propiedad de /disponibilidad y /ocupacion mockea el controlador, así que no comprueba que el controlador use el empleado validado.
+**Severidad:** medio
+**Fix sugerido:** añadir: test de periodo del body ignorado; test de guardia SQL (UPDATE con estatus ya cambiado devuelve 409 aunque el precheck pase); test que cubra el pool con Empleado real o con Postgres en CI; y, para el SQL, pruebas de integración con Postgres marcadas en el repo (o registrarlas como deuda en blockers.md).
+
+### [2026-10-15] [revisor] — Frontend de vacaciones: sin pruebas de componente para el estado de Enviar y las carreras
+**Archivo/línea:** modules/rh/tests/vacacionesOcupacion.util.test.js (solo funciones puras); modules/rh/frontend/pages/VacacionesPage.jsx:227-255 (debounce y bandera vigente), :258 (bloqueado), :267-301 (handleSubmit); modules/rh/frontend/components/CalendarioOcupacion.jsx:53-77 (descarte de respuestas obsoletas)
+**Problema:** la regla de habilitar Enviar, la carrera de disponibilidad, la respuesta 409 al enviar y el descarte de respuestas viejas del calendario solo se comprobaron con un harness de Chromium que no está en el repo. Una regresión en el componente no la detecta ninguna prueba automática.
+**Severidad:** medio
+**Fix sugerido:** añadir pruebas con React Testing Library (servicio mockeado, reloj falso) para: Enviar deshabilitado en ocioso/cargando/error/conflicto; respuesta obsoleta descartada; 409 muestra el mensaje del servidor y refresca la disponibilidad.
+
+### [2026-10-15] [revisor] — Vacaciones: contraste insuficiente en las tarjetas de saldo (preexistente)
+**Archivo/línea:** modules/rh/frontend/pages/VacacionesPage.jsx:149 (título, `--color-texto-claro`) y :153 (subtítulo, `--color-texto-claro` con `opacity: 0.7`)
+**Problema:** #718096 sobre blanco da 4,02:1 (por debajo de 4,5:1). Con opacity 0.7 el subtítulo queda en ~2,5:1. Es preexistente en HEAD, pero Fase 4 toca esta página y el code-notes solo corrigió la etiqueta de los campos.
+**Severidad:** medio
+**Fix sugerido:** usar `--color-texto-medio` (#4a5568, ~7,5:1 sobre blanco) en título y subtítulo y quitar `opacity`. Verificar con axe o con el cálculo WCAG.
+
+### [2026-10-15] [revisor] — Vacaciones: cambios de contrato respecto a HEAD (códigos 400 -> 409 y 400 -> 500)
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:267 (traslape, antes 400), :474-475 y :491 (no pendiente, antes 400 en HEAD línea 315), :258 (0 días hábiles, 400 nuevo), :369 y :538 (errores genéricos de crear y responder: HEAD devolvía 400, ahora 500)
+**Problema:** los clientes que solo leen `mensaje` no se ven afectados (VacacionesPage y VacacionesListadoPage tratan 400 y 409 igual), pero el cambio de códigos no está en decisions.md y un error interno ahora es 500, no 400.
+**Severidad:** bajo
+**Fix sugerido:** documentar el cambio en code-notes.md o decisions.md (es intencional según el diseño); no requiere cambio de código salvo que otro consumidor dependa del 400.
+
+### [2026-10-15] [revisor] — Vacaciones: saldo y cruce de año (decisión aceptada, falta nota al usuario)
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:223 (periodo = año de inicio); modules/rh/backend/models/solicitudVacaciones.model.js:99-107 (calcularDisfrutados suma dias_a_disfrutar, incluidos los días naturales de solicitudes antiguas); modules/rh/frontend/pages/VacacionesPage.jsx:548 (nota solo sobre días naturales)
+**Problema:** una solicitud del 28-dic-2026 al 4-ene-2027 descuenta sus días del periodo 2026, y las solicitudes antiguas en días naturales siguen restando del saldo. Ambos puntos están en decisions.md, pero la UI no informa del cruce de año.
+**Severidad:** bajo
+**Fix sugerido:** mostrar una nota cuando el rango cruza el año ("los días se descuentan del periodo 2026"). Sin cambio de código backend.
+
+### [2026-10-15] [revisor] — Vacaciones: handleSubmit no valida el estado de envío ni la fecha de regreso
+**Archivo/línea:** modules/rh/frontend/pages/VacacionesPage.jsx:267-301 (no usa envioBloqueado); :371-379 y modules/rh/backend/controllers/vacaciones.controller.js:204-209 (fecha_regreso solo se valida en formato, no que sea posterior a fecha_final)
+**Problema:** handleSubmit depende solo del atributo disabled del botón; una llamada directa o un envío durante un conflicto pasaría al servidor. La fecha de regreso puede ser anterior a la fecha final sin error.
+**Severidad:** bajo
+**Fix sugerido:** `if (envioBloqueado(disp, enviando)) return;` al inicio de handleSubmit; en el backend, rechazar fecha_regreso < fecha_final con 400.
+
+### [2026-10-15] [revisor] — Vacaciones: marca de cupo lleno sin texto visible en contenedores estrechos
+**Archivo/línea:** modules/rh/frontend/styles/vacacionesOcupacion.css:45-47 (el texto "Cupo lleno" se oculta bajo 34rem); modules/rh/frontend/components/CalendarioOcupacion.jsx:186-190
+**Problema:** en anchos menores el día lleno solo muestra el símbolo ⛔ y el fondo; el nombre accesible sí incluye el texto y la leyenda lo explica, pero un usuario que no conozca el símbolo no lo identifica sin abrir la leyenda. No es una falla de contraste ni de nombre accesible.
+**Severidad:** bajo
+**Fix sugerido:** mostrar siempre el texto corto "Lleno" dentro de la celda, o un título visible en el detalle del mes; revisar con el tester en 320-720 px.
+
+### [2026-10-15] [revisor] — Re-revisión Fase 4
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:190-235, 241-345, 486-542; modules/rh/frontend/pages/VacacionesPage.jsx:199-209, 230-264, 302
+**Problema:** re-revisión focalizada de las correcciones (periodo, pool, candado por empleado, responder tras COMMIT, contrato). Sin críticos ni altos abiertos.
+**Severidad:** bajo (máximo de los hallazgos nuevos)
+**Fix sugerido:** ver lista de abajo.
+**Veredicto:** APROBADO CON OBSERVACIONES
+
+Verificado (lectura de código + `npx jest` de vacaciones, acceso-empleados, diasHabiles y vacacionesOcupacion: 143/143 OK):
+- (1) periodo: crear no lee body.periodo (controller:235, 333); revalidarAprobacion usa el periodo guardado (:111); disponibilidad y ocupación derivan de fecha_inicial (:603); el POST del front no envía periodo (VacacionesPage:302).
+- (2) pool: dentro de enTransaccion todo usa `cliente` (crear :243-343; responder :488-514; revalidarAprobacion :93-126; calcularSaldo/Empleado.obtenerPorId con cliente en solicitudVacaciones.model.js:133-146). Post-COMMIT usa `grupo` fuera de transacción (controller:523, 545). disponibilidad y ocupación no abren transacción.
+- (3) candado: `pg_advisory_xact_lock(4217, empleado)` solo en crear y aprobar. Orden empleado -> solicitud -> departamento en ambos; rechazar toma solo la solicitud; disponibilidad y ocupación no bloquean. Sin ciclos. `grep pg_advisory` no encuentra otro uso en el repo. Se libera en COMMIT/ROLLBACK (xact).
+- (4) responder: notificación y auditoría post-COMMIT en try propio. fecha_regreso >= fecha_final validado en backend (controller:204-216) y front (regresoValido). empleado_id de crear validado (controller:229-232).
+- (5) contrato: forma de las respuestas idéntica a HEAD; los códigos de error cambian como están documentados en code-notes; el front lee `mensaje`.
+
+Hallazgos abiertos:
+- bajo — controller:152, 165-172: GET /vacaciones/saldo acepta `periodo` del query. Es solo lectura y no alimenta escrituras, pero contradice el criterio "ningún camino toma periodo del cliente". Fix: decisión del orquestador; o documentar /saldo como consulta libre.
+- bajo — VacacionesPage.jsx:199-209 y :327-335: cargarSaldo no tiene la guarda `vigente` que sí tiene la disponibilidad; con el selector, la tarjeta puede mostrar otro periodo que el "Saldo restante" del formulario. Fix: guarda vigente y etiquetar el periodo de la tarjeta. La nota de code-notes "saldo mostrado = el que usa el servidor" solo vale sin tocar el selector.
+- bajo — controller:68 y :170: RH con empleado_id fuera de int4 (p. ej. 99999999999) pasa el middleware y pg lanza out-of-range: 500 en /saldo, /disponibilidad y /ocupacion (crear da 400). Fix: validar 1..2147483647 igual que crear.
+- bajo — solicitudVacaciones.model.js:25-28: si ROLLBACK falla, release() devuelve la conexión sin release(error). Fix: cliente.release(error) en ese caso.
+- medio, pendiente (no nuevo) — modules/portal/backend/config/database.js:3-9: pool sin max, connectionTimeoutMillis ni idle_in_transaction_session_timeout. Dentro del módulo el riesgo queda mitigado; la espera por conexión sigue sin límite para todo el portal. Requiere decisión del orquestador (dependencia compartida).
+- medio, pendiente (no nuevo) — routes/vacaciones.routes.js:65-76: RH puede aprobar o rechazar lo propio. Sigue sin decisión explícita.
+- bajo — vacaciones.pool.test.js: la prueba de "una sola conexión" cubre solo crear; responder no tiene aserción de pool.
+
+### [2026-10-15] [revisor] — Revisión final de la rama (Fase 5)
+**Alcance:** `git diff main...HEAD` (61 archivos, HEAD a8d530d). Lectura de code-notes.md, decisions.md (entradas 2026-10-15 de la tarea), hallazgos previos de reviews.md y verificación de los marcados como corregidos. Foco: (1) extensión Fase 4 (delegación de permisos y roles, pool, JSON 400/413, saldo); (2) regla de autoridad por jefe; (3) coherencia init.sql/009/compose/docs, permisos vs menú, contratos front/back, secretos, artefactos y calidad de los tests.
+**Verificado sin hallazgos:** `init.sql` (bloque calendario) idéntico a `009-calendario-laboral.sql` salvo una línea en blanco; compose aplica 009 con `ON_ERROR_STOP`; sin secretos ni artefactos en el diff; `delegacionPermisos` no escribe antes de validar (403 sin cambios parciales en permisos de módulo y en cambio de rol); super_admin sin restricciones; `motivoSinAutoridad` coincide con el middleware y con `listar` (matriz completa en `vacaciones.autoridad.test.js`); el jefe se compara contra el snapshot de la solicitud dentro de la transacción; `periodo` del body ignorado; transacciones de vacaciones sin segunda conexión del pool; respuesta de `responder` tras COMMIT dentro de try; `fecha_regreso >= fecha_final` en backend y front; `envioBloqueado` también en `handleSubmit`; `GET /vacaciones/saldo` valida periodo; `errores.middleware` responde 400/413 sin detalle; `NODE_ENV=production` en staging/prod (sin `detalle`).
+**Pruebas:** `npx jest` 39/39 suites, 764/764 tests; repetido con TZ=America/Mexico_City, Pacific/Kiritimati y Pacific/Pago_Pago: 764/764 en cada una. Sin red, sin `.only`/`.skip`. eslint no ejecutado en esta pasada.
+**Cerrados (verificados):** F1 Fase 2 (portal_admin con Roles:edicion puede auto-otorgarse permisos de RH) → cerrado por delegación; JSON malformado → 500 → cerrado (400); pool sin timeouts (medio) → cerrado (`config/database.js:19-25`); RH que aprueba lo propio (medio) → cerrado en ruta y transacción; `GET /saldo?periodo` (bajo) → cerrado; responder 500 tras COMMIT (medio) → cerrado; contraste de tarjetas de saldo (medio) → cerrado (`--color-texto-medio`).
+**Veredicto: RECHAZADO** (1 crítico abierto, escalado al orquestador). El resto de la lógica de vacaciones y calendario es correcto; el crítico es un único guardia que falta en el alta de empleado.
+
+**Hallazgos**
+
+**Archivo/línea:** modules/rh/backend/controllers/empleado.controller.js:136-150 (ruta modules/rh/backend/routes/empleados.routes.js:33)
+**Problema:** el alta de empleado con `crear_usuario` asigna `rol_id` o `roles[]` directamente con INSERT en `usuario_rol`, sin `exigirRolAsignable` ni `exigirUsuarioNoPrivilegiado`. Quien tiene `rh/Empleados:edicion` (rh_admin en el seed) puede crear una cuenta con rol super_admin, rh_admin o tickets_admin, o con cualquier rol con permisos que no posee. Es la vía de escalada que la delegación de esta rama pretendía cerrar.
+**Severidad:** crítico (viola la decisión de delegación del 2026-10-15, extensión Fase 4, punto C: quien administra roles solo otorga lo que posee y nunca asigna super_admin/rh_admin/tickets_admin; el coder lo marcó como residual en code-notes.md)
+**Fix sugerido:** en `crear` (empleado), antes de crear nada en GoTrue, validar con `Delegacion.exigirRolAsignable(cliente, req.user, rolId)` por cada rol (`rol_id` y `roles`), y escribir el INSERT dentro de la misma transacción; mismo criterio que `usuario.controller.crear`. Prueba: rh_admin con `rol_id` de super_admin → 403 y ningún usuario ni fila en `usuario_rol` creados; super_admin → 201.
+
+**Archivo/línea:** modules/portal/backend/controllers/usuario.controller.js:253-260 (eliminar; ruta usuario.routes.js:15); :124-188 (actualizar: guardas solo si hay `contraseña` o `rol_id`, líneas 138-153)
+**Problema:** `DELETE /usuarios/:id` no comprueba si el objetivo tiene rol privilegiado, y `PUT /usuarios/:id` permite cambiar `activo`, `nombre`, `apellido` o `requiere_cambio_password` de un super_admin o rh_admin sin pasar por `exigirUsuarioNoPrivilegiado`. portal_admin (Usuarios:edicion en el seed) puede desactivar o borrar al super_admin.
+**Severidad:** alto
+**Fix sugerido:** llamar `exigirUsuarioNoPrivilegiado` (o exigir super_admin) en `eliminar` y en `actualizar` para cualquier cambio sobre un usuario privilegiado, antes de escribir. Prueba: portal_admin → DELETE y PUT activo=false sobre super_admin/rh_admin → 403 y fila intacta.
+
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:281-290 (validarUsuarioAdministrable), usado en usuario.controller.js:138-140 (contraseña en PUT) y :217 (reset-password)
+**Problema:** la protección solo compara nombres privilegiados. portal_admin puede resetear la contraseña de cualquier usuario con rol no privilegiado y heredar sus permisos al entrar (por ejemplo auditoria_viewer, bi_admin, tickets_tecnico), que portal_admin no posee. Es la "toma de cuenta" que el propio coder anotó como residual.
+**Severidad:** alto (si el orquestador considera que la regla de posesión cubre la toma de cuenta, sube a crítico)
+**Fix sugerido:** exigir que el rol del objetivo tenga solo permisos que posee el actor (misma comprobación que `exigirRolAsignable`), o restringir reset y cambio de contraseña a super_admin. Prueba: portal_admin → reset sobre un usuario auditoria_viewer → 403.
+
+**Archivo/línea:** modules/portal/frontend/pages/PortalAdminRoles.jsx:50 (llama `PUT /roles/:id/permisos`); modules/portal/backend/controllers/rol.controller.js:99-104 (solo super_admin) y :96-98 (comentario "Ninguna pantalla la usa")
+**Problema:** la pantalla /admin/roles (usada por portal_admin) guarda permisos con la tabla heredada, que ahora responde 403 para no super. El fallo es silencioso (solo `console.error`). El comentario del backend es falso. Además esa tabla no afecta a la autorización, así que la pantalla guardaba algo sin efecto (deuda preexistente).
+**Severidad:** medio
+**Fix sugerido:** quitar el guardado de esa pantalla o redirigirlo a `PUT /api/permisos/rol/:id/modulo/:modulo`; mostrar el mensaje de error en la UI; corregir el comentario de rol.controller.js.
+
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:192-216 (exigirRolAsignable) con usuario.controller.js:54-61, 298 y routes usuario.routes.js:13, 17
+**Problema:** cambio de comportamiento no documentado en decisions.md ni code-notes.md como impacto operativo. portal_admin ya no puede crear usuarios ni asignar rol_empleado, tickets_tecnico o similares (403 "incluye permisos que tú no posees"), porque esos roles tienen permisos de RH o tickets que portal_admin no posee. Puede ser intencional, pero el flujo de alta de empleados estándar pasa a depender de RH.
+**Severidad:** medio
+**Fix sugerido:** decisión del humano: qué roles puede asignar portal_admin; documentarlo en decisions.md y avisar a quien administra usuarios.
+
+**Archivo/línea:** modules/rh/backend/models/solicitudVacaciones.model.js:200 (snapshot de jefe al crear); modules/rh/backend/controllers/vacaciones.controller.js:74-84 y 536; modules/rh/backend/routes/vacaciones.routes.js:23-27
+**Problema:** la autoridad usa `solicitudes_vacaciones.jefe_inmediato_id` (snapshot), no el jefe actual. Si cambia el jefe del empleado, el anterior conserva autoridad sobre las pendientes, el nuevo no, y si el jefe queda vacío solo RH puede responder. La decisión dice "el jefe inmediato del solicitante" (presente), así que el snapshot es una lectura posible pero no explícita.
+**Severidad:** medio (decisión a confirmar)
+**Fix sugerido:** confirmar con el humano; si se quiere el jefe vigente, usar `empleados.jefe_inmediato_id` del solicitante dentro de la transacción (con el mismo orden de bloqueos). En cualquier caso, anotarlo en decisions.md.
+
+**Archivo/línea:** config/database/init.sql (CREATE TABLE empleados, alrededor de la línea 244: `usuario_id INT REFERENCES usuarios(id)` sin UNIQUE); modules/rh/backend/migrations/004-corregir-tabla-empleados.sql:81-91 (el UNIQUE está solo aquí); modules/rh/backend/models/empleado.model.js:262-266 (`obtenerPorUsuarioId` toma `rows[0]` sin orden)
+**Problema:** en un despliegue creado desde init.sql, `empleados.usuario_id` puede repetirse, porque la migración 004 no la aplica docker-compose. La identidad de quien responde (middleware y controlador) depende de que la relación usuario-empleado sea 1:1; con duplicados, el empleado "propio" es arbitrario.
+**Severidad:** medio (preexistente, pero ahora la autoridad de vacaciones depende de ello)
+**Fix sugerido:** añadir `UNIQUE (usuario_id)` con guarda en init.sql (o aplicar 004 en db-init), revisar duplicados existentes antes, y ordenar/limitar `obtenerPorUsuarioId` con un test de duplicado.
+
+**Archivo/línea:** modules/portal/backend/controllers/rol.controller.js:79-92 (eliminar)
+**Problema:** un no super puede borrar cualquier rol no privilegiado, incluido rh_empleado o bi_admin, aunque no posea sus permisos; los usuarios de ese rol quedan sin acceso. Es coherente con la decisión literal (solo se protegen los privilegiados), pero es destructivo.
+**Severidad:** medio (decisión a confirmar)
+**Fix sugerido:** exigir posesión de los permisos del rol para borrarlo, o limitar el borrado a super_admin.
+
+**Archivo/línea:** modules/rh/backend/routes/vacaciones.routes.js:65-76 y modules/rh/backend/middleware/acceso-empleado.middleware.js:77; modules/rh/backend/controllers/vacaciones.controller.js:454-455 (puede_responder)
+**Problema:** (a) RH que intenta responder lo propio recibe "No tienes acceso a este recurso" en vez de MSG_PROPIA, porque el middleware responde antes; (b) `puede_responder` no considera el permiso Vacaciones:edicion que exige la ruta (routes:67), así que un jefe sin ese permiso ve el botón y recibe 403.
+**Severidad:** bajo
+**Fix sugerido:** en el middleware, dejar que el controlador decida con MSG_PROPIA para RH; incluir `tienePermiso(Vacaciones, edicion)` en `puede_responder`.
+
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:87-89, 616 y 687 (empleadoDeLaConsulta)
+**Problema:** `?empleado_id[]=9` pasa `esEnteroInt4` (String(["9"]) = "9") y llega a `Empleado.obtenerPorId` como array, lo que da 500 en disponibilidad y ocupación en vez de 400.
+**Severidad:** bajo
+**Fix sugerido:** rechazar arrays y objetos en `esEnteroInt4` (aceptar solo string o number).
+
+**Archivo/línea:** modules/portal/backend/controllers/usuario.controller.js:19, 37, 119, 200, 248, 280, 314; rol.controller.js:23, 53, 75, 90; permiso.controller.js:26, 44, 56
+**Problema:** rutas preexistentes devuelven `error: error.message` al cliente (mensajes de PostgreSQL). `asignarRol` (usuario.controller.js:314) es un camino nuevo que lo hereda. Departamentos y vacaciones ya lo quitaron.
+**Severidad:** bajo
+**Fix sugerido:** quitar `error: error.message` y registrar en consola, como en departamento.controller.js.
+
+**Archivo/línea:** modules/rh/backend/models/solicitudVacaciones.model.js:25 (`enTransaccion`, `ROLLBACK.catch(() => {})` y `release()` sin error)
+**Problema:** si ROLLBACK falla, la conexión (posiblemente rota) vuelve al pool sin marcarla. Hallazgo anterior sin corregir.
+**Severidad:** bajo
+**Fix sugerido:** capturar el error del ROLLBACK y llamar `cliente.release(errorRollback)` en ese caso.
+
+**Archivo/línea:** modules/portal/backend/controllers/usuario.controller.js:141-188 (cambiarRolDeUsuario hace COMMIT antes de `supabaseAdmin.actualizarPassword` y de `Usuario.actualizar`)
+**Problema:** un fallo posterior devuelve 400 o 500 con el rol ya cambiado; no es un 403 parcial, pero no es atómico.
+**Severidad:** bajo
+**Fix sugerido:** aplicar el rol al final, o compensar si falla la escritura posterior.
+
+**Archivo/línea:** modules/portal/frontend/components/MenuDinamico.jsx:24 (Departamentos con opcion 'Empleados') y modules/rh/backend/routes/departamentos.routes.js:6-11 (exige Departamentos)
+**Problema:** el menú y la API usan permisos distintos. Usuarios con Empleados:consulta ven el enlace y reciben 403; quien tiene Departamentos y no Empleados no lo ve. Preexistente, pero la página ahora edita el cupo de vacaciones.
+**Severidad:** bajo
+**Fix sugerido:** `opcion: 'Departamentos'` en SUB_RUTAS.
+
+**Archivo/línea:** modules/rh/backend/tests/calendario-migracion.test.js (regex sobre SQL); modules/portal/backend/tests/errores.middleware.test.js:59 y database.config.test.js:81 (leen fuente); modules/rh/tests/calendarioLaboral.util.test.js:8 y :216 (leen fuente); modules/rh/backend/tests/vacaciones.pool.test.js:186 (timer de 4 s con pool falso)
+**Problema:** varias pruebas dependen del texto del código y no del comportamiento. No dependen de zona horaria, red ni orden (verificado), pero se rompen con cambios inocuos y no detectan errores del SQL real (ya registrado como F5/F6 en la Fase 2 y como "pruebas que no detectan regresiones" en la Fase 4).
+**Severidad:** bajo
+**Fix sugerido:** sustituir por pruebas de comportamiento o por Postgres real en CI; el timer se puede quitar porque el pool es falso.
+
+**Archivo/línea:** modules/portal/backend/config/database.js:4-7 (enteroEnv)
+**Problema:** un valor inválido de PG_POOL_MAX, PG_POOL_IDLE_TIMEOUT_MS, etc., cae al valor por defecto sin aviso en el log.
+**Severidad:** bajo
+**Fix sugerido:** `console.warn` con el nombre de la variable cuando el valor no es válido.
+
+**Archivo/línea:** config/database/init.sql (bloque e, festivos con `WHERE NOT EXISTS`)
+**Problema:** si RH vacía `calendario_laboral`, el siguiente db-init vuelve a sembrar los festivos. Está documentado en docs/supabase.md.
+**Severidad:** bajo (aceptado)
+**Fix sugerido:** ninguno por ahora; revisar si RH necesita que un vaciado sea definitivo.
+
+**Pendientes sin verificar en esta pasada:** eslint; UI de usuarios y permisos (mensaje del 403); CalendarioLaboralPage, ModalFechaCalendario y CalendarioOcupacion (cubiertos por tester en fases anteriores, no revisados de nuevo); GoTrue real y Azure.
+**Resumen para el orquestador:** 1 crítico (C1, alta de empleado asigna super_admin), 2 altos (eliminar/desactivar privilegiados; toma de cuenta por reset de contraseña), 5 medios, 9 bajos. Veredicto RECHAZADO hasta corregir C1; los altos conviene resolverlos en la misma tanda.
+
+### [2026-10-15] [revisor] — Re-revisión final tras correcciones (Fase 5)
+**Veredicto:** RECHAZADO. 1 crítico abierto (violación de la decisión (c) del 2026-10-15), escalado al orquestador.
+**Alcance:** `git diff a8d530d..975a04c` (33 archivos). Solo lectura. Harness en el scratchpad con el controlador real y el pool falso del repo (solo se stubean la tabla de usuarios y GoTrue). Mutaciones en una copia de HEAD. Backend: jest 30 suites / 698 tests OK. Mutantes: 22, 21 detectados y 1 equivalente (M21).
+**Cerrados (verificados):** C1 alta de empleado (`validarRolesAsignables` antes de GoTrue; rh_admin con super_admin → 403, M6 detectado). A-desactivar/borrar privilegiados (E3a-d 403; M2a/M2b detectados). Reset de contraseña sobre rol con permisos ajenos (E2 y E1b: 403). Jefe vigente en ruta, controlador y listado (M7, M8, M9 detectados). Borrar roles solo super (M11). Evasión por nombre (mayúsculas, espacios, renombrar a privilegiado): bloqueada (E5, M5, M12, M13). Auto-cambio de rol (E4a-c 403, roles intactos). Migración 010: idempotente, WARNING con duplicados, bloque idéntico a init.sql, cableada en compose.
+**Abiertos:**
+- **CRÍTICO** `modules/portal/backend/controllers/usuario.controller.js:127-129` y `131-143`: en `actualizar` las guardas de contraseña validan los roles ACTUALES antes de `cambiarRolDeUsuario`. Un `PUT {contraseña, rol_id}` deja al usuario con un rol cuyos permisos el actor no posee y cambia la contraseña (E1: 200, roles finales [4] rh_empleado, `GoTrue.password` llamado). Las dos peticiones separadas sí dan 403 (E1b). Fix: validar contraseña contra el rol FINAL dentro de la misma transacción, o rechazar contraseña+rol_id para no-super. Prueba: portal_admin, PUT {contraseña, rol_id:4} sobre usuario 17 → 403 sin cambios.
+- **MEDIO** `modules/portal/backend/services/delegacionPermisos.js:132` (`guardarPermisosDeModulo` solo protege `super_admin`): portal_admin quita rh/Calendario de rh_admin (E10a: 200). No escala, pero degrada un rol privilegiado. Fix: tratar también rh_admin y tickets_admin como solo-super en `PUT /permisos/rol/:id/modulo/:m`.
+- **MEDIO** `modules/rh/backend/controllers/empleado.controller.js:110-114`: consecuencia de la decisión 1 aplicada a rh_admin. Puede crear cuentas con portal_admin, que no posee Roles/Usuarios:edicion (E6: permitido). Requiere confirmación del humano.
+- **MEDIO** `usuario.controller.js:127, 208, 247` (validar→escribir sin bloqueo): si un super asciende al usuario a privilegiado entre la validación y el UPDATE de contraseña o el DELETE, la acción pasa. Ventana de ms. Fix: revalidar bajo `FOR UPDATE` dentro de la misma transacción.
+- **MEDIO** `modules/rh/backend/migrations/010-empleados-usuario-unico.sql:35-39`: con duplicados no crea el UNIQUE y solo emite WARNING; la autoridad de vacaciones queda arbitraria hasta una limpieza manual. Fix: documentar la limpieza obligatoria o hacer que db-init falle con un mensaje claro.
+- **BAJO** `modules/rh/backend/controllers/vacaciones.controller.js:443-445`: `esAdmin` por nombre `rh_admin` además de permiso. Un rh_admin sin Empleados:edicion ve Aprobar y recibe 403. Fix: decidir solo por permiso.
+- **BAJO** `vacaciones.controller.js:561`: el jefe vigente se lee sin bloqueo y no está serializado con el candado del empleado (ventana de ms). Fix: `FOR SHARE` sobre el empleado o documentarlo.
+- **BAJO** tests: `usuario.controller.test.js` no cubre PUT con contraseña+rol_id (por eso pasó el crítico). `empleados-usuario-unico-migracion.test.js` valida por regex, no el SQL real. `PortalAdminRoles.jsx` sin prueba de componente.
+**Siguiente paso:** corregir el crítico y repetir E1 (debe dar 403). Decidir los medios 2-3 con el humano.
+
+### [2026-10-15] [revisor] — Re-revisión de la segunda ronda (Fase 5)
+**Veredicto:** CONDICIONADO. E1 crítico CERRADO (verificado). Sin críticos abiertos; 2 altos que requieren decisión humana antes de mergear. Alcance: `git diff 975a04c..7267d5f` (14 archivos), solo lectura. `npx jest` portal+rh: 30 suites / 715 tests OK (no se ejecutó Postgres/GoTrue real).
+**Cerrado:** PUT {contraseña,rol_id} y contraseña+activo, reset, DELETE y asignarRol validan roles ACTUALES ∪ FINALES bajo el mismo `FOR UPDATE` (`usuario.controller.js:138`, `delegacionPermisos.js:300-345`); tests `delegacionPermisos.test.js:453-535` y TOCTOU `:537-611`.
+**Sin hallazgo:** `guardarPermisosDeModulo` (super intacto; rh/Calendario otorgable a no privilegiados); rh_admin conserva Empleados:edicion (`init.sql:431-440`); el FOR SHARE del empleado no crea ciclo (orden advisory → solicitud → empleado → departamento en todas las rutas RH).
+**Abiertos:**
+- **ALTO** `usuario.controller.js:47-50,91-96`: portal_admin crea una cuenta propia con contraseña elegida y un rol no privilegiado con más permisos (test `:353` lo fija como 201) y entra con `signInWithPassword`. No viola la letra de la decisión 1, pero elude la regla de posesión (F1). Escalar al humano. Fix: exigir en `crear` que el actor posea los permisos del rol, o limitarlo a super_admin.
+- **ALTO** `usuario.controller.js:138-168,194-216` + `delegacionPermisos.js:300-345`: GoTrue (timeout 10 s) corre con la transacción y el FOR UPDATE abiertos. Con `PG_POOL_MAX=10`, 10 operaciones lentas agotan el pool de todo el portal (regresión frente a 975a04c, donde GoTrue iba fuera de tx). Fix: sacar GoTrue de la tx con compensación, o bajar el timeout y limitar la concurrencia; prueba de carga con GoTrue lento.
+- **MEDIO** `delegacionPermisos.js:336-343`: si el COMMIT falla tras aceptar GoTrue, la contraseña cambia y la BD revierte (riesgo documentado). Fix: aceptarlo explícitamente o reconciliar; en reset la temporal se pierde.
+- **MEDIO** `auth.middleware.js:69-78`: `req.user` toma un rol arbitrario (`LIMIT 1` sin ORDER BY) si hay varios roles (posibles por alta con `roles[]`). La delegación (`actor.rol_id`, `esSuperAdmin`) depende de ello y no hay tests multirrol. Fix: unión de roles y ORDER BY determinista.
+- **BAJO** `delegacionPermisos.js:340-345`: si el ROLLBACK falla, el cliente vuelve al pool sin `release(error)` (sí lo hace `enTransaccion`). Fix: `release(error)`.
+- **BAJO** `rh/migrations/002` (`solicitudes_vacaciones.autoriza_id`, NO ACTION): DELETE de un usuario que autoriza, concurrente con una aprobación, puede dar deadlock (Postgres aborta una). Error benigno; documentar.
+- **BAJO** tests: TOCTOU con `setTimeout` de 80 ms (flaky en CI lento); `fakeDelegacion.js` acoplado al SQL exacto de `FOR UPDATE`.
+- **Pendiente previo:** E6 (rh_admin crea cuentas con portal_admin, `empleado.controller.js:110-114`), sin decisión.
+
+### [2026-10-15] [revisor] — Re-revisión de la tercera ronda (Fase 5)
+**Veredicto:** CONDICIONADO. 0 críticos. 1 alto abierto (resultado ambiguo de GoTrue tras la compensación) que conviene resolver antes de mergear; 3 medios (ventana tras COMMIT, GoTrue sin serializar, compensación todo-o-nada) y 1 medio operativo PARA RESOLVER (flujos sin salida).
+**Alcance:** `git diff 6373018..HEAD` (9 archivos, +358/-59). Solo lectura. Lectura de code-notes "Tercera ronda", decisions "Decisiones del humano sobre los 2 altos" y reviews de la segunda ronda. Jest de las 3 suites tocadas: 122/122 OK. Mutantes en una copia de HEAD dentro del scratchpad (no en el repo): 9 mutantes, 7 detectados, 1 equivalente (M3), 1 sobrevive (M4).
+**Verificado sin hallazgo:** posesión estricta en alta de usuario (`usuario.controller.js:49`), PUT y asignarRol (`delegacionPermisos.js:397`, `operarSobreUsuario`), alta de empleado (`empleado.controller.js:110-113`, todos los roles validados antes de GoTrue, sin asignación parcial) y grep de `usuario_rol` (todas las escrituras pasan por la regla; `usuarioRol.model.js` sin llamadores). Sin bypass por mayúsculas, espacios, roles renombrados o multi-rol final. portal_admin no se auto-asigna ni asigna permisos que no posee. super_admin sin regresión (`delegacionPermisos.js:209` sale antes del chequeo). Pool: ninguna conexión retenida durante GoTrue; release en todos los caminos (`finally`, `release(error)` si falla ROLLBACK). Sin ciclos de bloqueo (usuarios FOR UPDATE → usuario_rol/roles; guardarPermisosDeModulo bloquea roles sin tocar usuarios). 502/500 genéricos, sin secretos en logs.
+**Abiertos:** ALTO: timeout de GoTrue ambiguo (F1). MEDIO: ventana con contraseña vieja viva tras COMMIT (F2), GoTrue sin serializar entre operaciones concurrentes (F3), compensación todo-o-nada (F4), flujos sin salida para PARA RESOLVER (F5). BAJO: F6-F11.
+**Siguiente paso:** el orquestador decide F1 (la corrección propuesta no cambia decisiones de seguridad) y F2/F3 (cambian el orden de efectos respecto a GoTrue). F5 es decisión del humano.
+
+**Hallazgos**
+
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:432-446 (catch de `externo`; compensación en :436; 502 en :445); origen en modules/portal/backend/services/supabaseAdmin.service.js:31 (AbortSignal de 10 s)
+**Problema:** si GoTrue expira (o la respuesta se pierde) después de aplicar el cambio, la compensación revierte BD (activo, nombre, apellido, requiere_cambio_password, roles) mientras la contraseña en GoTrue ya es la nueva, y el 502 dice "no se aplicó ningún cambio" (falso). Resultados: PUT {contraseña, activo:false} deja la cuenta activa con una contraseña que nadie conoce; reset deja al usuario con una temporal perdida y sin flag de cambio; el admin, al creer que nada cambió, puede no reintentar. El test de "GoTrue falla" simula un fallo que NO aplica el cambio, así que no lo cubre.
+**Severidad:** alto
+**Fix sugerido:** distinguir fallo definido (respuesta HTTP de GoTrue, 4xx/5xx) de resultado incierto (timeout o error de red): solo compensar en el primero. En el incierto, no revertir y responder 502 con "estado incierto; revisa la cuenta o reintenta" (la operación de contraseña es idempotente). Prueba: stub que APLICA el cambio y después expira → sin compensación y mensaje que no afirma "ningún cambio".
+
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:426-432 (COMMIT y luego `externo`); usuario.controller.js:214 y :218 (reset); modules/portal/backend/controllers/auth.controller.js:55-90 (cambiarPassword valida la contraseña actual con GoTrue)
+**Problema:** tras el COMMIT la BD ya tiene el estado nuevo y la contraseña vieja sigue válida hasta la llamada a GoTrue (hasta 10 s). Con un reset, quien conserve la contraseña vieja puede entrar, ver `requiere_cambio_password=true` y cambiar la contraseña con `cambiarPassword`; si esa escritura en GoTrue cae después de la del admin, el atacante conserva la cuenta. Con el orden anterior (GoTrue antes del COMMIT) la contraseña vieja moría antes de cualquier cambio en BD.
+**Severidad:** medio
+**Fix sugerido:** decisión del orquestador con el humano. Opciones a evaluar: cerrar sesiones GoTrue del usuario tras el reset, o marcar la cuenta como inactiva antes del COMMIT y reactivarla tras GoTrue. Prueba: reset con GoTrue lento y un login/cambio con la contraseña vieja dentro de la ventana.
+
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:432 (llamada externa fuera del `FOR UPDATE`) con usuario.controller.js:160-166 (PUT) y :195-218 (reset)
+**Problema:** la BD se serializa por el bloqueo del usuario, pero GoTrue no. Dos operaciones concurrentes sobre el mismo usuario (dos resets, o reset y PUT con contraseña) pueden llegar a GoTrue en orden distinto al del COMMIT: la contraseña final es la de la última llegada, y ambas responden 200 con temporales distintas, solo una de las cuales vale. Antes de esta ronda el bloqueo se retenía durante GoTrue y esto no pasaba.
+**Severidad:** medio
+**Fix sugerido:** serializar la llamada externa por usuario (candado de aplicación con cola en proceso, o un contador de versión comparado antes de llamar a GoTrue y reintentar/rechazar con 409 si cambió). Prueba: dos resets simultáneos con GoTrue lento; ambas respuestas no pueden ser 200 con temporales distintas.
+
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:317 (`if (!mismoEstado(actual, posterior)) throw`)
+**Problema:** la comparación es sobre el estado completo del usuario. Cualquier cambio ajeno, aunque sea en otra columna, impide revertir incluso lo que la propia operación cambió (p. ej., el rol). Queda un estado parcial con 500 y registro en consola. No pisa el cambio ajeno (correcto), pero es demasiado estricto.
+**Severidad:** medio
+**Fix sugerido:** calcular el diff previo→posterior y restaurar solo las columnas y roles que la operación escribió, siempre que sigan con el valor posterior.
+
+**Archivo/línea:** modules/rh/backend/controllers/empleado.controller.js:93-180 (el alta solo crea usuarios nuevos; `usuario_id` no viene del body); modules/portal/backend/routes/usuario.routes.js:13-17 (todas las rutas de roles exigen portal/Usuarios:edicion); decisions.md, entrada "Decisiones del humano sobre los 2 altos" punto 1
+**Problema (PARA RESOLVER, flujo sin salida):** (a) asignar rh_empleado a una cuenta YA existente solo lo hace super_admin: no hay ruta de vinculación, y la decisión dice que "esas asignaciones las hacen rh_admin o super_admin", lo cual no es posible para cuentas existentes; (b) tickets_tecnico solo lo asigna super_admin: tickets_admin no tiene ruta (no posee portal/Usuarios:edicion) y antes lo hacía portal_admin; (c) auditoria_viewer solo super_admin: consistente con la regla (nadie fuera de super posee auditoría). (a) y (b) son flujos operativos reales; la regla de seguridad en sí es correcta.
+**Severidad:** medio (operativo, no de seguridad)
+**Fix sugerido:** decisión del humano, sin excepciones de seguridad: quién asigna rh_empleado a cuentas existentes y tickets_tecnico (mantener super_admin como única vía, o dar una vía con la misma regla de posesión); corregir el texto de la decisión, que atribuye a rh_admin asignaciones que su código no permite.
+
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:213 (`esNombrePrivilegiado`); tests en modules/portal/backend/tests/delegacionPermisos.test.js
+**Problema:** no hay prueba de asignación con el nombre privilegiado en mayúsculas o con espacios (mutante M4, comparación sensible a mayúsculas, sobrevive). No encontré escalada actual: los nombres privilegiados se comparan normalizados y la posesión sigue aplicando.
+**Severidad:** bajo
+**Fix sugerido:** añadir casos "RH_ADMIN" y " rh_admin " en la asignación (PUT, alta de usuario y alta de empleado) esperando 403.
+
+**Archivo/línea:** modules/portal/backend/models/usuarioRol.model.js:6-10 (INSERT sin validación)
+**Problema:** modelo con escritura directa a usuario_rol sin posesión. Hoy no tiene llamadores (verificado), pero cualquier uso futuro se saltaría la regla.
+**Severidad:** bajo
+**Fix sugerido:** eliminar el modelo o hacer que pase por `exigirRolAsignable` dentro de una transacción.
+
+**Archivo/línea:** modules/rh/backend/controllers/empleado.controller.js:112-113 (`rol_id ? [rol_id] : roles || []`)
+**Problema:** `rol_id = 0` pasa la validación de tipo pero es falsy, así que se ignora sin error y se usa `roles`. No concede permisos, pero el comportamiento es silencioso.
+**Severidad:** bajo
+**Fix sugerido:** comparar explícitamente con `null`, `undefined` y `""`.
+
+**Archivo/línea:** modules/rh/backend/controllers/empleado.controller.js:240-248 (catch del alta)
+**Problema:** la respuesta devuelve `error: error.message` (mensajes de PostgreSQL al cliente; preexistente). Además, cuando la rama `responderErrorDelegacion` vuelve antes de `compensarUsuario`, un error de delegación posterior a GoTrue dejaría la cuenta creada. Hoy esa rama es inalcanzable tras GoTrue, pero es frágil.
+**Severidad:** bajo
+**Fix sugerido:** quitar `error: error.message` y registrarlo en consola, como en departamento.controller.js; compensar antes de responder en cualquier rama.
+
+**Archivo/línea:** modules/portal/backend/controllers/usuario.controller.js:92-95 (INSERT de rol en `crear`)
+**Problema:** el INSERT de usuario_rol va fuera de transacción y fuera de la compensación de la alta. Si falla, queda una cuenta en GoTrue y local sin rol (sin acceso, pero huérfana). Preexistente.
+**Severidad:** bajo
+**Fix sugerido:** insertar el rol dentro de la misma transacción de la alta local, o compensar GoTrue si falla.
+
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:206-227 (usa `actor.rol_id`) con modules/portal/backend/middleware/auth.middleware.js:69-78 (LIMIT 1 sin ORDER BY)
+**Problema:** deuda aceptada ya registrada. Con varios roles, el rol que se toma para decidir puede no ser el de super_admin: un super_admin con un segundo rol puede recibir 403 en asignaciones. No escala privilegios (se usa un subconjunto del actor). Esta ronda no lo empeora, pero depende más de ello.
+**Severidad:** bajo
+**Fix sugerido:** unir los roles del actor (posesión por unión) y ORDER BY determinista, con tests multirrol.
+
+**Pruebas (detalle):** `npx jest` de delegacionPermisos, usuario.controller y empleado.altaRoles: 122/122. Mutantes (copia de HEAD): M1 sin posesión en exigirRolAsignable → detectado; M2 posesión contra el propio rol → detectado; M3 toma de cuenta sin roles finales → sobrevive, pero es equivalente porque exigirRolAsignable ya exige posesión del rol final; M4 nombre privilegiado sensible a mayúsculas → sobrevive (F6); M5 compensación sin restaurar roles → detectado; M6 compensación sin comprobar estado ajeno → detectado; M7 compensación omitida → detectado (5 fallos); M8 alta de empleado sin validar roles → detectado; M9 PUT sin posesión de rol → detectado (26 fallos).
+
+### [2026-10-16] [revisor] — Tipo actividad empresa
+**Alcance:** commit 1e537e9 (migración 011, validación al crear y aprobar, avisos de POST/PUT, `fechas_bloqueadas` y calendario de ocupación). Contra decisions.md (2026-10-16, puntos 1-6) y code-notes.md ("Tipo actividad empresa").
+**Veredicto:** APROBADO CON OBSERVACIONES. 0 críticos, 0 altos. Ninguna violación de decisión: el bloqueo aplica solo a día hábil (lun-vie sin oficial/otorgado, `actividadesEnDiasHabiles` sobre `listarDiasHabiles`), se valida al crear y al aprobar, la solicitud queda pendiente tras el 409 (ROLLBACK antes de responder), el aviso solo cuenta, sin nombres y sin cambiar el 201/200 (`calcularAvisos` no lanza), las lecturas nuevas usan `cliente` y no añaden candados (orden sin ciclos), fechas como texto (`to_char`, `Date.UTC`, sin `new Date(texto)` en lo añadido), TIPOS back/front iguales (4) e init.sql replica la 011 (test). Jest `modules/rh` 20 suites / 507 tests OK al ejecutarlo en esta revisión.
+
+**Hallazgos:**
+
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:76 (responderError), 166 (aprobar) y 374 (crear)
+**Problema:** decisions.md (2026-10-16, punto 2) pide "409, código ACTIVIDAD_EMPRESA", pero el cuerpo del 409 solo lleva `{exito, mensaje}`; el código viaja solo en `/disponibilidad.conflicto`. Mismo patrón que CUPO_LLENO (preexistente en la rama).
+**Severidad:** medio
+**Fix sugerido:** añadir `codigo` (aditivo) al JSON de responderError cuando el error lo tenga, o que el orquestador confirme que el código es solo interno y corrija el texto de decisions.md. No es violación de la regla de bloqueo, pero sí del contrato escrito; no escalo como crítico.
+
+**Archivo/línea:** modules/rh/backend/controllers/calendarioLaboral.controller.js:95-100 y modules/rh/frontend/utils/calendarioLaboral.js:507
+**Problema:** para una actividad en sábado/domingo, festivo o inactiva, el backend devuelve ceros por diseño y el front muestra "Ninguna solicitud de vacaciones, aprobada o pendiente, incluye esta fecha", lo que puede ser falso (una solicitud sí puede cubrir ese sábado).
+**Severidad:** bajo
+**Fix sugerido:** distinguir "sin efecto" (p. ej. `avisos: {sin_efecto: true}`) y mostrar un mensaje neutro ("esta fecha no bloquea vacaciones: fin de semana/festivo/inactiva").
+
+**Archivo/línea:** modules/rh/backend/migrations/011-calendario-actividad.sql:27 (y config/database/init.sql:865)
+**Problema:** el DROP recorre todo CHECK de `calendario_laboral` cuya definición contenga `tipo` (LIKE '%tipo%'). Hoy solo existe el de tipo, pero un CHECK futuro sobre una columna como `tipo_dia` se eliminaría en silencio al re-ejecutar db-init.
+**Severidad:** bajo
+**Fix sugerido:** filtrar por columna: `conkey = ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = 'calendario_laboral'::regclass AND attname = 'tipo')]::smallint[]`, y/o `RAISE NOTICE` con el nombre eliminado.
+
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:~340-375 (lectura de actividades dentro de la transacción de crear) con modules/rh/backend/controllers/calendarioLaboral.controller.js:140 (INSERT en autocommit)
+**Problema:** carrera registrar-actividad vs COMMIT de una solicitud en curso (ya anotada por el coder). Una actividad confirmada entre la lectura y el COMMIT deja una pendiente sobre un día bloqueado; el aviso puede no contarla (y lo mismo al revés con una aprobación concurrente). No se aprueba nada que viole la regla: la aprobación revalida con 409.
+**Severidad:** bajo
+**Fix sugerido:** aceptable tal cual. Opcional: candado de aplicación compartido (`pg_advisory_xact_lock`) que tomen crear/aprobar y que tome exclusivo la escritura de tipo actividad. Documentar la ventana como conocida.
+
+**Archivo/línea:** modules/rh/frontend/styles/vacacionesOcupacion.css:34 y :39 (y :64 en el bloque de container)
+**Problema:** en celdas estrechas el texto visible es "Bloq" a 0.52rem (~8,3 px), tamaño ilegible en pantalla; el color, el borde y la negrita sí distinguen el bloqueo, y el detalle del mes muestra el texto completo. Mismo patrón que "Lleno".
+**Severidad:** bajo
+**Fix sugerido:** subir el tamaño (≥ 0,6rem si cabe en 26 px) o validar con lectura visual en Chromium/Firefox a 320/360 px.
+
+**Archivo/línea:** modules/rh/backend/tests/vacaciones.diasHabilesCupo.test.js:871-1080 y modules/rh/backend/tests/calendario-migracion.test.js:111-141
+**Problema:** no hay caso de rango que cruce año con actividad (p. ej. 2026-12-28 a 2027-01-05 con actividad el 2026-12-31 que bloquea, y festivo 2027-01-01 que no bloquea), y la migración 011 se prueba solo por regex (la ejecución real en Postgres consta solo en code-notes, no es automatizada).
+**Severidad:** bajo
+**Fix sugerido:** añadir ese caso de cruce de año y, si hay Postgres de CI, una prueba de la 011 contra BD real (dos ejecuciones + datos antiguos).
+
+**Archivo/línea:** modules/rh/frontend/components/ModalFechaCalendario.jsx:15
+**Problema:** el JSDoc de `onGuardado` dice `(mensaje)`; ahora recibe `(mensaje, aviso)`.
+**Severidad:** bajo
+**Fix sugerido:** actualizar la firma en el comentario.
+
+**Revisado sin hallazgos:** regresiones en vacaciones (orden 0 hábiles -> actividad -> traslape -> saldo -> cupo, igual en /disponibilidad; `periodo` y autoridad sin cambios); `RECHAZO_ACTIVIDAD` (17 caracteres) cabe en `accion VARCHAR(20)` y `registro_id` es VARCHAR(100); el aviso de POST/PUT solo lo ve quien puede editar el calendario; `esSeleccionable` excluye la fecha bloqueada; `--cal-actividad-*` definidas en `.calendario` (el aviso de VacacionesPage usa colores en línea); contraste #4c1d95 sobre #ede9fe (9,23:1).
+
+**Pruebas (detalle):** `npx jest modules/rh --silent --ci`: 20 suites, 507/507 OK. No se ejecutaron mutaciones ni Postgres (solo lectura).

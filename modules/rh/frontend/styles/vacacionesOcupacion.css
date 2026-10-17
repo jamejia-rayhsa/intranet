@@ -1,0 +1,71 @@
+/* Calendario de ocupación del formulario de vacaciones (reutiliza las clases de calendario.css) */
+.calendario.ocupacion {
+  --ocu-lleno-fondo: #ffedd5;
+  --ocu-lleno-texto: #7c2d12;
+  --ocu-rango-fondo: #dbeafe;
+  --ocu-rango-texto: #1e3a8a;
+  --ocu-extremo-fondo: #1e40af;
+  max-width: none;
+  padding: 0;
+  container-type: inline-size;
+  overflow-wrap: anywhere;
+}
+.ocupacion__titulo { margin: 0 0 0.5rem; font-size: 1rem; color: var(--color-primario); }
+.ocupacion__mes { font-size: 1.05rem; }
+.ocupacion__estado { min-height: 1.2rem; font-size: 0.8rem; color: var(--color-texto-medio); }
+.ocupacion__ayuda { margin: 0 0 0.5rem; font-size: 0.82rem; color: var(--color-texto-medio); }
+
+.ocupacion__dia { min-height: 3.4rem; padding: 0.2rem 0.05rem; cursor: default; }
+.ocupacion__dia--libre { cursor: pointer; }
+.ocupacion__dia--libre:hover { background: rgba(37, 99, 235, 0.08); }
+.ocupacion__dia[aria-disabled="true"] .calendario__num { opacity: 1; }
+.ocupacion__dia--rango { background: var(--ocu-rango-fondo); color: var(--ocu-rango-texto); }
+.ocupacion__dia--rango .calendario__num { color: var(--ocu-rango-texto); }
+.ocupacion__dia--rango .calendario__num--hoy { color: #fff; }
+.ocupacion__dia--extremo { background: var(--ocu-extremo-fondo); color: #fff; box-shadow: inset 0 0 0 2px #fff; }
+.ocupacion__dia--extremo .calendario__num { color: #fff; }
+.ocupacion__dia--extremo .calendario__num--hoy { background: #fff; color: var(--ocu-extremo-fondo); }
+
+/* Marcas compactas: solo símbolo; el texto va en el aria-label y en el detalle del mes */
+.ocupacion .calendario__marca { display: inline-block; align-self: flex-start; width: auto; padding: 0 0.25rem; font-size: 0.7rem; }
+.ocupacion .calendario__marca-texto { display: inline; }
+.ocupacion__texto-largo { display: none; }
+.ocupacion .ocupacion__marca--lleno { max-width: 100%; padding: 0 0.05rem; overflow: hidden; }
+.ocupacion__marca--lleno .calendario__marca-texto { font-size: 0.52rem; font-weight: 700; letter-spacing: -0.02em; }
+.ocupacion__marca--lleno .ocupacion__icono,
+.ocupacion__marca--bloqueado .ocupacion__icono { display: none; }
+/* Bloqueado: en estrecho "Bloq" (el detalle del mes siempre muestra «Bloqueado: nombre» completo) */
+.ocupacion .ocupacion__marca--bloqueado { max-width: 100%; padding: 0 0.05rem; overflow: hidden; }
+.ocupacion__marca--bloqueado .calendario__marca-texto { font-size: 0.625rem; font-weight: 700; letter-spacing: -0.04em; }
+.ocupacion__bloq-largo { display: none; }
+.ocupacion__leyenda .calendario__marca { font-size: 0.78rem; padding: 0.1rem 0.45rem; white-space: normal; }
+.ocupacion__leyenda li { min-width: 0; }
+.ocupacion__marca--lleno { background: var(--ocu-lleno-fondo); color: var(--ocu-lleno-texto); border: 1px solid var(--ocu-lleno-texto); }
+.ocupacion__marca--bloqueado { background: var(--cal-actividad-fondo); color: var(--cal-actividad-texto); border: 1px solid var(--cal-actividad-texto); font-weight: 700; }
+.ocupacion__marca--finde { background: var(--cal-finde-fondo); color: var(--color-texto); border: 1px solid var(--color-borde); }
+.ocupacion__marca--rango { background: var(--ocu-rango-fondo); color: var(--ocu-rango-texto); }
+
+.ocupacion__detalle { margin: 0.5rem 0 0; padding: 0; list-style: none; font-size: 0.85rem; }
+.ocupacion__fila { padding: 0.3rem 0.5rem; border-left: 4px solid var(--color-borde); margin-bottom: 0.25rem; }
+.ocupacion__fila--lleno { border-left-color: var(--ocu-lleno-texto); background: var(--ocu-lleno-fondo); color: var(--ocu-lleno-texto); }
+.ocupacion__fila--bloqueado { border-left-color: var(--cal-actividad-texto); background: var(--cal-actividad-fondo); color: var(--cal-actividad-texto); font-weight: 600; }
+.ocupacion__fila--no-habil { border-left-color: var(--cal-otorgado-texto); }
+.ocupacion__fila--evento { border-left-color: var(--cal-evento-texto); }
+
+/* Siempre hay texto visible en el día lleno: "Lleno" en estrecho; con espacio, ícono + "Cupo lleno" */
+@container (min-width: 34rem) {
+  .ocupacion .ocupacion__marca--lleno .ocupacion__icono { display: inline; }
+  .ocupacion .ocupacion__marca--lleno { padding: 0 0.25rem; }
+  .ocupacion .ocupacion__marca--lleno .calendario__marca-texto { font-size: inherit; font-weight: inherit; letter-spacing: normal; }
+  .ocupacion .ocupacion__texto-corto { display: none; }
+  .ocupacion .ocupacion__marca--bloqueado .ocupacion__icono { display: inline; }
+  .ocupacion .ocupacion__marca--bloqueado { padding: 0 0.25rem; }
+  .ocupacion .ocupacion__marca--bloqueado .calendario__marca-texto { font-size: 0.68rem; letter-spacing: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+  .ocupacion .ocupacion__bloq-corto { display: none; }
+  .ocupacion .ocupacion__bloq-largo { display: inline; }
+  .ocupacion .ocupacion__texto-largo { display: inline; }
+  .ocupacion .ocupacion__dia { min-height: 4.2rem; padding: 0.2rem; }
+}
+@media (max-width: 720px) {
+  .calendario.ocupacion { padding: 0; }
+}

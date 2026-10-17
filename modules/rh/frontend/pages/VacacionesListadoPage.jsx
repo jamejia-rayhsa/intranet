@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { listarSolicitudes, responderSolicitud } from "../services/vacaciones.service";
+import { mensajeErrorRed } from "../utils/calendarioLaboral";
 
 const ESTATUS_CONFIG = {
   pendiente: { etiqueta: "Pendiente", color: "var(--color-advertencia)" },
@@ -95,6 +96,7 @@ export default function VacacionesListadoPage() {
   const [busquedaAplicada, setBusquedaAplicada] = useState("");
 
   const [respondiendo, setRespondiendo] = useState(false);
+  const [avisoRespuesta, setAvisoRespuesta] = useState(null); // { id, texto } del último intento fallido
   const [modalRechazo, setModalRechazo] = useState({ abierto: false, id: null });
   const [motivoRechazo, setMotivoRechazo] = useState("");
 
@@ -130,11 +132,19 @@ export default function VacacionesListadoPage() {
 
   async function handleAprobar(id) {
     setRespondiendo(true);
+    setAvisoRespuesta(null);
     try {
       await responderSolicitud(id, "aprobado", null);
-      await cargar();
     } catch (err) {
-      alert(err.message || "Error al aprobar solicitud");
+      // 409 (cupo lleno, traslape, ya respondida) o 400 (saldo): se muestra el mensaje del servidor
+      // junto a la solicitud y el listado se recarga porque el estado pudo cambiar
+      setAvisoRespuesta({ id, texto: mensajeErrorRed(err, "Error al aprobar solicitud") });
+      setRespondiendo(false);
+      await cargar();
+      return;
+    }
+    try {
+      await cargar();
     } finally {
       setRespondiendo(false);
     }
@@ -156,7 +166,9 @@ export default function VacacionesListadoPage() {
       setModalRechazo({ abierto: false, id: null });
       await cargar();
     } catch (err) {
-      alert(err.message || "Error al rechazar solicitud");
+      setModalRechazo({ abierto: false, id: null });
+      setAvisoRespuesta({ id: modalRechazo.id, texto: mensajeErrorRed(err, "Error al rechazar solicitud") });
+      await cargar();
     } finally {
       setRespondiendo(false);
     }
@@ -185,6 +197,36 @@ export default function VacacionesListadoPage() {
         {esAdmin ? "Todas las solicitudes del sistema." : "Solicitudes propias y de tu equipo."}
         {total > 0 && ` (${total} registro${total !== 1 ? "s" : ""})`}
       </p>
+
+      {avisoRespuesta && (
+        <div
+          role="alert"
+          style={{
+            display: "flex",
+            gap: "0.75rem",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            marginBottom: "1rem",
+            padding: "0.75rem 1rem",
+            borderRadius: "0.5rem",
+            background: "var(--color-error-suave)",
+            color: "#7f1d1d",
+            fontSize: "0.9rem",
+            overflowWrap: "anywhere",
+          }}
+        >
+          <span>
+            <strong>No se pudo responder la solicitud #{avisoRespuesta.id}.</strong> {avisoRespuesta.texto}
+          </span>
+          <button
+            type="button"
+            onClick={() => setAvisoRespuesta(null)}
+            style={{ ...estiloInput, cursor: "pointer", background: "transparent", color: "inherit", flexShrink: 0 }}
+          >
+            Cerrar
+          </button>
+        </div>
+      )}
 
       {/* Filtros */}
       <form onSubmit={aplicarFiltros} style={estiloFiltros}>
@@ -250,7 +292,7 @@ export default function VacacionesListadoPage() {
                   <th style={{ padding: "0.5rem 0.75rem" }}>Nómina</th>
                   <th style={{ padding: "0.5rem 0.75rem" }}>Periodo</th>
                   <th style={{ padding: "0.5rem 0.75rem" }}>Fechas</th>
-                  <th style={{ padding: "0.5rem 0.75rem" }}>Días</th>
+                  <th style={{ padding: "0.5rem 0.75rem" }}>Días hábiles</th>
                   <th style={{ padding: "0.5rem 0.75rem" }}>Estatus</th>
                   <th style={{ padding: "0.5rem 0.75rem" }}>Autorizó</th>
                   <th style={{ padding: "0.5rem 0.75rem" }}>Acciones</th>
@@ -346,6 +388,11 @@ export default function VacacionesListadoPage() {
               </tbody>
             </table>
           </div>
+        )}
+        {!cargando && !error && solicitudes.length > 0 && (
+          <p style={{ margin: "0.75rem 0 0", fontSize: "0.8rem", color: "var(--color-texto-medio)" }}>
+            Los días se cuentan como días hábiles (sin fines de semana, días oficiales ni descansos otorgados). Las solicitudes registradas antes de este cambio conservan los días naturales con que se capturaron.
+          </p>
         )}
       </div>
 

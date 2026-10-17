@@ -1,25 +1,38 @@
 const Departamento = require("../models/departamento.model");
 const { grupo } = require("../config/database");
 
+const CUPO_MAXIMO = 2147483647;
+
+// Devuelve el entero normalizado, o null si no es un entero entre 1 y INT4.
+function normalizarCupo(valor) {
+  const n = typeof valor === "string" && /^\d+$/.test(valor.trim()) ? Number(valor) : valor;
+  return Number.isInteger(n) && n >= 1 && n <= CUPO_MAXIMO ? n : null;
+}
+
+const MENSAJE_CUPO = "cupo_vacaciones debe ser un entero mayor o igual a 1";
+
 const ControladorDepartamento = {
   async listar(req, res) {
     try {
       const departamentos = await Departamento.obtenerTodos();
       res.json({ exito: true, datos: departamentos });
     } catch (error) {
+      console.error("[departamentos]", error);
       res
         .status(500)
-        .json({
-          exito: false,
-          mensaje: "Error al listar departamentos",
-          error: error.message,
-        });
+        .json({ exito: false, mensaje: "Error al listar departamentos" });
     }
   },
 
   async crear(req, res) {
+    const cuerpo = { ...req.body };
+    if (cuerpo.cupo_vacaciones !== undefined) {
+      cuerpo.cupo_vacaciones = normalizarCupo(cuerpo.cupo_vacaciones);
+      if (cuerpo.cupo_vacaciones === null)
+        return res.status(400).json({ exito: false, mensaje: MENSAJE_CUPO });
+    }
     try {
-      const depto = await Departamento.crear(req.body);
+      const depto = await Departamento.crear(cuerpo);
       res
         .status(201)
         .json({
@@ -28,19 +41,22 @@ const ControladorDepartamento = {
           mensaje: "Departamento creado exitosamente",
         });
     } catch (error) {
+      console.error("[departamentos]", error);
       res
         .status(400)
-        .json({
-          exito: false,
-          mensaje: "Error al crear departamento",
-          error: error.message,
-        });
+        .json({ exito: false, mensaje: "Error al crear departamento" });
     }
   },
 
   async actualizar(req, res) {
+    const cuerpo = { ...req.body };
+    if (cuerpo.cupo_vacaciones !== undefined) {
+      cuerpo.cupo_vacaciones = normalizarCupo(cuerpo.cupo_vacaciones);
+      if (cuerpo.cupo_vacaciones === null)
+        return res.status(400).json({ exito: false, mensaje: MENSAJE_CUPO });
+    }
     try {
-      const depto = await Departamento.actualizar(req.params.id, req.body);
+      const depto = await Departamento.actualizar(req.params.id, cuerpo);
       if (!depto)
         return res
           .status(404)
@@ -51,13 +67,10 @@ const ControladorDepartamento = {
         mensaje: "Departamento actualizado exitosamente",
       });
     } catch (error) {
+      console.error("[departamentos]", error);
       res
         .status(400)
-        .json({
-          exito: false,
-          mensaje: "Error al actualizar departamento",
-          error: error.message,
-        });
+        .json({ exito: false, mensaje: "Error al actualizar departamento" });
     }
   },
 
@@ -70,13 +83,10 @@ const ControladorDepartamento = {
           .json({ exito: false, mensaje: "Departamento no encontrado" });
       res.json({ exito: true, mensaje: "Departamento eliminado exitosamente" });
     } catch (error) {
+      console.error("[departamentos]", error);
       res
         .status(500)
-        .json({
-          exito: false,
-          mensaje: "Error al eliminar departamento",
-          error: error.message,
-        });
+        .json({ exito: false, mensaje: "Error al eliminar departamento" });
     }
   },
 
@@ -99,7 +109,8 @@ const ControladorDepartamento = {
       const resultado = await Departamento.importarLote(filas, mapaAreas);
       res.json({ exito: true, datos: resultado });
     } catch (error) {
-      res.status(500).json({ exito: false, mensaje: "Error al importar departamentos", error: error.message });
+      console.error("[departamentos]", error);
+      res.status(500).json({ exito: false, mensaje: "Error al importar departamentos" });
     }
   },
 };

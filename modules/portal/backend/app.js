@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const { probarConexion } = require("./config/database");
 const Storage = require("./services/storage.service");
+const { manejadorErrores } = require("./middleware/errores.middleware");
 
 const app = express();
 const PUERTO = process.env.PORT || 4000;
@@ -46,6 +47,7 @@ app.use("/api/rh", require("../../rh/backend/routes/rh.dashboard.routes"));
 app.use("/api/empleados", require("../../rh/backend/routes/empleados.routes"));
 app.use("/api/permisos-rh", require("../../rh/backend/routes/permisos.routes"));
 app.use("/api/vacaciones", require("../../rh/backend/routes/vacaciones.routes"));
+app.use("/api/calendario-laboral", require("../../rh/backend/routes/calendario.routes"));
 app.use("/api/recibos", require("../../rh/backend/routes/recibos.routes"));
 app.use(
   "/api/expediente",
@@ -127,15 +129,8 @@ app.use((error, req, res, next) => {
   next(error);
 });
 
-// Manejo de errores global
-app.use((error, req, res, next) => {
-  console.error("Error no controlado:", error);
-  res.status(500).json({
-    exito: false,
-    mensaje: "Error interno del servidor",
-    ...(process.env.NODE_ENV === "development" && { detalle: error.message }),
-  });
-});
+// Manejo de errores global (JSON inválido -> 400, cuerpo grande -> 413, resto -> 500 genérico)
+app.use(manejadorErrores);
 
 // Iniciar servidor
 app.listen(PUERTO, () => {

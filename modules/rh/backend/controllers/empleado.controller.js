@@ -5,6 +5,7 @@ const SupabaseAdmin = require("../../../portal/backend/services/supabaseAdmin.se
 const {
   generarContraseñaTemporal,
 } = require("../../../portal/backend/utils/contrasenaTemporal");
+const Delegacion = require("../../../portal/backend/services/delegacionPermisos");
 const { grupo } = require("../config/database");
 const {
   registrarAccion,
@@ -97,6 +98,21 @@ const ControladorEmpleado = {
           });
         }
 
+        // Los roles iniciales siguen la MISMA regla que el alta de usuarios del portal (nadie que no
+        // sea super_admin asigna super_admin/rh_admin/tickets_admin). Se validan ANTES de crear nada
+        // (ni GoTrue ni fila local).
+        if (rol_id !== undefined && rol_id !== null && rol_id !== "" && !Delegacion.esEnteroInt4(rol_id)) {
+          return res.status(400).json({ exito: false, mensaje: "rol_id no válido" });
+        }
+        if (roles !== undefined && roles !== null && !Array.isArray(roles)) {
+          return res.status(400).json({ exito: false, mensaje: "roles debe ser un array" });
+        }
+        const rolesAAsignar = await Delegacion.validarRolesAsignables(
+          grupo,
+          req.user,
+          rol_id ? [rol_id] : roles || [],
+        );
+
         const existente = await Usuario.buscarPorCorreo(correo);
         if (existente) {
           return res.status(400).json({
@@ -132,8 +148,7 @@ const ControladorEmpleado = {
 
         usuarioId = usuario.id;
 
-        // Asignar rol (acepta rol_id individual o array roles)
-        const rolesAAsignar = rol_id ? [parseInt(rol_id)] : (roles || []);
+        // Asignar rol (acepta rol_id individual o array roles; ya validados arriba)
         if (rolesAAsignar.length > 0) {
           const client = await grupo.connect();
           try {
@@ -223,6 +238,7 @@ const ControladorEmpleado = {
         mensaje: "Empleado creado exitosamente",
       });
     } catch (error) {
+      if (Delegacion.responderErrorDelegacion(res, error)) return;
       await compensarUsuario(authUidCreado, usuarioIdCreado);
       res.status(400).json({
         exito: false,

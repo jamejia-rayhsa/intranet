@@ -2,6 +2,13 @@ import { useState, useEffect } from "react";
 import { solicitar } from "../../../portal/frontend/utils/api";
 import ImportadorArchivo from "../../../portal/frontend/components/ImportadorArchivo";
 
+// Valores iniciales de un alta: solo los campos que declaran `defecto`
+function valoresIniciales(campos) {
+  const valores = {};
+  for (const c of campos) if (c.defecto !== undefined) valores[c.name] = c.defecto;
+  return valores;
+}
+
 export default function CrudPage({
   titulo,
   apiRuta,
@@ -94,7 +101,7 @@ export default function CrudPage({
               ⬆ Importar
             </button>
           )}
-          <button onClick={() => { setMostrarFormulario(true); setEditando(null); setFormulario({}); }}>
+          <button onClick={() => { setMostrarFormulario(true); setEditando(null); setFormulario(valoresIniciales(camposFormulario)); setError(""); }}>
             Nuevo
           </button>
         </div>
@@ -153,6 +160,8 @@ export default function CrudPage({
                     onChange={manejarCambio}
                     required={campo.required}
                     placeholder={campo.placeholder || ""}
+                    min={campo.min}
+                    step={campo.step}
                   />
                 )}
               </div>
@@ -174,6 +183,8 @@ export default function CrudPage({
         </div>
       )}
 
+      {/* scroll horizontal contenido: una columna ancha (p. ej. Cupo) no desborda la página */}
+      <div style={{ overflowX: "auto", maxWidth: "100%" }}>
       <table className="crud-tabla">
         <thead>
           <tr>
@@ -204,6 +215,7 @@ export default function CrudPage({
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

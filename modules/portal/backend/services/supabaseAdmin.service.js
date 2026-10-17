@@ -12,6 +12,7 @@ function claveServicio() {
   if (!clave) {
     const e = new Error("SUPABASE_SERVICE_ROLE_KEY no configurada");
     e.status = 500;
+    e.definitivo = true; // falla antes de enviar nada: GoTrue no recibió la solicitud
     throw e;
   }
   return clave;
@@ -37,11 +38,21 @@ async function solicitar(metodo, ruta, { cuerpo, conClave = true } = {}) {
         : "No se pudo contactar Supabase Auth",
     );
     e.status = 503;
+    // Sin respuesta HTTP (timeout, red, aborto): GoTrue pudo haber aplicado el cambio => resultado INCIERTO
+    e.incierto = true;
     throw e;
   }
 
   let datos = null;
-  const texto = await resp.text();
+  let texto;
+  try {
+    texto = await resp.text();
+  } catch {
+    const e = new Error("Se perdió la respuesta de Supabase Auth");
+    e.status = 503;
+    e.incierto = true;
+    throw e;
+  }
   if (texto) {
     try {
       datos = JSON.parse(texto);
@@ -56,6 +67,8 @@ async function solicitar(metodo, ruta, { cuerpo, conClave = true } = {}) {
       `HTTP ${resp.status}`;
     const e = new Error(`Supabase Auth: ${detalle}`);
     e.status = resp.status;
+    // Error HTTP explícito de GoTrue: garantiza que NO aplicó el cambio (único caso que se compensa)
+    e.definitivo = true;
     throw e;
   }
   return datos;

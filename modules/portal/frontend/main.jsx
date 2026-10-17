@@ -38,6 +38,7 @@ import RHAdminPage from '../../rh/frontend/pages/RHAdminPage';
 import EmpleadoPage from '../../rh/frontend/pages/EmpleadoPage';
 import VacacionesPage from '../../rh/frontend/pages/VacacionesPage';
 import VacacionesListadoPage from '../../rh/frontend/pages/VacacionesListadoPage';
+import CalendarioLaboralPage from '../../rh/frontend/pages/CalendarioLaboralPage';
 import PuestosPage from '../../rh/frontend/pages/PuestosPage';
 import DepartamentosPage from '../../rh/frontend/pages/DepartamentosPage';
 import AreasPage from '../../rh/frontend/pages/AreasPage';
@@ -65,6 +66,7 @@ const BREADCRUMBS = {
   '/rh/empleados':       ['Recursos Humanos', 'Empleados'],
   '/rh/admin':           ['Recursos Humanos', 'Permisos y ausencias'],
   '/rh/vacaciones':      ['Recursos Humanos', 'Vacaciones'],
+  '/rh/calendario':      ['Recursos Humanos', 'Calendario'],
   '/auditoria':          ['Transversal', 'Auditoría'],
   '/auditoria/logs':     ['Transversal', 'Bitácora'],
   '/comercial':          ['Comercial', 'Dashboard'],
@@ -166,6 +168,7 @@ function AppRutas() {
         <Route path="/rh/admin" element={<RutaProtegida><RHAdminPage /></RutaProtegida>} />
         <Route path="/rh/vacaciones" element={<RutaProtegida><VacacionesPage /></RutaProtegida>} />
         <Route path="/rh/vacaciones/listado" element={<RutaProtegida><VacacionesListadoPage /></RutaProtegida>} />
+        <Route path="/rh/calendario" element={<RutaProtegida><CalendarioLaboralPage /></RutaProtegida>} />
         <Route path="/rh/puestos" element={<RutaProtegida><PuestosPage /></RutaProtegida>} />
         <Route path="/rh/departamentos" element={<RutaProtegida><DepartamentosPage /></RutaProtegida>} />
         <Route path="/rh/areas" element={<RutaProtegida><AreasPage /></RutaProtegida>} />

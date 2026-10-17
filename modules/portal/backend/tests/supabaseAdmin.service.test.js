@@ -42,6 +42,8 @@ describe('supabaseAdmin.service', () => {
       error = e;
     }
     expect(error.status).toBe(422);
+    expect(error.definitivo).toBe(true);
+    expect(error.incierto).toBeUndefined();
     expect(error.message).toContain('Email ya registrado');
     expect(error.message).not.toContain('clave-secreta-servicio');
   });
@@ -75,6 +77,19 @@ describe('supabaseAdmin.service', () => {
   it('traduce fallos de red a 503', async () => {
     fetch.mockRejectedValueOnce(new Error('ECONNREFUSED http://auth:9999'));
     await expect(SupabaseAdmin.eliminarUsuario('x')).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('timeout, red o respuesta perdida son INCIERTOS (sin respuesta HTTP); un 503 con respuesta es definitivo', async () => {
+    fetch.mockRejectedValueOnce(Object.assign(new Error('t'), { name: 'TimeoutError' }));
+    await expect(SupabaseAdmin.actualizarPassword('x', 'p')).rejects.toMatchObject({ incierto: true });
+    fetch.mockRejectedValueOnce(new Error('ECONNRESET'));
+    await expect(SupabaseAdmin.actualizarPassword('x', 'p')).rejects.toMatchObject({ incierto: true });
+    fetch.mockResolvedValueOnce({ ok: true, status: 200, text: async () => { throw new Error('reset'); } });
+    await expect(SupabaseAdmin.actualizarPassword('x', 'p')).rejects.toMatchObject({ incierto: true });
+    fetch.mockResolvedValueOnce(respuesta(503, { msg: 'overloaded' }));
+    const e = await SupabaseAdmin.actualizarPassword('x', 'p').catch((x) => x);
+    expect(e).toMatchObject({ status: 503, definitivo: true });
+    expect(e.incierto).toBeUndefined();
   });
 
   it('falla claro si falta la service role key', async () => {

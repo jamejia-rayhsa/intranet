@@ -43,13 +43,14 @@ const Usuario = {
     ]);
   },
 
-  async buscarPorId(id) {
+  // `ejecutor` opcional: el cliente de una transacción abierta (si no, el pool)
+  async buscarPorId(id, ejecutor = grupo) {
     const consulta = `SELECT ${COLUMNAS_PUBLICAS} FROM usuarios WHERE id = $1`;
-    const resultado = await grupo.query(consulta, [id]);
+    const resultado = await ejecutor.query(consulta, [id]);
     return resultado.rows[0];
   },
 
-  async actualizar(id, datos) {
+  async actualizar(id, datos, ejecutor = grupo) {
     const campos = [];
     const valores = [];
     let contador = 1;
@@ -78,7 +79,7 @@ const Usuario = {
     valores.push(id);
 
     const consulta = `UPDATE usuarios SET ${campos.join(", ")} WHERE id = $${contador} RETURNING id, correo, nombre, apellido, auth_tipo, activo, fecha_creacion`;
-    const resultado = await grupo.query(consulta, valores);
+    const resultado = await ejecutor.query(consulta, valores);
     return resultado.rows[0];
   },
 
@@ -113,7 +114,16 @@ const Usuario = {
     return resultado.rows;
   },
 
-  async eliminar(id) {
+  // Con `clienteTx` (transacción ya abierta por quien llama) no abre ni cierra transacción propia
+  async eliminar(id, clienteTx) {
+    if (clienteTx) {
+      await clienteTx.query("DELETE FROM usuario_rol WHERE usuario_id = $1", [id]);
+      const resultado = await clienteTx.query(
+        "DELETE FROM usuarios WHERE id = $1 RETURNING id, correo, nombre, apellido",
+        [id],
+      );
+      return resultado.rows[0];
+    }
     const client = await grupo.connect();
     try {
       await client.query("BEGIN");

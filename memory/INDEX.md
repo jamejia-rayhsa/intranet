@@ -13,6 +13,39 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-16] orquestador → decisions.md — Tipo 'Día Actividad Empresa' listo para GO/NO-GO
+- [2026-10-16] tester → tests.md — Tipo actividad empresa: prueba integrada (011 con db-init real x2 sobre datos antiguos, E2E 69/69 x21 combinaciones Chromium+Firefox+TZ, regresión ta/tb/tc/aut/cruzada, responsive+axe, jest 958, eslint 0 errores); 1 FAIL menor
+- [2026-10-16] tester → decisions.md — PARA RESOLVER F-ACT-1 (menor): aviso 'Ninguna solicitud incluye esta fecha' engañoso con actividad inactiva/no hábil
+- [2026-10-16] [revisor] → reviews.md#tipo-actividad-empresa — Tipo actividad empresa: APROBADO CON OBSERVACIONES (0 críticos, 0 altos; 1 medio: 409 sin código; 6 bajos)
+- [2026-10-16] orquestador → decisions.md — Nuevo tipo de fecha 'Día Actividad Empresa' que bloquea vacaciones para todos (diseño)
+- [2026-10-16] [coder] → code-notes.md — Tipo 'Día Actividad Empresa': migración 011, bloqueo al crear/aprobar, avisos y UI (jest 958, mutaciones, Postgres y Chromium)
+- [2026-10-15] orquestador → decisions.md — Cierre de la tarea de calendario laboral y bloqueo de vacaciones: lista para GO/NO-GO final
+- [2026-10-15] coder → code-notes.md — Cuarta ronda (Fase 5): resultado incierto de GoTrue no se compensa (F1) y pruebas F6 (rol_id 0, nombres privilegiados)
+- [2026-10-15] revisor → reviews.md#re-revision-de-la-tercera-ronda-fase-5 — Re-revisión de la tercera ronda (Fase 5): CONDICIONADO (0 críticos; 1 alto: resultado ambiguo de GoTrue tras la compensación; PARA RESOLVER flujos sin salida)
+- [2026-10-15] coder → code-notes.md — Tercera ronda (Fase 5): posesión estricta al asignar roles y GoTrue fuera de la transacción con compensación
+- [2026-10-15] orquestador → decisions.md — Decisiones sobre los 2 altos: posesión estricta al asignar roles (sustituye la decisión 1) y GoTrue fuera de la transacción
+- [2026-10-15] orquestador → decisions.md — Fase 5 condicionada tras la 2.ª re-revisión: 2 altos de usuarios/roles pendientes del humano
+- [2026-10-15] revisor → reviews.md#re-revision-de-la-segunda-ronda-fase-5 — Re-revisión de la segunda ronda (Fase 5): CONDICIONADO (E1 cerrado; 2 altos: alta de cuentas propias y GoTrue dentro de transacción)
+- [2026-10-15] revisor → reviews.md#re-revision-final-tras-correcciones-fase-5 — Re-revisión final (Fase 5): RECHAZADO (1 crítico: PUT con contraseña+rol_id toma la cuenta; medios abiertos)
+- [2026-10-15] orquestador → decisions.md — Decisiones tras la revisión final: asignar roles no privilegiados, borrar roles solo super_admin, jefe vigente
+- [2026-10-15] revisor → reviews.md — Revisión final de la rama (Fase 5): RECHAZADO (1 crítico: rh_admin asigna super_admin por el alta de empleado; 2 altos)
+- [2026-10-15] orquestador → decisions.md — Regla de quién autoriza vacaciones: jefe inmediato, RH y super_admin; nunca lo propio
+- [2026-10-15] orquestador → decisions.md — Extensión de la Fase 4 aplicada: pool, JSON malformado, roles (delegación) y saldo
+- [2026-10-15] orquestador → decisions.md — GO a la Fase 5; Fase 4 cerrada (fa87d41)
+- [2026-10-15] orquestador → decisions.md — Decisiones del humano tras la Fase 4: jefe inmediato, timeouts del pool, JSON/roles, saldo por query
+- [2026-10-15] orquestador → decisions.md — Fase 4 lista para GO/NO-GO (días hábiles, cupo por departamento, calendario de ocupación)
+- [2026-10-15] revisor → reviews.md#re-revisión-fase-4 — Re-revisión Fase 4 (vacaciones): APROBADO CON OBSERVACIONES (sin críticos ni altos abiertos; 4 bajos y 2 medios pendientes)
+- [2026-10-15] revisor → reviews.md — Fase 4 vacaciones (días hábiles, cupo, ocupación): NO APROBADO (1 crítico escalado: periodo del body viola decisión; 1 alto: pool en transacción; 6 medios; 4 bajos)
+- [2026-10-15] orquestador → decisions.md — GO a la Fase 4 y diseño de días hábiles + cupo por departamento
+- [2026-10-15] orquestador → decisions.md — Fase 3 lista para GO/NO-GO (pantalla del calendario laboral y cupo en Departamentos)
+- [2026-10-15] revisor → reviews.md — Calendario laboral Fase 3: revisión (APROBADO CON OBSERVACIONES; sin críticos; medios: super_admin sin rol_nombre, contraste otro mes 4,02:1, sin pruebas de componente)
+- [2026-10-15] orquestador → decisions.md — GO a la Fase 3 (pantalla del calendario); F1 y JSON malformado quedan como deuda
+- [2026-10-15] orquestador → decisions.md — Fase 2 lista para GO/NO-GO (calendario laboral: BD, API, permisos, semilla); pendientes F1 y JSON malformado
+- [2026-10-15] revisor → reviews.md — Calendario laboral Fase 2: revisión (APROBADO CON OBSERVACIONES; sin críticos; 1 alto preexistente escalado: portal_admin puede auto-otorgarse permisos de RH; medios F2-F6)
+- [2026-10-15] coder → code-notes.md — Calendario laboral Fase 2: migración 009, API /api/calendario-laboral, permisos Calendario/Departamentos, semilla de 14 festivos y 56 tests
+- [2026-10-15] orquestador → decisions.md — Recomendaciones adoptadas para el cupo, aprobación, días hábiles y permisos; GO a la Fase 2
+- [2026-10-15] investigador → research.md — Vacaciones y calendario laboral: flujo actual, fechas, permisos, cupo y frontend
+- [2026-10-15] orquestador → decisions.md — Calendario laboral y bloqueo de vacaciones por departamento: decisiones del humano
 - [2026-10-09] orquestador → decisions.md — Nombre de usuarios de Microsoft completado desde el proveedor (scope profile + sincronización solo con apellido vacío)
 - [2026-10-09] orquestador → decisions.md — Staging migrado a Supabase (ejecución real, verificado por dominio público y Chromium); reversa disponible
 - [2026-10-09] orquestador → decisions.md — CI reparado antes del despliegue: lint 0 errores, scripts en la imagen del backend, npm test 78/78
@@ -127,3 +160,24 @@
 - [2026-10-15] tester → tests.md — Confirmación del foco con ←/→ y de los hallazgos de axe (foco RESUELTO en Chromium + Firefox; CarruselImagenes y trampa de Tab en los 4 modales OK; axe: corregido lo pedido, quedan 3 hallazgos menores de contraste/nombre; jest 387/387, eslint 0 errores; repo sin axe-core)
 - [2026-10-15] orquestador → decisions.md/roadmap.md — eslint-plugin-react instalado y carrusel de Inicio accesible por teclado; axe restante como deuda (paleta previa)
 - [2026-10-15] orquestador → decisions.md/roadmap.md — Despliegue a staging del plan de noticias (PR #9, d278a9a): pasos, verificación, trampas y pendientes
+- [2026-10-15] tester → tests.md — Calendario laboral Fase 2: migración 009 e init.sql en Postgres real (supabase/postgres 17.6 + pg16 desechables, db-init real x2, idempotente, 14 festivos, cupo, backfill, permisos); sin fallos
+- [2026-10-15] tester → tests.md — Calendario laboral Fase 2: API /api/calendario-laboral con servidor y Postgres reales (105 comprobaciones x 4 zonas horarias; fechas sin desfase, 403 empleado, 409/400/404, auditoría exacta); 1 FAIL menor preexistente (JSON malformado -> 500)
+- [2026-10-15] tester → tests.md — Calendario laboral Fase 2: regresión (jest 28 suites / 443 tests, eslint 0 errores)
+- [2026-10-15] tester → decisions.md — PARA RESOLVER: JSON malformado devuelve 500 en lugar de 400 en el backend del portal (menor, preexistente)
+- [2026-10-15] [coder] Correcciones de la revisión de la Fase 2 (cupo en API departamentos, semilla NOT EXISTS, tests de paridad) -> code-notes.md
+- [2026-10-15] [coder] Fase 3 pantalla del calendario laboral (página, modal, util con tests, cupo en Departamentos) -> code-notes.md
+- [2026-10-15] tester → tests.md — Calendario laboral Fase 3: pantalla /rh/calendario y cupo en Departamentos integrados (Postgres 16 + backend real + build de Vite; Chromium 156 + Firefox 157; 8+4 combinaciones de zona horaria 32/32; 403 empleado; axe); sin fallos funcionales, 5 menores (responsive 721–799 px, texto sin espacios, columna de Departamentos a 768, contraste, label-in-name)
+- [2026-10-15] tester → decisions.md — PARA RESOLVER: F1–F5 menores de la Fase 3 del calendario (responsive y accesibilidad) y si la API debe ocultar inactivos a empleados
+- [2026-10-15] [coder] Correcciones de la revisión de la Fase 3 del calendario (super_admin, contraste, util de permisos con tests, F1-F5, API oculta inactivos a no editores) -> code-notes.md
+- [2026-10-15] [coder] Fase 4 backend del calendario: días hábiles, cupo transaccional, aprobación con revalidación y endpoints disponibilidad/ocupación -> code-notes.md
+- [2026-10-15] [coder] Fase 4 frontend: formulario de vacaciones (días hábiles del backend, calendario de ocupación, 409 al aprobar) -> code-notes.md
+- [2026-10-15] tester → tests.md — Calendario laboral Fase 4: prueba integrada (Postgres 16 + supabase/postgres 17.6 desechables, backend real, build de Vite, Chromium + Firefox, 4 zonas horarias): reglas A 156/156 x5, seguridad C 49/49 x2, UI D sin fallos funcionales, regresión jest 602/602 y eslint 0 errores, migración 009 sobre datos antiguos OK; 1 FAIL ALTO (pool agotado con >= 11 simultáneas congela la API), 2 FAIL menores (saldo/doble envío sin departamento; periodo del cuerpo)
+- [2026-10-15] tester → decisions.md — PARA RESOLVER P1 (alto: interbloqueo del pool con >= 11 solicitudes simultáneas), P2 (periodo del cuerpo), P3 (sin departamento no se serializa), P4 (menores de UI)
+- [2026-10-15] [coder] Correcciones de la revisión de la Fase 4 (periodo del servidor, pool en transacción, candado por empleado, post-COMMIT, UI) -> code-notes.md
+- [2026-10-15] [coder] Extensión Fase 4: timeouts del pool, JSON malformado 400/413, delegación de permisos y roles, validación de periodo/ids en saldo -> code-notes.md
+- [2026-10-15] [coder] Regla de autorización por jefe inmediato (RH/super_admin nunca lo propio; autoridad en la transacción; puede_responder) -> code-notes.md
+- [2026-10-15] tester → tests.md — Prueba final de la rama (Fase 5): migración real x2 sobre datos antiguos, E2E UI 61/61 x6 (Chromium+Firefox, 4 zonas), autoridad API+UI, pool/JSON/timeouts, axe, responsive, jest 764/764 y eslint 0 errores; 4 FAIL (F-A..F-D) y menores
+- [2026-10-15] tester → decisions.md — PARA RESOLVER F-A (crítico: rh_admin crea super_admin por alta de empleado), F-B/F-C (altos: portal_admin borra/desactiva super_admin y toma cuentas), F-D (el HEAD usa snapshot del jefe, no jefe vigente), F-E (menores)
+- [2026-10-15] [coder] Correcciones de la revisión final (F-A..F-E: alta de empleado con roles, usuarios privilegiados, toma de cuenta, jefe vigente, UNIQUE usuario_id) -> code-notes.md
+- [2026-10-15] [coder] Segunda ronda de la revisión final (E1 atómico con FOR UPDATE y estado final, permisos de roles privilegiados solo super, esAdmin por permiso, jefe FOR SHARE) -> code-notes.md
+- [2026-10-16] [coder] Correcciones del tipo actividad (codigo en 409, avisos.motivo, migración 011 por columna, Bloq 10 px, cruce de año) -> code-notes.md
