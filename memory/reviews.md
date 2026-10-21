@@ -2658,3 +2658,285 @@ Hallazgos abiertos:
 **Revisado sin hallazgos:** regresiones en vacaciones (orden 0 hábiles -> actividad -> traslape -> saldo -> cupo, igual en /disponibilidad; `periodo` y autoridad sin cambios); `RECHAZO_ACTIVIDAD` (17 caracteres) cabe en `accion VARCHAR(20)` y `registro_id` es VARCHAR(100); el aviso de POST/PUT solo lo ve quien puede editar el calendario; `esSeleccionable` excluye la fecha bloqueada; `--cal-actividad-*` definidas en `.calendario` (el aviso de VacacionesPage usa colores en línea); contraste #4c1d95 sobre #ede9fe (9,23:1).
 
 **Pruebas (detalle):** `npx jest modules/rh --silent --ci`: 20 suites, 507/507 OK. No se ejecutaron mutaciones ni Postgres (solo lectura).
+
+### [2026-10-21] [revisor] — Asistencia Fase 2
+**Alcance:** commit 771ea81 (migración 012, `turnos`/`turnoValidacion`/`turnoAsignacion` modelos y controladores, rutas `/api/asistencia`, tests, `init.sql`, compose, `docs/supabase.md`, contrato de ingesta). Contra decisions.md (2026-10-21: alcance, endpoint con llave, CONFLICTO RLS, decisiones tras Fase 1, datos BioTime, contrato v1), research.md 1640-1908, code-notes.md "Asistencia Fase 2" y la entrada del coder. Revisión estática y de lectura; no se ejecutaron tests ni Postgres aquí.
+**Veredicto:** APROBADO CON OBSERVACIONES. 0 críticos, 1 alto, 8 medios, 12 bajos. No hay violación de decisión: alcance Fase 2 respetado (sin endpoint de ingesta, sin motor, sin pantallas), sin rol de BD, RLS en las 9 tablas y 004 al final del db-init, `portal_admin` fuera de Turnos, marcas sin UPDATE/DELETE salvo `empleado_id`, zona America/Mexico_City, retención siempre. Decisiones que el orquestador debe tomar antes de Fase 4 (ver medios 2 y 3) y antes de la Fase 3 (ver medio 5 y 6, contrato v1 ya adoptado por el sincronizador).
+
+**Hallazgos:**
+
+**Archivo/línea:** modules/rh/backend/models/turno.model.js:176-200 (obtenerEfectivo)
+**Problema:** el turno efectivo no filtra `turnos.activo`: un turno desactivado sigue devolviéndose como efectivo para individual y departamento, aunque la API de errores diga "desactívalo en lugar de eliminarlo" y la Fase 4 lo aplicaría.
+**Severidad:** alto
+**Fix sugerido:** decidir el comportamiento (turno inactivo = sin turno ese día, o caer a la asignación de departamento) y aplicarlo en la consulta (`JOIN turnos t ... AND t.activo`); añadir test con turno inactivo. Mientras tanto, documentarlo.
+
+**Archivo/línea:** modules/rh/backend/models/turno.model.js:190-193 (departamento actual) y turnoAsignacion.model.js (historialEmpleado)
+**Problema:** el turno de departamento se resuelve con el departamento ACTUAL del empleado; si cambia de departamento, las fechas pasadas se reclasifican al nuevo turno. No hay historial de departamento (limitación ya anotada por el coder).
+**Severidad:** medio
+**Fix sugerido:** decisión del orquestador antes de Fase 4: historial de departamento (tabla con vigencia o snapshot del turno aplicado en `asistencia_diaria`) o aceptar y documentarlo a RH con su consecuencia.
+
+**Archivo/línea:** modules/rh/backend/models/turno.model.js:63-64 (_escribirDias) y :115 (actualizar)
+**Problema:** editar un turno reescribe `turno_dias` en sitio, sin versión ni fecha de vigencia del detalle. Si la Fase 4 recalcula días pasados, esos días cambian retroactivamente; `version_calculo` no protege porque el turno no tiene versión.
+**Severidad:** medio
+**Fix sugerido:** versionar el detalle del turno (tabla `turno_dias_version` con vigencia, o `turnos.version` referenciada desde `asistencia_diaria`), o prohibir editar días con asignaciones/cálculos y exigir alta de turno nuevo. Decidir antes de Fase 4.
+
+**Archivo/línea:** modules/rh/backend/migrations/012-asistencia.sql:185-199 (asistencia_incidencias)
+**Problema:** sin coherencia entre tipo y marca: `correccion_marca` puede no tener `marca_id` ni `marca_ts_corregida`; `marca_ts_corregida` puede existir sin marca; la marca puede ser de otro empleado (no se valida `empleado_id = marca.empleado_id`); `marca_id` sin índice; no hay unicidad de incidencias activas por día.
+**Severidad:** medio
+**Fix sugerido:** CHECK `(tipo <> 'correccion_marca' OR (marca_id IS NOT NULL AND marca_ts_corregida IS NOT NULL))` y `(marca_ts_corregida IS NULL OR marca_id IS NOT NULL)`; validar en la API que la marca pertenezca al empleado; índice en `marca_id`; índice único parcial `(empleado_id, fecha, tipo) WHERE activa` si la regla de negocio lo permite.
+
+**Archivo/línea:** modules/rh/backend/migrations/012-asistencia.sql:126 (ultimo_id_externo BIGINT), :137 (id_externo VARCHAR(100)); contrato docs/asistencia/contrato-ingesta-marcas.md:52 (máx. 64 caracteres, texto o número)
+**Problema:** el cursor es BIGINT pero `id_externo` es texto sin validación numérica ni longitud coherente con el contrato. Un id no numérico o de más de 18-19 dígitos rompería la actualización del cursor (500 o cursor corrupto) en Fase 3.
+**Severidad:** medio
+**Fix sugerido:** CHECK `id_externo ~ '^[0-9]{1,18}$'` (si el origen es BioTime) o validación en la API con test; alinear longitud (64 en contrato o schema). Al actualizar cursor, usar `GREATEST`.
+
+**Archivo/línea:** migrations/012-asistencia.sql:108-119 (asistencia_sync_lotes) frente a docs/asistencia/contrato-ingesta-marcas.md:131 y :92-97 (respuesta)
+**Problema:** el contrato (ya adoptado por el sincronizador, decisions 2026-10-21) promete que la intranet registra en el lote `estado` y `error`, y responde `sin_empleado` y `rechazos`; la tabla no tiene `estado`, `error` ni `sin_empleado`, y los `rechazos` no se persisten (solo viajan en la respuesta).
+**Severidad:** medio
+**Fix sugerido:** añadir columnas aditivas a 012 mientras no esté aplicada en staging/producción (`estado VARCHAR(20)`, `error TEXT`, `sin_empleado INT`, `rechazos JSONB` acotado a 50), o cambiar el contrato por versión. Si la 012 ya está aplicada en algún entorno, es cambio de versión del contrato.
+
+**Archivo/línea:** modules/rh/backend/migrations/012-asistencia.sql:159-180 (trigger asistencia_marcas_inmutable) y 185-198
+**Problema:** (a) la comparación usa una lista fija de columnas: una columna añadida en migraciones futuras quedará mutable en silencio; (b) no hay ruta de mantenimiento para purgar datos de prueba (staging, simulador) ni corregir marcas erróneas por un bug de ingesta, salvo `TRUNCATE` o desactivar el trigger; (c) el cambio de `empleado_id` (vinculación) no deja rastro de auditoría. Verificado: el trigger NO rompe el flujo previsto (`ON CONFLICT DO NOTHING` en ingesta, backfill con UPDATE de `empleado_id`, `restore.sh` con TRUNCATE + `--disable-triggers`, ON DELETE SET NULL de empleados).
+**Severidad:** medio
+**Fix sugerido:** comentario en el trigger "al añadir columnas, añadirlas aquí" y test que lo verifique; procedimiento documentado de mantenimiento (`ALTER TABLE ... DISABLE TRIGGER` dentro de transacción, con registro); registrar en `asistencia_sync_lotes` o en auditoría cada vinculación de `empleado_id`. Para Fase 3: prohibido `ON CONFLICT DO UPDATE` sobre `asistencia_marcas` (el trigger lo rompería).
+
+**Archivo/línea:** modules/rh/backend/tests/asistencia-migracion.test.js (todo el archivo); tests/fakeAsistenciaDb.js:8-22; tests/turnoAsignacion.test.js:36-60
+**Problema:** ninguna prueba del repo ejecuta SQL real: EXCLUDE, trigger, semilla, RLS y permisos de la 012 se verifican solo por regex o a mano (code-notes); el fake (a) desestructura `params[2]` y `params[3]` del SQL de `verificarPermiso` e ignora `rol_id`, así que no detecta permisos por rol; (b) devuelve `{rows: []}` para cualquier SQL sin regla, lo que puede dar por bueno un camino por accidente; (c) el test de permisos `Asistencia:consulta` usa un regex laxo (`[\s\S]*'consulta'`) que acepta casi cualquier texto.
+**Severidad:** medio
+**Fix sugerido:** suite de integración opcional (`TEST_PG_URL`) que aplique init.sql + 012 + 004 dos veces y pruebe traslape, trigger, semilla, permisos por rol y RLS, ejecutada en CI con postgres:16 y supabase/postgres; que el fake lance error para SQL no mockeado; que el helper filtre por `rol_id`; endurecer el regex de permisos.
+
+**Archivo/línea:** docs/asistencia/contrato-ingesta-marcas.md:132 (sincronizador "reintento") y :125 (vinculación "se reintentan periódicamente")
+**Problema:** el contrato promete reintentos periódicos de la vinculación de `empleado_id` y un cursor que retrocede; no hay job, scheduler ni tarea asignada en Fase 3/4 (research: el repo no tiene scheduler).
+**Severidad:** medio
+**Fix sugerido:** asignar explícitamente a Fase 3 o 4 el mecanismo (barrido cada 15 min con advisory lock, opción A/B/C de research) y documentarlo en roadmap.md antes de que el sincronizador empiece a enviar.
+
+**Archivo/línea:** modules/rh/backend/migrations/012-asistencia.sql:12 (CREATE EXTENSION) y :249 (REVOKE solo anon/authenticated)
+**Problema:** `btree_gist` queda en `public` (sus funciones `gbt_*` son ejecutables por PUBLIC) y el REVOKE no cubre PUBLIC; la 004 final tampoco. Riesgo bajo: las funciones reciben tipos `internal` y no son invocables de forma útil por la API.
+**Severidad:** bajo
+**Fix sugerido:** crear la extensión en un esquema dedicado (`extensions`) si existe en Supabase, o `REVOKE ALL ON FUNCTION asistencia_marcas_inmutable() FROM PUBLIC`. No bloqueante.
+
+**Archivo/línea:** migrations/012-asistencia.sql:201-223 (asistencia_diaria), :185-199 (incidencias), :134-155 (marcas), :123-132 (sync_estado)
+**Problema:** FKs sin índice: `asistencia_diaria(turno_id, solicitud_vacaciones_id, permiso_id, calendario_id, incidencia_id)`, `asistencia_incidencias(marca_id, creado_por)`, `asistencia_marcas(lote_id)`, `asistencia_sync_estado(ultimo_lote_id)`. Afecta a DELETE de padres (seq scan) y a joins de Fase 4.
+**Severidad:** bajo
+**Fix sugerido:** índices sobre esas columnas en la 012 (`CREATE INDEX IF NOT EXISTS`).
+
+**Archivo/línea:** migrations/012-asistencia.sql:29-50 (turnos) y modules/rh/backend/utils/turnoValidacion.js (validarDias)
+**Problema:** no hay validación de que `descanso_inicio` caiga dentro de la jornada de los días laborables; el descanso puede quedar fuera del turno o en día de descanso. Además `turnos.fecha_creacion` es TIMESTAMP sin zona (se serializa con desfase si el servidor no está en la zona de la app).
+**Severidad:** bajo
+**Fix sugerido:** validar en `validarTurno` que `descanso_inicio` y `descanso_inicio + descanso_min` queden dentro de [hora_entrada, hora_salida] de algún día laborable; usar TIMESTAMPTZ en las columnas nuevas.
+
+**Archivo/línea:** migrations/012-asistencia.sql:108-121 (UNIQUE sobre lote_externo) y docs/asistencia/contrato-ingesta-marcas.md (cuerpo sin lote_externo)
+**Problema:** `UNIQUE (origen, lote_externo) WHERE lote_externo IS NOT NULL` nunca se alimenta: el contrato no envía lote externo, así que cada POST crea un lote nuevo (reenvíos incluidos). Los datos siguen siendo idempotentes por `(origen, id_externo)`, pero el log de lotes tendrá filas repetidas.
+**Severidad:** bajo
+**Fix sugerido:** o quitar el UNIQUE, o acordar con el sincronizador un `lote_externo` opcional en el contrato (cambio de versión) o usar `hash_cuerpo` como clave de reenvío.
+
+**Archivo/línea:** migrations/012-asistencia.sql:134-151 (asistencia_marcas)
+**Problema:** faltan CHECK que el contrato ya promete: `btrim(codigo_empleado) <> ''`, `crudo` ≤ 2 KB (`pg_column_size(crudo) <= 2048`), `id_externo` no vacío. No hay CHECK de `marca_ts` futura (queda solo en la API).
+**Severidad:** bajo
+**Fix sugerido:** añadir esos CHECK (defensa en profundidad); mantener la validación de API como primera barrera y probar ambas.
+
+**Archivo/línea:** migrations/012-asistencia.sql:290-324 (permisos)
+**Problema:** `Asistencia:edicion` se siembra para rh_admin y super_admin, pero ningún endpoint usa esa edición (las rutas de Asistencia son solo lectura). El permiso de escritura de incidencias/correcciones (Fase 4-5) aún no existe.
+**Severidad:** bajo
+**Fix sugerido:** sembrar solo `consulta` para Asistencia, o documentar que `edicion` quedará reservada para incidencias (Fase 4-5). Confirmar con el orquestador si "Administradores" de la decisión incluye a portal_admin (hoy se excluye).
+
+**Archivo/línea:** modules/rh/backend/controllers/departamento.controller.js:77-91
+**Problema:** borrar un departamento con turno asignado (FK `turno_departamento`, 012:80) responde 500 genérico "Error al eliminar departamento" en vez de 409 (ya ocurría por empleados; la 012 suma un caso).
+**Severidad:** bajo
+**Fix sugerido:** mapear 23503 a 409 con mensaje que indique desasignar turnos y empleados.
+
+**Archivo/línea:** modules/rh/backend/controllers/turno.controller.js (actualizar: lectura de `previo` fuera de la transacción)
+**Problema:** la validación de umbral/tolerancia usa un `previo` leído fuera del lock de `Turno.actualizar`; con dos ediciones concurrentes la validación puede usar valores obsoletos.
+**Severidad:** bajo
+**Fix sugerido:** leer el `previo` dentro de la misma transacción con `FOR UPDATE`, o revalidar contra la fila bloqueada.
+
+**Archivo/línea:** modules/rh/backend/tests/asistencia-migracion.test.js:211-212 (escáner de datos reales)
+**Problema:** el escáner solo busca `10.x.x.x` y `CN\d{8,}`; no cubre 172.16-31, 192.168, otros formatos de serie ni los archivos del contrato. Verificado a mano en este commit: no hay IPs, números de serie ni emp_code reales en ningún archivo del commit; `docs/respuesta_intranet.md` no está versionado ni en el historial.
+**Severidad:** bajo
+**Fix sugerido:** ampliar el patrón (RFC1918 completo, `CN\d+`) y aplicarlo también a `docs/asistencia/*.md` y a `turno.controller.js`.
+
+**Archivo/línea:** docs/asistencia/contrato-ingesta-marcas.md:32-40 (ejemplo)
+**Problema:** el ejemplo se construyó a partir de un registro real de `docs/respuesta_intranet.md`: `id_externo` "1566931", `subida_ts` (mismo instante que el upload_time real), `terminal_alias`/`area_externa` "CORPORATIVO". No es IP, serie ni emp_code, y la decisión nombra solo IPs y números de serie, así que lo clasifico como bajo. Si el orquestador entiende que "esos valores" incluye cualquier dato de ese archivo, sube a crítico y es una violación de decisions.md.
+**Severidad:** bajo (escalar para decisión del orquestador)
+**Fix sugerido:** sustituir id, timestamps y alias por valores ficticios en el ejemplo y revisar el `terminal_alias` real en los tests.
+
+**Archivo/línea:** docs/asistencia/contrato-ingesta-marcas.md:52, :58
+**Problema:** el contrato dice `máximo 64 caracteres` para `id_externo` y mapea `area_externa` a "area_alias" (nombre distinto del campo); la tabla tiene VARCHAR(100).
+**Severidad:** bajo
+**Fix sugerido:** unificar la longitud y el nombre del campo antes de la v1 definitiva.
+
+**Archivo/línea:** modules/rh/backend/migrations/012-asistencia.sql (ausencia de `fecha_local`) frente a research.md (propuesta de asistencia_marcas con `fecha_local` y `tipo_marca`)
+**Problema:** la tabla no tiene día local ni índice por fecha local; el motor (Fase 4) tendrá que convertir `marca_ts` en cada consulta. La decisión (2026-10-21) manda convertir en el motor, así que es consecuencia aceptada: falta índice de expresión `((marca_ts AT TIME ZONE 'America/Mexico_City')::date)` o columna derivada.
+**Severidad:** bajo
+**Fix sugerido:** anotar en roadmap de Fase 4 el índice de expresión o la columna derivada con test de rendimiento.
+
+**Revisado sin hallazgos:** idempotencia de la 012 (CREATE ... IF NOT EXISTS, DROP/CREATE del trigger, semilla solo si `turnos` vacía, ON CONFLICT en permisos con PK de `rol_opcion_permisos`); falla segura (`CREATE EXTENSION` sin fallback y ON_ERROR_STOP en entrypoint y compose, así que si falla el backend no arranca); EXCLUDE con `daterange '[]'` y NULL = abierta (correcto); `terminar` solo acorta (409 si no acorta, FOR UPDATE, sin candado de traslape necesario porque acortar no crea solapes); mapeo de días BioTime 0=domingo a ISO 7 correcto y coincide con la semilla; ventanas, tolerancias y descanso de la semilla coinciden con att_timeinterval/att_breaktime de docs/respuesta_intranet.md; nocturno derivado y duración correctas; fechas como texto (Date.UTC solo para validar, nunca new Date(texto)); acceso a `/empleados/:id/turno` (propio, jefe vigente con `jefe_inmediato_id` actual, RH con Empleados:edicion, 403 uniforme sin revelar existencia para no-RH); `portal_admin` sin Turnos ni Asistencia (init.sql solo le da portal); 500 genéricos sin texto SQL; auditoría sin datos sensibles; candados de asistencia (4301/4302) no colisionan con vacaciones (4217); no hay timers ni `new Date()` en los tests nuevos (la inestabilidad de 5 suites del coder está en delegacionPermisos/portal, fuera de este commit); el schema admite los datos reales que el sincronizador describe (terminal_sn vacío, verify_type 0, source 2, codigo_empleado de 1-3 dígitos como texto, estado_marca '0').
+
+**Pruebas (detalle):** revisión estática, lectura de código, migración, compose, docs y tests. No se ejecutó jest ni Postgres en esta revisión. Verificación del coder (no repetida aquí): 47 suites / 1231 tests OK, 57 mutaciones, Postgres 16 y supabase/postgres 17.6 en contenedores desechables.
+
+### [2026-10-21] [revisor] — Asistencia Fase 3
+**Alcance:** commit `3599349` (migración 013, middleware de llave, rutas de ingesta, controlador/modelo/validación, administración de llaves, TRUST_PROXY, simulador, docs y tests). Solo lectura: no se modificó código.
+**Veredicto:** APROBADO CON CORRECCIONES MENORES. Sin hallazgos críticos: no hay violación de decisions.md ni bug claro de seguridad o de datos.
+
+**Verificado sin hallazgos:**
+- Llave: 32 bytes aleatorios, SHA-256 en BD, `timingSafeEqual`, 401 idénticos, 403 solo con llave auténtica, revocación y vigencia leídas de la BD en cada petición, sin caché.
+- Sin oráculo de prefijo ni de hash; la llave no sale en respuestas (salvo alta/rotación, con no-store), auditoría, logs ni parámetros de BD.
+- Ingesta: una transacción, un cliente, sin pool anidado; orden ascendente numérico y ON CONFLICT DO NOTHING; sin deadlock entre envíos traslapados (prueba de carga del coder).
+- Cursor BIGINT con comparación numérica; marca_ts canonizada a UTC (la comparación de cadenas es válida).
+- Vinculación por numero_nomina: solo con una coincidencia exacta; `vincularHuerfanas` usa SKIP LOCKED y el trigger permite cambiar solo empleado_id.
+- Montaje antes de express.json global; 1 MB solo en la ingesta; el resto de la API no cambia; 415 y 413 correctos.
+- Permisos: Ingesta solo rh_admin y super_admin; portal_admin excluido.
+- Migración 013 idéntica a su bloque de init.sql; RLS y REVOKE presentes; el ON CONFLICT de permisos tiene PK.
+- Columnas de BD (VARCHAR) compatibles con los límites de validación.
+- docs/respuesta_intranet.md: sin seguimiento git y excluido en .git/info/exclude. Sus IP y números de serie no aparecen en el commit ni en el repo.
+
+**Hallazgos:**
+
+**Archivo/línea:** modules/rh/backend/tests/ingesta.test.js:762 y 772
+**Problema:** test intermitente "la llave nunca se expone". `secreto = esc.llave.split("_")[2]` falla porque el alfabeto base64url incluye "_": en el 47 % de las llaves el fragmento no es el secreto completo y en el 5,9 % mide 3 caracteres o menos; coincide por azar con el ETag (base64) de la respuesta. Reproducido 1 de 12 corridas concurrentes; aislado pasa.
+**Severidad:** medio
+**Fix sugerido (causa raíz y arreglo exacto):** sustituir la línea 762 por `const secreto = esc.llave.slice(esc.llave.indexOf("_", 4) + 1); expect(secreto).toHaveLength(43);`. Así el secreto son los 43 caracteres base64url completos (256 bits), sin fragmentos cortos.
+
+**Archivo/línea:** modules/rh/backend/tests/ingesta.test.js:282-296
+**Problema:** el test del 413 reintenta ante EPIPE/ECONNRESET, pero si los 5 intentos fallan `r` queda indefinido y el error es un TypeError que oculta la causa. No reproduje EPIPE (2 suites completas y 12 corridas concurrentes sin fallo). La hipótesis EPIPE es plausible (el servidor responde 413 sin leer el cuerpo), pero no está confirmada.
+**Severidad:** medio
+**Fix sugerido:** tras el bucle, añadir `if (!r) throw new Error("sin respuesta 413 tras 5 intentos (EPIPE/ECONNRESET)");` y salir del bucle con `break` al tener respuesta. Si vuelve a aparecer, pasar a enviar el cuerpo con `http.request` y tratar el error de socket como válido solo tras recibir la respuesta.
+
+**Archivo/línea:** modules/rh/backend/routes/ingesta.routes.js:12 (`router.use(autenticarLlave)`), middleware/llaveIngesta.middleware.js (`buscarPorPrefijo`)
+**Problema:** las peticiones sin llave válida no tienen límite de tasa antes de consultar la BD; cada una hace una consulta en el pool compartido con el resto de la aplicación. Un flujo de peticiones con prefijos al azar puede saturar el pool.
+**Severidad:** medio (sube a alto si el endpoint se publica a Internet)
+**Fix sugerido:** límite de intentos fallidos por IP antes de `buscarPorPrefijo` (p. ej. 30/min), con 429 sin consultar la BD.
+
+**Archivo/línea:** modules/rh/backend/models/ingesta.model.js (`vincularHuerfanas`) y ON DELETE SET NULL de `asistencia_marcas.empleado_id`
+**Problema:** la vinculación por numero_nomina se fija en la ingesta y no se vuelve a evaluar. Si un empleado se borra o cambia su nómina, sus marcas quedan huérfanas y la re-vinculación puede asignarlas a quien reciba ese número: riesgo de atribución errónea.
+**Severidad:** medio
+**Fix sugerido:** registrar la fecha y el origen de la vinculación y no revincular marcas cuyo empleado fue borrado; o exigir confirmación de RH antes de revincular marcas ya asociadas a un empleado anterior.
+
+**Archivo/línea:** modules/rh/backend/utils/marcaValidacion.js (`interpretarIdExterno`, rama number) frente a docs/asistencia/contrato-ingesta-marcas.md sección 7
+**Problema:** el contrato dice "número JSON o texto de dígitos, hasta 18 dígitos", pero un número JSON solo se acepta si es entero seguro (hasta ~16 dígitos). Un id de 17-18 dígitos enviado como número se rechaza, sin corrupción de datos.
+**Severidad:** bajo
+**Fix sugerido:** o bien corregir el contrato a "texto de dígitos" para ids largos, o bien aceptar hasta 18 dígitos como cadena en la rama number. Elegir una de las dos y documentarla.
+
+**Archivo/línea:** modules/rh/backend/controllers/ingesta.controller.js (bucle `marcas.forEach(validarMarca)` antes del `try`)
+**Problema:** en Express 4 un error lanzado en un manejador async fuera de try deja la petición sin respuesta (la promesa rechazada no la captura Express).
+**Severidad:** bajo (no alcanzable con los datos actuales)
+**Fix sugerido:** envolver la validación en el mismo try o en un try propio que responda 500 genérico.
+
+**Archivo/línea:** modules/rh/backend/services/rechazosIngesta.service.js (tope `maxClavesPorHora = 200`)
+**Problema:** el tope de claves nuevas es global. Un atacante con muchas IP puede agotarlo en una hora y dejar sin auditar los rechazos del resto (solo se pierde la auditoría, no la protección).
+**Severidad:** bajo
+**Fix sugerido:** tope por IP además del global, o reserva de claves para motivos de llave auténtica (llave_revocada, ip_no_permitida).
+
+**Archivo/línea:** modules/rh/backend/controllers/llaveIngesta.controller.js (`rotar`, `revocar`, `editarIps`) y utils/turnoValidacion.js:44 (`esIdValido`)
+**Problema:** `esIdValido` admite hasta 10 dígitos, pero el id es INT (máx. 2147483647): un id mayor da error de BD y 500 en lugar de 404/400.
+**Severidad:** bajo
+**Fix sugerido:** validar `<= 2147483647` en la ruta de llaves y lotes.
+
+**Archivo/línea:** modules/rh/backend/controllers/llaveIngesta.controller.js (`rotar`)
+**Problema:** dos rotaciones concurrentes de la misma llave activa crean dos sucesoras (la anterior sigue "activa" durante el solape). No es una brecha, pero deja llaves activas de más.
+**Severidad:** bajo
+**Fix sugerido:** rechazar con 409 si ya existe una sucesora vigente (`reemplaza_a = previa.id`) dentro de la transacción.
+
+**Archivo/línea:** modules/rh/backend/models/ingesta.model.js (`estado`, `COUNT(*)` sobre asistencia_marcas)
+**Problema:** cada GET /estado cuenta todas las marcas del origen; crece con el histórico (100 mil marcas o más) y se ejecuta hasta 60 veces por minuto y llave.
+**Severidad:** bajo
+**Fix sugerido:** guardar el total en asistencia_sync_estado e incrementarlo en la misma transacción de procesarEnvio.
+
+**Archivo/línea:** modules/rh/backend/models/ingesta.model.js (UPSERT de asistencia_sync_estado, `ultimo_lote_id = EXCLUDED.ultimo_lote_id`)
+**Problema:** bajo concurrencia, un envío más antiguo que confirme después puede sobrescribir el lote más reciente.
+**Severidad:** bajo
+**Fix sugerido:** `ultimo_lote_id = GREATEST(asistencia_sync_estado.ultimo_lote_id, EXCLUDED.ultimo_lote_id)`.
+
+**Archivo/línea:** modules/rh/backend/controllers/llaveIngesta.controller.js (`crear`, valor por defecto de `ips_permitidas`)
+**Problema:** una llave nueva sin lista de IP es válida desde cualquier IP. Es una decisión del diseño (lista opcional), pero el valor por defecto es el más abierto.
+**Severidad:** bajo
+**Fix sugerido:** avisar en la respuesta de crear cuando la lista esté vacía, o exigirla en producción.
+
+**Archivo/línea:** docker-compose.dev.yml (puerto 4000 publicado) y utils/trustProxy.js
+**Problema:** con TRUST_PROXY=N, un cliente que llegue directo al backend puede falsear X-Forwarded-For y evadir la lista de IP. Está documentado en operacion-ingesta.md, pero el arranque no avisa.
+**Severidad:** bajo
+**Fix sugerido:** aviso en el arranque cuando TRUST_PROXY esté definido y el puerto esté publicado, o no publicar 4000 en dev.
+
+**Archivo/línea:** modules/rh/backend/middleware/llaveIngesta.middleware.js (`crearAutenticadorLlave`)
+**Problema:** el límite de tasa es por proceso; con varias réplicas el límite se multiplica. Ya documentado por el coder.
+**Severidad:** bajo (informativo)
+**Fix sugerido:** ninguno hasta tener más de una réplica; anotar en la Fase 4.
+
+**Pendientes sin verificar:** nginx/Traefik reales con TRUST_PROXY (el coder lo marcó como no verificado); la IP real de la interfaz; el valor "Staging = 2 saltos" de la documentación.
+
+### [2026-10-21] [revisor] — Puerta de ingesta dedicada
+**Alcance:** commit `1f301ed` (HEAD de `feat/asistencia-rh`): `modules/rh/backend/servidorIngesta.js`, `modules/portal/backend/app.js`, compose dev/staging/prod, `.env.supabase.example`, `docs/supabase.md`, `docs/asistencia/operacion-ingesta.md` sección 5, tests `servidorIngesta*.test.js`. Leídos antes del diff: INDEX, decisions (2026-10-21 revisión de red, decisión del humano, OK de despliegue), code-notes "Puerta de ingesta dedicada".
+
+**Verificado (sin hallazgos):**
+- Puerto 4000 con `INGESTA_SOLO_PUERTO_DEDICADO` por defecto: `/api/asistencia/ingesta/*` responde 404 antes de la llave y de la BD (levantado `app.js` real: estado, marcas, mayúsculas, doble barra, `..`, `%2e%2e`, `%69ngesta`, `%2f`, HEAD, OPTIONS, slash final). Ningún alias llega al router de ingesta en el puerto principal.
+- Puerto dedicado: solo `GET /estado` y `POST /marcas` (resto 404 tras la llave). `app.set("trust proxy", false)` en `servidorIngesta.js:55`; `req.ip` = socket; X-Forwarded-For, CF-Connecting-IP falsos no cambian nada (cubierto en `servidorIngesta.test.js`).
+- `app.js` no escucha al importarse (`:201` `if (require.main === module) iniciar();`). Dockerfile.backend (`node modules/portal/backend/app.js`), `npm run dev` (`nodemon app.js`), `start` y los tests (supertest) siguen funcionando; no hay scripts que dependan de `app.listen` en import.
+- Sin IPs reales en el commit (solo `127.0.0.1` y rangos de documentación 192.0.2.x / 198.51.100.x / 203.0.113.x en tests y ejemplos). Dev, staging y prod tienen el mismo bloque `ports`/`INGESTA_*` (paridad correcta). Staging y prod no publican el 4000 al host.
+- Health checks: el backend no tiene `healthcheck` ni depende del 4000; nada de Docker/compose depende del puerto nuevo. Traefik solo tiene labels en el frontend.
+- Pruebas: `npx jest` completo 3/3 OK (56 suites, 1792 tests). Seis instancias paralelas de `servidorIngesta.proceso.test.js`: 6/6 OK (9/9 cada una). El fallo intermitente del coder NO se reprodujo.
+
+**Problema (hallazgos):**
+
+**F1. Puerto dedicado ocupado o config inválida tumba el portal entero (restart en bucle).**
+**Archivo/línea:** modules/portal/backend/app.js:173 (exit si falla la puerta dedicada, antes de abrir el principal), :23 (config inválida), docker-compose.staging.yml:68-72 y prod:53-57 (`restart: always`).
+**Problema:** un EADDRINUSE en 4010 o `INGESTA_PORT=4000` (el compose lo acepta: lo comprobé con `docker compose config`, publica `127.0.0.1:4000:4000`) hace que el proceso salga con código 1 antes de abrir el 4000, y `restart: always` lo relanza en bucle. El portal completo (no solo la ingesta) queda caído por una puerta opcional.
+**Severidad:** medio
+**Fix sugerido:** decidir explícitamente (es un trade-off, no un bug): (a) abrir primero el principal y, si falla la dedicada, registrar error y seguir en modo degradado (con `/api/salud` que lo indique), o (b) validar en compose `INGESTA_PORT` numérico y distinto de 4000 con `${INGESTA_PORT:?...}` o una regla de validación; anotar el riesgo en la doc. Mínimo: documentar en la sección 5 que un conflicto de puerto baja el portal.
+
+**F2. Test de proceso intermitente: colisión de puertos (TOCTOU) y churn de `listen(0)` de supertest.**
+**Archivo/línea:** modules/rh/backend/tests/servidorIngesta.proceso.test.js:10-17 (`puertoLibre`), :59, :87, :100, :116, :133 (puertos elegidos antes del spawn), :82-83 y :123 (ECONNREFUSED tras el exit).
+**Problema:** `puertoLibre()` libera el puerto y el hijo lo abre 0.5-2 s después; mientras tanto, otra suite del mismo jest (supertest hace `app.listen(0)` en cada petición, `node_modules/supertest/lib/test.js:48`) puede tomarlo y el hijo sale con EADDRINUSE (o el `esperar` de 15 s agota). Además `puertoLibre` enlaza en 127.0.0.1 y el hijo en todas las interfaces, así que la comprobación no es la misma que la del hijo. Las aserciones ECONNREFUSED posteriores pueden chocar con la reutilización del mismo puerto. Hipótesis por mecanismo: no reproducida en 6 paralelas ni 3 suites completas.
+**Severidad:** medio (CI intermitente; no afecta al producto)
+**Fix sugerido:** (1) elegir puertos fuera del rango efímero de Linux (p. ej. `20000 + random(0..9999)`, por debajo de 32768) y comprobar con `listen(puerto)` sin host, igual que el hijo; (2) si el hijo sale con código 1 y la salida contiene `EADDRINUSE` en un puerto que no es el del test de EADDRINUSE, reintentar el lanzamiento con puertos nuevos (máx. 3); (3) sustituir las dos aserciones ECONNREFUSED posteriores al exit por la comprobación del código de salida (ya verificado en la línea 80/96/109), o aceptar también que haya otra respuesta; (4) mantener la espera por la línea de log (`esperar`), que es correcta.
+
+**F3. `INGESTA_PORT` vacío no desactiva la puerta: se convierte en 4010.**
+**Archivo/línea:** docker-compose.dev.yml:43 y :48, docker-compose.staging.yml:68 y :72, docker-compose.prod.yml:53 y :57; .env.supabase.example:62 (dice "vacío = sin puerta dedicada").
+**Problema:** `${INGESTA_PORT:-4010}` trata el vacío como ausente. Comprobado con `docker compose config`: `INGESTA_PORT=` da `INGESTA_PORT=4010` y publica `127.0.0.1:4010`. La doc y el comentario prometen lo contrario; el código de `leerConfigIngesta` (vacío = sin puerta) solo aplica cuando se ejecuta `app.js` sin compose.
+**Severidad:** bajo
+**Fix sugerido:** corregir la doc y el comentario del `.env.supabase.example` ("en compose no se puede desactivar con vacío; para apagarla, quitar el servicio o dejar INGESTA_PORT=4010 y no usar la ruta"), o si se quiere poder desactivarla, usar `${INGESTA_PORT-}` y un bloque de publicación condicional.
+
+**F4. La regla DOCKER-USER documentada no es exacta y no usa conntrack.**
+**Archivo/línea:** docs/asistencia/operacion-ingesta.md:104-107.
+**Problema:** el comentario dice que `--dport 4010` es "el puerto del contenedor, antes del DNAT". Es al revés: DOCKER-USER (cadena FORWARD) ve la tupla ya traducida por DNAT, así que `--dport` es el puerto del contenedor. Funciona solo porque el puerto del host y el del contenedor son iguales. El texto no incluye `-m conntrack --ctorigdstport <puerto> --ctdir ORIGINAL`, que es la forma que coincide con el puerto publicado antes del DNAT. No hay `! -s` (el DROP también afecta a la fuente de la interfaz si se pone después del ACCEPT; el orden actual es correcto).
+**Severidad:** bajo
+**Fix sugerido:** corregir el comentario, o cambiar a `-m conntrack --ctorigdstport 4010 --ctdir ORIGINAL` para que la regla sea independiente de la igualdad de puertos. Añadir una prueba: `iptables -L DOCKER-USER -n -v` tras una petición desde la interfaz (contadores del ACCEPT).
+
+**F5. La regla DOCKER-USER también bloquea el tráfico del propio host y de otros contenedores hacia 4010 (no documentado).**
+**Archivo/línea:** docs/asistencia/operacion-ingesta.md:101-110.
+**Problema:** el tráfico del host hacia `<ip-interna>:4010` pasa por DNAT y por FORWARD con fuente = IP del host o del bridge; el DROP lo corta. Lo mismo para contenedores que lleguen al puerto publicado. La doc solo pide probar "desde otro equipo" (que debe fallar) y no avisa de que el propio servidor tampoco podrá probar con curl. Razonamiento de la traza de netfilter; no verificado con iptables real (no hay acceso al host).
+**Severidad:** bajo
+**Fix sugerido:** añadir a la sección 5 una línea "el servidor no puede probar `<ip-interna>:4010` tras la regla; las pruebas se hacen desde la interfaz" y, si hace falta probar desde el host, un ACCEPT adicional con la IP del host (decisión del administrador).
+
+**F6. Nada impide `INGESTA_BIND=0.0.0.0` (o la IP pública) en el `.env`.**
+**Archivo/línea:** docker-compose.staging.yml:72, prod:57, dev:48 (`${INGESTA_BIND:-127.0.0.1}`); docs/asistencia/operacion-ingesta.md (sección "Configurar la publicación").
+**Problema:** si alguien pone `0.0.0.0`, el 4010 queda publicado en la interfaz pública sin pasar por Cloudflare, con HTTP sin TLS y solo la llave y el límite de fallos como barrera. La doc dice "no escribas la IP", pero no prohíbe comodines.
+**Severidad:** bajo
+**Fix sugerido:** en la doc, prohibir `0.0.0.0` y `::` explícitamente; opcionalmente validar en el compose con `${INGESTA_BIND:?...}` y un patrón, o un aviso en el arranque si la IP no es privada.
+
+**F7. `process.exit(1)` al cargar el módulo (config inválida) mata al proceso que solo lo importa.**
+**Archivo/línea:** modules/portal/backend/app.js:18-24.
+**Problema:** la validación se hace en la carga del módulo; cualquier `require` de app.js con `INGESTA_PORT` inválido (tests, REPL, un script) termina el proceso, incluido un worker de jest. Solo es relevante en desarrollo, pero el resto del módulo sí evita efectos al importar.
+**Severidad:** bajo
+**Fix sugerido:** que `leerConfigIngesta` lance el error y que `iniciar()` (solo con `require.main === module`) haga el log y `process.exit(1)`.
+
+**F8. El periodo de gracia de SIGTERM (10 s) coincide con el `stop` por defecto de Docker (10 s).**
+**Archivo/línea:** modules/rh/backend/servidorIngesta.js:84 (`esperaMs = 10000`), app.js:195-196.
+**Problema:** Docker envía SIGKILL a los 10 s; el `closeAllConnections` de la línea 88 se programa a los 10 s y puede no llegar a ejecutarse. Una petición de ingesta larga en curso se corta sin cierre ordenado.
+**Severidad:** bajo
+**Fix sugerido:** `esperaMs` de 7-8 s, o `stop_grace_period: 20s` en los compose de staging y prod.
+
+**F9. Dev publica el 4000 en todas las interfaces y ahí la ingesta sigue activa.**
+**Archivo/línea:** docker-compose.dev.yml:46 (`"${BACKEND_PORT:-4000}:4000"`), :44 (`INGESTA_SOLO_PUERTO_DEDICADO: ${...:-false}`).
+**Problema:** en dev la ingesta responde en `0.0.0.0:4000` (cualquiera de la LAN con la llave). Es preexistente, pero el cambio de defecto a `false` lo mantiene a propósito. Riesgo bajo en dev.
+**Severidad:** bajo
+**Fix sugerido:** publicar `127.0.0.1:${BACKEND_PORT:-4000}:4000` en dev, o dejar anotado que dev no es entorno de ingesta real.
+
+**F10. La decisión del 2026-10-21 nombra `INGESTA_PUBLISH` y el código usa `INGESTA_BIND`.**
+**Archivo/línea:** memory/decisions.md (entrada "Revisión (solo lectura) de la ruta de red de staging", recomendación b) vs. docker-compose.staging.yml:72.
+**Problema:** el nombre de la variable de la decisión no coincide con el implementado. No se sobrescribe (regla 3); debe añadirse una nota de aclaración.
+**Severidad:** bajo
+**Fix sugerido:** el orquestador añade una nota en decisions.md que indique que la variable implementada es `INGESTA_BIND` (sin editar la entrada original).
+
+**Veredicto:** CON OBSERVACIONES. Sin hallazgos críticos ni altos; no bloquea la fusión ni el despliegue a staging. Recomendado antes de fusionar: F2 (el test intermitente pasa a ser CI roto). Recomendado antes de producción: decidir F1 y corregir F3 y F4 (doc y compose).
+
+**Pendientes sin verificar:** iptables/DOCKER-USER reales (F4, F5), `docker compose up` completo, el mensaje exacto de la interpolación de `INGESTA_PORT=abc` (el compose falla con `invalid containerPort: abc`), Traefik con un servicio en la red `proxy` que tenga la ingesta.

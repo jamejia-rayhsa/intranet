@@ -83,6 +83,8 @@ services:
       - ./modules/rh/backend/migrations/009-calendario-laboral.sql:/sql/009-calendario-laboral.sql:ro
       - ./modules/rh/backend/migrations/010-empleados-usuario-unico.sql:/sql/010-empleados-usuario-unico.sql:ro
       - ./modules/rh/backend/migrations/011-calendario-actividad.sql:/sql/011-calendario-actividad.sql:ro
+      - ./modules/rh/backend/migrations/012-asistencia.sql:/sql/012-asistencia.sql:ro
+      - ./modules/rh/backend/migrations/013-asistencia-llaves.sql:/sql/013-asistencia-llaves.sql:ro
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
@@ -111,6 +113,15 @@ services:
         psql -v ON_ERROR_STOP=1 -f /sql/010-empleados-usuario-unico.sql
         echo "[db-init] aplicando 011-calendario-actividad.sql"
         psql -v ON_ERROR_STOP=1 -f /sql/011-calendario-actividad.sql
+        echo "[db-init] aplicando 012-asistencia.sql"
+        psql -v ON_ERROR_STOP=1 -f /sql/012-asistencia.sql
+        echo "[db-init] aplicando 013-asistencia-llaves.sql"
+        psql -v ON_ERROR_STOP=1 -f /sql/013-asistencia-llaves.sql
+        # La 004 va OTRA VEZ al final (idempotente): las tablas que crean las migraciones posteriores
+        # a su primera ejecución (009 en adelante) nacen con RLS y sin privilegios para anon/authenticated
+        # en este mismo arranque, sin esperar al siguiente db-init.
+        echo "[db-init] reaplicando 004-rls-deny-all.sql (tablas nuevas)"
+        psql -v ON_ERROR_STOP=1 -f /sql/004-rls-deny-all.sql
         echo "[db-init] listo"
     networks:
       - internal

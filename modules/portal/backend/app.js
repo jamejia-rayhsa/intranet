@@ -3,9 +3,21 @@ const cors = require("cors");
 const { probarConexion } = require("./config/database");
 const Storage = require("./services/storage.service");
 const { manejadorErrores } = require("./middleware/errores.middleware");
+const { leerTrustProxy } = require("../../rh/backend/utils/trustProxy");
+const {
+  resolverConfigIngesta,
+  montarIngestaEnPrincipal,
+  iniciarPuertaDedicada,
+  cerrarTodos,
+} = require("../../rh/backend/servidorIngesta");
 
 const app = express();
 const PUERTO = process.env.PORT || 4000;
+
+// Puerta de ingesta dedicada (INGESTA_PORT). Una configuración inválida NO tumba el portal: modo degradado
+// (el portal arranca sin ingesta y se avisa con "INGESTA NO DISPONIBLE"; ver iniciar()).
+const configIngesta = resolverConfigIngesta(process.env, PUERTO);
+if (configIngesta.aviso) console.warn(`[Ingesta] ${configIngesta.aviso}`);
 
 // Probar conexión a la base de datos al iniciar
 probarConexion();
@@ -19,8 +31,20 @@ function prepararBuckets(reintentar) {
 }
 prepararBuckets(true);
 
+// Proxies de confianza (TRUST_PROXY): define qué IP ve req.ip y por tanto la lista de IP permitidas de las
+// llaves de ingesta. Por defecto ninguno (se ignora X-Forwarded-For); ver docs/asistencia/operacion-ingesta.md
+const trustProxy = leerTrustProxy(process.env.TRUST_PROXY);
+if (trustProxy !== false) app.set("trust proxy", trustProxy);
+
 // Middleware global
 app.use(cors());
+
+// Ingesta de marcas de asistencia: autenticación por llave X-Api-Key y parser JSON propio de 1 MB.
+// DEBE ir antes del parser global (100 kb), que cortaría los envíos de hasta 500 marcas con 413.
+// Con INGESTA_PORT definido (y INGESTA_SOLO_PUERTO_DEDICADO != false) aquí responde 404: la ingesta solo vive en
+// la puerta dedicada (ver rh/backend/servidorIngesta.js y docs/asistencia/operacion-ingesta.md).
+montarIngestaEnPrincipal(app, configIngesta);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -48,6 +72,7 @@ app.use("/api/empleados", require("../../rh/backend/routes/empleados.routes"));
 app.use("/api/permisos-rh", require("../../rh/backend/routes/permisos.routes"));
 app.use("/api/vacaciones", require("../../rh/backend/routes/vacaciones.routes"));
 app.use("/api/calendario-laboral", require("../../rh/backend/routes/calendario.routes"));
+app.use("/api/asistencia", require("../../rh/backend/routes/asistencia.routes"));
 app.use("/api/recibos", require("../../rh/backend/routes/recibos.routes"));
 app.use(
   "/api/expediente",
@@ -132,10 +157,37 @@ app.use((error, req, res, next) => {
 // Manejo de errores global (JSON inválido -> 400, cuerpo grande -> 413, resto -> 500 genérico)
 app.use(manejadorErrores);
 
-// Iniciar servidor
-app.listen(PUERTO, () => {
-  console.log(`Servidor backend escuchando en el puerto ${PUERTO}`);
-  console.log(`Entorno: ${process.env.NODE_ENV || "desarrollo"}`);
-});
+// Iniciar servidores (solo al ejecutar el archivo: importarlo en pruebas no abre puertos).
+async function iniciar() {
+  // El portal se abre PRIMERO: la puerta dedicada es opcional y su fallo no debe dejarlo caído
+  const principal = app.listen(PUERTO, () => {
+    console.log(`Servidor backend escuchando en el puerto ${PUERTO}`);
+    console.log(`Entorno: ${process.env.NODE_ENV || "desarrollo"}`);
+  });
+  principal.once("error", (error) => {
+    console.error(`No se pudo abrir el puerto ${PUERTO}: ${error.code || error.message}`);
+    process.exit(1);
+  });
+  // INGESTA_REINTENTO_MS / INGESTA_RECORDATORIO_MS: ajustes solo para pruebas (por omisión 5 s y 5 min)
+  const puerta = iniciarPuertaDedicada({
+    config: configIngesta,
+    reintentoMs: Number(process.env.INGESTA_REINTENTO_MS) || 5000,
+    recordatorioMs: Number(process.env.INGESTA_RECORDATORIO_MS) || 5 * 60 * 1000,
+  });
+
+  // Cierre ordenado de ambos servidores
+  let cerrando = false;
+  const apagar = async (senal) => {
+    if (cerrando) return;
+    cerrando = true;
+    console.log(`${senal} recibida: cerrando servidores`);
+    puerta.detener();
+    await cerrarTodos([principal, puerta.servidor()]);
+    process.exit(0);
+  };
+  process.on("SIGTERM", () => apagar("SIGTERM"));
+  process.on("SIGINT", () => apagar("SIGINT"));
+}
+if (require.main === module) iniciar();
 
 module.exports = app;

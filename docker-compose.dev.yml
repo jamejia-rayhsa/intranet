@@ -37,8 +37,15 @@ services:
       MSSQL_USER: ${MSSQL_USER:-sa}
       MSSQL_PASSWORD: ${MSSQL_PASSWORD:-dev_password_123}
       MSSQL_DB: ${MSSQL_DB:-bi_data}
+      # Proxies de confianza para req.ip (lista de IP de las llaves de ingesta): vacío = ninguno
+      TRUST_PROXY: ${TRUST_PROXY:-}
+      # Puerta de ingesta dedicada (segundo puerto, solo rutas de ingesta, sin trust proxy). Ver docs/asistencia/operacion-ingesta.md
+      INGESTA_PORT: ${INGESTA_PORT:-4010}
+      INGESTA_SOLO_PUERTO_DEDICADO: ${INGESTA_SOLO_PUERTO_DEDICADO:-false}
     ports:
       - "${BACKEND_PORT:-4000}:4000"
+      # Puerta de ingesta: por omisión SOLO loopback; en el servidor INGESTA_BIND = <ip-interna> en el .env.<entorno>
+      - "${INGESTA_BIND:-127.0.0.1}:${INGESTA_PORT:-4010}:${INGESTA_PORT:-4010}"
     volumes:
       - ./modules:/app/modules
       - ./config:/app/config

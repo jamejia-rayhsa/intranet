@@ -13,6 +13,30 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-21] [revisor] → reviews.md#puerta-de-ingesta-dedicada — Puerta de ingesta dedicada (commit 1f301ed): CON OBSERVACIONES, sin críticos; F2 test intermitente de puertos antes de fusionar
+- [2026-10-21] orquestador → decisions.md — OK del humano para desplegar a staging la ingesta de asistencia
+- [2026-10-21] orquestador → decisions.md — Decisión del humano: puerta de ingesta dedicada por la red interna (opción 1)
+- [2026-10-21] orquestador → decisions.md — Revisión de la ruta de red de staging (Cloudflare Tunnel → Traefik → nginx) y recomendación de puerta de ingesta dedicada interna
+- [2026-10-21] orquestador → decisions.md — Fase 3 de asistencia (ingesta con llave) lista para GO/NO-GO
+- [2026-10-21] orquestador → decisions.md — Fase 3 de asistencia: síntesis de revisión y pruebas y ronda de correcciones
+- [2026-10-21] [revisor] → reviews.md#asistencia-fase-3 — Asistencia Fase 3 (commit 3599349): sin críticos; test intermitente de la llave (causa raíz: split("_") en base64url) y 413/EPIPE; falta límite de tasa previo a la BD
+- [2026-10-21] [coder] → code-notes.md — Asistencia Fase 3: ingesta con llave (migración 013, middleware X-Api-Key, POST /ingesta/marcas, GET /estado, administración de llaves, TRUST_PROXY, simulador; jest 1700, 127 mutantes, pg16+pg17 db-init real)
+- [2026-10-21] orquestador → decisions.md — Decisión del humano: opción A (snapshot + quincenas cerradas a los 3 días, reabre solo RH y super_admin)
+- [2026-10-21] orquestador → decisions.md — GO del humano a la Fase 3 de asistencia; orden: cerrar Fase 2 y luego lanzar el endpoint
+- [2026-10-21] orquestador → decisions.md — Confirmaciones directas del humano: frecuencia 07-20 h cada 15 min, BioTime 1.0.6.4, IP interna de la interfaz
+- [2026-10-21] tester → tests.md — Asistencia Fase 2: prueba integrada (db-init REAL x2 en supabase/postgres 17.6 limpia/desde main/pre-calendario, trigger 22/22, API real 475/475 x8 corridas y 6/6 mutantes matados, regresión reg 64/64, jest 47/1231 x3 zonas, eslint 0 errores); 2 FAIL menores (NUL → 500; DELETE de departamento con turno → 500), sin bloqueados
+- [2026-10-21] tester → decisions.md — PARA RESOLVER F-AS2-1 (NUL en turno → 500), F-AS2-2 (confirma con evidencia: turno inactivo sigue efectivo, turnos sin versionado, DELETE departamento, ejemplo del contrato), F-AS2-3 (auditoría se pierde con X-Forwarded-For > 45 caracteres)
+- [2026-10-21] [revisor] → reviews.md#2026-10-21-revisor--asistencia-fase-2 — Asistencia Fase 2 (commit 771ea81): 0 críticos, 1 alto (turno inactivo sigue efectivo), 8 medios; aprobado con observaciones
+- [2026-10-21] orquestador → decisions.md — Datos relayados por biotime-34; GO a la Fase 3 relayado NO aceptado (requiere confirmación directa del humano)
+- [2026-10-21] orquestador → decisions.md — Coordinación con biotime-34: contrato v1 adoptado y datos reales de las marcas
+- [2026-10-21] orquestador → decisions.md — Contrato de la ingesta de marcas entregado a la interfaz (docs/asistencia/contrato-ingesta-marcas.md)
+- [2026-10-21] orquestador → decisions.md — Datos reales de BioTime y su efecto en el diseño de turnos, marcas y motor
+- [2026-10-21] [coder] → code-notes.md — Asistencia Fase 2: migración 012 (turnos, vigencias EXCLUDE, marcas, RLS), API /api/asistencia, permisos Asistencia/Turnos, ajuste con datos de BioTime
+- [2026-10-21] orquestador → decisions.md — Decisiones tras la Fase 1 de asistencia (cuerpo, turnos por departamento, retención) y GO a la Fase 2; RLS corregido en staging
+- [2026-10-21] orquestador → decisions.md — CONFLICTO RLS: tablas nuevas sin RLS hasta el siguiente db-init; Fase 1 de asistencia lista para GO/NO-GO
+- [2026-10-21] investigador → research.md — Módulo de asistencia: repo, cruces, BioTime y diseño
+- [2026-10-21] orquestador → decisions.md — Contrato de integración BioTime: endpoint HTTP con llave (sustituye al rol de BD)
+- [2026-10-21] orquestador → decisions.md — Módulo de asistencia en RH: respuestas del humano y alcance (la interfaz BioTime la hace otro desarrollo)
 - [2026-10-16] orquestador → decisions.md — Tipo 'Día Actividad Empresa' listo para GO/NO-GO
 - [2026-10-16] tester → tests.md — Tipo actividad empresa: prueba integrada (011 con db-init real x2 sobre datos antiguos, E2E 69/69 x21 combinaciones Chromium+Firefox+TZ, regresión ta/tb/tc/aut/cruzada, responsive+axe, jest 958, eslint 0 errores); 1 FAIL menor
 - [2026-10-16] tester → decisions.md — PARA RESOLVER F-ACT-1 (menor): aviso 'Ninguna solicitud incluye esta fecha' engañoso con actividad inactiva/no hábil
@@ -181,3 +205,6 @@
 - [2026-10-15] [coder] Correcciones de la revisión final (F-A..F-E: alta de empleado con roles, usuarios privilegiados, toma de cuenta, jefe vigente, UNIQUE usuario_id) -> code-notes.md
 - [2026-10-15] [coder] Segunda ronda de la revisión final (E1 atómico con FOR UPDATE y estado final, permisos de roles privilegiados solo super, esAdmin por permiso, jefe FOR SHARE) -> code-notes.md
 - [2026-10-16] [coder] Correcciones del tipo actividad (codigo en 409, avisos.motivo, migración 011 por columna, Bloq 10 px, cruce de año) -> code-notes.md
+- [2026-10-21] [coder] → code-notes.md — Correcciones de la Fase 2 de asistencia (turno inactivo, NUL a 400, DELETE departamento 409, lotes, incidencias, descanso, índices, contrato ficticio)
+- [2026-10-21] [tester] → tests.md — Asistencia Fase 3: prueba integrada (db-init REAL x2 en supabase/postgres 17.6 limpia/desde main/desde Fase 2, llaves por API 170/170, contrato v1 + lote de la interfaz + carga de 134 mil marcas exacta, nginx real con TRUST_PROXY 48/48, concurrencia/rotación/revocación/caída de BD, vinculación, jest x10 y eslint 0 errores); 2 FAIL menores (test intermitente por `split("_")[2]` 1/64; valores reales/IP 10.x versionados), sin bloqueados
+- [2026-10-21] [tester] → decisions.md — PARA RESOLVER F-AS3-1 (test intermitente), F-AS3-2 (valores del doc local e IP 10.x en versionados), F-AS3-3 (charset utf-16, rotar dos veces, 500 x 2 KB > 1 MB)
