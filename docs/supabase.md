@@ -48,13 +48,15 @@ Puntos clave (verificados en `docker-compose.supabase.yml`, `config/nginx/*.conf
 | prod | `docker compose -f docker-compose.prod.yml --env-file .env.prod up -d` |
 | Studio (opcional) | añadir `--profile admin`; abre `http://127.0.0.1:54323` (por túnel SSH/VPN en servidores). Sin gateway solo funcionan el editor de tablas y SQL; los paneles Auth/Storage no. |
 
-Orden interno: `supabase-db` -> `supabase-db-init` (one-shot: carga `config/database/init.sql` solo si no existe `public.usuarios`, y siempre aplica migraciones idempotentes `004`, `005` y `007`) -> `supabase-auth` y `supabase-storage` -> backend. El backend espera a que `db-init` termine con éxito.
+Orden interno: `supabase-db` -> `supabase-db-init` (one-shot: carga `config/database/init.sql` solo si no existe `public.usuarios`, y siempre aplica migraciones idempotentes `004`, `005` y `007`; al final vuelve a aplicar la `004` para que las tablas de migraciones posteriores nazcan con RLS en el mismo arranque) -> `supabase-auth` y `supabase-storage` -> backend. El backend espera a que `db-init` termine con éxito.
 
 Nota sobre `rh/010-empleados-usuario-unico.sql`: agrega `UNIQUE (usuario_id)` a `empleados` solo si no hay usuarios con más de un empleado; si los hay, NO falla: emite un `WARNING` con los ids duplicados y deja la restricción sin crear (hasta que RH los corrija y se relance `db-init`). La autoridad de vacaciones depende de la relación 1:1.
 
 Nota sobre la semilla de festivos (`rh/009-calendario-laboral.sql`): solo inserta los festivos oficiales 2026-2027 si `calendario_laboral` está vacía, así que un festivo borrado por RH no reaparece al relanzar `db-init`; si se vacía por completo la tabla, la siguiente ejecución volverá a sembrarlos.
 
 Nota sobre `rh/011-calendario-actividad.sql`: amplía el CHECK de `calendario_laboral.tipo` para admitir `actividad` (Día Actividad Empresa, que bloquea las vacaciones de todos). Es idempotente (busca la restricción por definición, no por nombre), no modifica datos y se puede relanzar con `db-init` sin efectos. Requiere la 009.
+
+Nota sobre `rh/012-asistencia.sql`: módulo de asistencia (turnos y detalle por día, asignaciones a departamento y a empleado con vigencia, marcas crudas, estado/lotes de sincronización, asistencia diaria e incidencias) más las opciones de permiso `Asistencia` y `Turnos` de RH. Crea la extensión `btree_gist` (de confianza; la crea el usuario `postgres` tanto en `postgres:16` como en `supabase/postgres` 17) para impedir con `EXCLUDE` el traslape de vigencias; si no pudiera crearla, la migración falla a propósito. Activa RLS y revoca privilegios a `anon`/`authenticated` en sus propias tablas, y el `db-init` reaplica `004-rls-deny-all.sql` al final (idempotente). Las marcas crudas (`asistencia_marcas`) tienen un trigger que impide borrarlas y modificar cualquier columna salvo `empleado_id`. Requiere la 009 (`calendario_laboral`). Es idempotente y no toca datos.
 
 ### Migraciones nuevas con el entorno ya levantado
 

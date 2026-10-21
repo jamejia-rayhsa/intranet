@@ -13,6 +13,10 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-21] orquestador → decisions.md — Contrato de la ingesta de marcas entregado a la interfaz (docs/asistencia/contrato-ingesta-marcas.md)
+- [2026-10-21] orquestador → decisions.md — Datos reales de BioTime y su efecto en el diseño de turnos, marcas y motor
+- [2026-10-21] [coder] → code-notes.md — Asistencia Fase 2: migración 012 (turnos, vigencias EXCLUDE, marcas, RLS), API /api/asistencia, permisos Asistencia/Turnos, ajuste con datos de BioTime
+- [2026-10-21] orquestador → decisions.md — Decisiones tras la Fase 1 de asistencia (cuerpo, turnos por departamento, retención) y GO a la Fase 2; RLS corregido en staging
 - [2026-10-21] orquestador → decisions.md — CONFLICTO RLS: tablas nuevas sin RLS hasta el siguiente db-init; Fase 1 de asistencia lista para GO/NO-GO
 - [2026-10-21] investigador → research.md — Módulo de asistencia: repo, cruces, BioTime y diseño
 - [2026-10-21] orquestador → decisions.md — Contrato de integración BioTime: endpoint HTTP con llave (sustituye al rol de BD)

@@ -72,10 +72,10 @@
 > Rama `feat/asistencia-rh`. Fases = PROPUESTA del orquestador; cada una cierra con GO/NO-GO del humano. Decisiones en decisions.md (2026-10-21).
 
 ## Estado global
-- **Fase actual:** 1 LISTA PARA GO/NO-GO (investigación hecha). **Actualizado:** 2026-10-21
+- **Fase actual:** 2 EN CURSO (Fase 1 CERRADA; coder). **Actualizado:** 2026-10-21
 
-## Fase 1 — Investigación (repo, reglas de cruce, modelo de turnos de BioTime, diseño) — LISTA PARA GO/NO-GO (research.md 1640-1908)
-## Fase 2 — BD (turnos, asignaciones, marcas, asistencia diaria, incidencias), API, permisos, auditoría — NO INICIADA
+## Fase 1 — Investigación (repo, reglas de cruce, modelo de turnos de BioTime, diseño) — CERRADA (research.md 1640-1908)
+## Fase 2 — BD (turnos, asignaciones, marcas, asistencia diaria, incidencias), API, permisos, auditoría — EN CURSO (coder)
 ## Fase 3 — Endpoint de ingesta con llave + contrato para la interfaz de BioTime + simulador de marcas — NO INICIADA
 ## Fase 4 — Motor de análisis (retardo/falta/salida anticipada/incompleta, cruce con vacaciones, permisos y calendario) — NO INICIADA
 ## Fase 5 — Pantallas: Mi asistencia, Equipo (jefe), RH (turnos, asignaciones, justificaciones, estado de sincronización) — NO INICIADA
