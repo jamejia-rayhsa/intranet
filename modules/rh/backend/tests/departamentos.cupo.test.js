@@ -97,3 +97,43 @@ describe("Departamentos - errores genéricos (sin error.message)", () => {
     expect(JSON.stringify(res.body)).not.toContain("duplicate key");
   });
 });
+
+describe("Departamentos - eliminar con restricciones", () => {
+  it("con turno asignado (FK turno_departamento) -> 409 con mensaje claro, no 500", async () => {
+    grupo.query.mockRejectedValue(
+      Object.assign(new Error("violates foreign key constraint \"turno_departamento_departamento_id_fkey\""), {
+        code: "23503",
+        constraint: "turno_departamento_departamento_id_fkey",
+      }),
+    );
+    const res = await request(app).delete("/api/departamentos/3");
+    expect(res.status).toBe(409);
+    expect(res.body.exito).toBe(false);
+    expect(res.body.mensaje).toMatch(/turnos asignados/);
+    expect(JSON.stringify(res.body)).not.toMatch(/fkey|violates/);
+  });
+
+  it("con empleados (otra FK) -> 409 con mensaje distinto", async () => {
+    grupo.query.mockRejectedValue(
+      Object.assign(new Error("violates foreign key constraint \"empleados_departamento_id_fkey\""), {
+        code: "23503",
+        constraint: "empleados_departamento_id_fkey",
+      }),
+    );
+    const res = await request(app).delete("/api/departamentos/3");
+    expect(res.status).toBe(409);
+    expect(res.body.mensaje).toMatch(/empleados/);
+  });
+
+  it("otros errores siguen siendo 500 genérico; el borrado normal y el 404 no cambian", async () => {
+    grupo.query.mockRejectedValue(new Error("SECRETO"));
+    const res = await request(app).delete("/api/departamentos/3");
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ exito: false, mensaje: "Error al eliminar departamento" });
+    grupo.query.mockReset();
+    grupo.query.mockResolvedValue({ rows: [] });
+    expect((await request(app).delete("/api/departamentos/3")).status).toBe(404);
+    grupo.query.mockResolvedValue({ rows: [{ id: 3 }] });
+    expect((await request(app).delete("/api/departamentos/3")).status).toBe(200);
+  });
+});

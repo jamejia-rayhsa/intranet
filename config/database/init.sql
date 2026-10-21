@@ -929,6 +929,7 @@ CREATE TABLE IF NOT EXISTS turnos (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_turnos_nombre ON turnos (lower(btrim(nombre)));
 CREATE INDEX IF NOT EXISTS idx_turnos_activo ON turnos(activo);
+CREATE INDEX IF NOT EXISTS idx_turnos_creado_por ON turnos(creado_por);
 
 CREATE TABLE IF NOT EXISTS turno_dias (
   turno_id INT NOT NULL REFERENCES turnos(id) ON DELETE CASCADE,
@@ -951,6 +952,54 @@ CREATE TABLE IF NOT EXISTS turno_dias (
   )
 );
 
+-- El descanso (descanso_inicio + descanso_min) debe caer dentro de la jornada de CADA día laborable del
+-- turno: entre hora_entrada y hora_salida (si cruza la medianoche, la salida cuenta +24 h y un descanso
+-- anterior a la entrada se toma del día siguiente). Es una regla entre turnos y turno_dias, así que va en
+-- un trigger de restricción DIFERIDO (al COMMIT: el turno se inserta antes que su detalle y el detalle se
+-- reemplaza en bloque). Un turno con días laborables más cortos que el descanso necesita otro turno.
+CREATE OR REPLACE FUNCTION turno_descanso_dentro_jornada() RETURNS trigger AS $$
+DECLARE
+  id_turno INT;
+  fuera RECORD;
+BEGIN
+  IF TG_TABLE_NAME = 'turnos' THEN
+    id_turno := NEW.id;
+  ELSIF TG_OP = 'DELETE' THEN
+    id_turno := OLD.turno_id;
+  ELSE
+    id_turno := NEW.turno_id;
+  END IF;
+  SELECT d.dia_semana INTO fuera
+  FROM turnos t
+  JOIN turno_dias d ON d.turno_id = t.id AND d.laborable
+  CROSS JOIN LATERAL (SELECT
+      EXTRACT(EPOCH FROM d.hora_entrada)::int / 60 AS ent,
+      EXTRACT(EPOCH FROM d.hora_salida)::int / 60 + CASE WHEN d.cruza_medianoche THEN 1440 ELSE 0 END AS sal,
+      EXTRACT(EPOCH FROM t.descanso_inicio)::int / 60 AS ini) AS m
+  CROSS JOIN LATERAL (SELECT
+      CASE WHEN d.cruza_medianoche AND m.ini < m.ent THEN m.ini + 1440 ELSE m.ini END AS ini) AS r
+  WHERE t.id = id_turno AND t.descanso_min > 0
+    AND (r.ini < m.ent OR r.ini + t.descanso_min > m.sal)
+  LIMIT 1;
+  IF FOUND THEN
+    RAISE EXCEPTION 'turnos: el descanso queda fuera de la jornada del día %', fuera.dia_semana
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_turnos_descanso ON turnos;
+CREATE CONSTRAINT TRIGGER trg_turnos_descanso
+  AFTER INSERT OR UPDATE OF descanso_inicio, descanso_min ON turnos
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION turno_descanso_dentro_jornada();
+DROP TRIGGER IF EXISTS trg_turno_dias_descanso ON turno_dias;
+CREATE CONSTRAINT TRIGGER trg_turno_dias_descanso
+  AFTER INSERT OR UPDATE OR DELETE ON turno_dias
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION turno_descanso_dentro_jornada();
+
 -- b) Asignaciones con vigencia (historial: las filas cerradas no se borran).
 --    vigente_hasta NULL = abierta. Intervalos cerrados [desde, hasta]; sin traslape por departamento
 --    y por empleado. Turno efectivo = asignación individual vigente; si no hay, la del departamento.
@@ -967,6 +1016,7 @@ CREATE TABLE IF NOT EXISTS turno_departamento (
     EXCLUDE USING gist (departamento_id WITH =, daterange(vigente_desde, vigente_hasta, '[]') WITH &&)
 );
 CREATE INDEX IF NOT EXISTS idx_turno_departamento_turno ON turno_departamento(turno_id);
+CREATE INDEX IF NOT EXISTS idx_turno_departamento_creado_por ON turno_departamento(creado_por);
 
 CREATE TABLE IF NOT EXISTS turno_empleado (
   id SERIAL PRIMARY KEY,
@@ -981,23 +1031,27 @@ CREATE TABLE IF NOT EXISTS turno_empleado (
     EXCLUDE USING gist (empleado_id WITH =, daterange(vigente_desde, vigente_hasta, '[]') WITH &&)
 );
 CREATE INDEX IF NOT EXISTS idx_turno_empleado_turno ON turno_empleado(turno_id);
+CREATE INDEX IF NOT EXISTS idx_turno_empleado_creado_por ON turno_empleado(creado_por);
 
 -- c) Marcas crudas y sincronización. Solo las toca el backend (la ingesta por API con llave es la
 --    Fase 3; no hay rol de BD para la interfaz). La marca original no se modifica ni se borra nunca.
 CREATE TABLE IF NOT EXISTS asistencia_sync_lotes (
   id BIGSERIAL PRIMARY KEY,
   origen VARCHAR(50) NOT NULL,
-  lote_externo VARCHAR(100),
   ip VARCHAR(45),
   recibidas INT NOT NULL DEFAULT 0,
   insertadas INT NOT NULL DEFAULT 0,
   duplicadas INT NOT NULL DEFAULT 0,
   rechazadas INT NOT NULL DEFAULT 0,
+  sin_empleado INT NOT NULL DEFAULT 0 CHECK (sin_empleado >= 0), -- marcas guardadas sin empleado conocido
   hash_cuerpo CHAR(64),
-  fecha_recepcion TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  -- Estado del envío (contrato v1): 'en_curso' al recibirlo, 'ok' o 'error' al terminar. El detalle del
+  -- fallo va en `error`. Sin lote_externo: el contrato no lo envía y la idempotencia es por (origen, id_externo).
+  estatus VARCHAR(20) NOT NULL DEFAULT 'en_curso',
+  error TEXT,
+  fecha_recepcion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT asistencia_sync_lotes_estatus_check CHECK (estatus IN ('en_curso', 'ok', 'error'))
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uq_asistencia_sync_lotes_externo
-  ON asistencia_sync_lotes(origen, lote_externo) WHERE lote_externo IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS asistencia_sync_estado (
   origen VARCHAR(50) PRIMARY KEY,
@@ -1009,6 +1063,7 @@ CREATE TABLE IF NOT EXISTS asistencia_sync_estado (
   ultimo_error TEXT,
   fecha_actualizacion TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_asistencia_sync_estado_lote ON asistencia_sync_estado(ultimo_lote_id);
 
 CREATE TABLE IF NOT EXISTS asistencia_marcas (
   id BIGSERIAL PRIMARY KEY,
@@ -1032,6 +1087,7 @@ CREATE INDEX IF NOT EXISTS idx_asistencia_marcas_codigo_ts ON asistencia_marcas(
 CREATE INDEX IF NOT EXISTS idx_asistencia_marcas_empleado_ts ON asistencia_marcas(empleado_id, marca_ts);
 CREATE INDEX IF NOT EXISTS idx_asistencia_marcas_ts ON asistencia_marcas(marca_ts);
 CREATE INDEX IF NOT EXISTS idx_asistencia_marcas_subida ON asistencia_marcas(subida_ts);
+CREATE INDEX IF NOT EXISTS idx_asistencia_marcas_lote ON asistencia_marcas(lote_id);
 
 -- Inmutabilidad: lo único que puede cambiar en una marca es empleado_id (vincularla cuando el
 -- empleado se da de alta o se corrige su número de nómina). No se borran (retención: siempre).
@@ -1073,9 +1129,40 @@ CREATE TABLE IF NOT EXISTS asistencia_incidencias (
   creado_por INT REFERENCES usuarios(id) ON DELETE SET NULL,
   fecha_creacion TIMESTAMP DEFAULT NOW(),
   fecha_actualizacion TIMESTAMP DEFAULT NOW(),
-  CONSTRAINT asistencia_incidencias_tipo_check CHECK (tipo IN ('justificacion', 'correccion_marca', 'otro'))
+  CONSTRAINT asistencia_incidencias_tipo_check CHECK (tipo IN ('justificacion', 'correccion_marca', 'otro')),
+  -- Una corrección apunta a la marca y propone otra hora; la hora propuesta no existe sin marca
+  CONSTRAINT asistencia_incidencias_correccion_check CHECK (
+    (tipo <> 'correccion_marca' OR (marca_id IS NOT NULL AND marca_ts_corregida IS NOT NULL))
+    AND (marca_ts_corregida IS NULL OR (marca_id IS NOT NULL AND tipo = 'correccion_marca'))
+  )
 );
 CREATE INDEX IF NOT EXISTS idx_asistencia_incidencias_empleado_fecha ON asistencia_incidencias(empleado_id, fecha);
+CREATE INDEX IF NOT EXISTS idx_asistencia_incidencias_marca ON asistencia_incidencias(marca_id);
+CREATE INDEX IF NOT EXISTS idx_asistencia_incidencias_creado_por ON asistencia_incidencias(creado_por);
+
+-- La marca referenciada debe ser DEL MISMO empleado de la incidencia (una marca huérfana, sin empleado
+-- vinculado, tampoco sirve). No cubre que la marca se re-vincule después a otro empleado (la
+-- vinculación solo llena empleados huérfanos); la Fase 4 debe revalidarlo si cambia empleado_id.
+CREATE OR REPLACE FUNCTION asistencia_incidencia_marca_coherente() RETURNS trigger AS $$
+DECLARE
+  empleado_marca INT;
+BEGIN
+  IF NEW.marca_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+  SELECT m.empleado_id INTO empleado_marca FROM asistencia_marcas m WHERE m.id = NEW.marca_id;
+  IF empleado_marca IS DISTINCT FROM NEW.empleado_id THEN
+    RAISE EXCEPTION 'asistencia_incidencias: la marca % no pertenece al empleado %', NEW.marca_id, NEW.empleado_id
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_asistencia_incidencia_marca ON asistencia_incidencias;
+CREATE TRIGGER trg_asistencia_incidencia_marca
+  BEFORE INSERT OR UPDATE OF empleado_id, marca_id ON asistencia_incidencias
+  FOR EACH ROW EXECUTE FUNCTION asistencia_incidencia_marca_coherente();
 
 CREATE TABLE IF NOT EXISTS asistencia_diaria (
   id SERIAL PRIMARY KEY,
@@ -1100,6 +1187,11 @@ CREATE TABLE IF NOT EXISTS asistencia_diaria (
 );
 CREATE INDEX IF NOT EXISTS idx_asistencia_diaria_fecha ON asistencia_diaria(fecha);
 CREATE INDEX IF NOT EXISTS idx_asistencia_diaria_estatus_fecha ON asistencia_diaria(estatus, fecha);
+CREATE INDEX IF NOT EXISTS idx_asistencia_diaria_turno ON asistencia_diaria(turno_id);
+CREATE INDEX IF NOT EXISTS idx_asistencia_diaria_solicitud ON asistencia_diaria(solicitud_vacaciones_id);
+CREATE INDEX IF NOT EXISTS idx_asistencia_diaria_permiso ON asistencia_diaria(permiso_id);
+CREATE INDEX IF NOT EXISTS idx_asistencia_diaria_calendario ON asistencia_diaria(calendario_id);
+CREATE INDEX IF NOT EXISTS idx_asistencia_diaria_incidencia ON asistencia_diaria(incidencia_id);
 
 -- e) RLS deny-all en las tablas nuevas (decisión 2026-10-08: el único acceso a datos es el backend,
 --    conectado como postgres). Igual que 004, en la propia migración, para no depender del orden del
@@ -1126,6 +1218,8 @@ BEGIN
                            asistencia_incidencias_id_seq, asistencia_diaria_id_seq
       FROM anon, authenticated;
     REVOKE ALL ON FUNCTION asistencia_marcas_inmutable() FROM anon, authenticated;
+    REVOKE ALL ON FUNCTION asistencia_incidencia_marca_coherente() FROM anon, authenticated;
+    REVOKE ALL ON FUNCTION turno_descanso_dentro_jornada() FROM anon, authenticated;
   END IF;
 END $$;
 

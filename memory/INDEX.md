@@ -13,6 +13,13 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-21] orquestador → decisions.md — GO del humano a la Fase 3 de asistencia; orden: cerrar Fase 2 y luego lanzar el endpoint
+- [2026-10-21] orquestador → decisions.md — Confirmaciones directas del humano: frecuencia 07-20 h cada 15 min, BioTime 1.0.6.4, IP interna de la interfaz
+- [2026-10-21] tester → tests.md — Asistencia Fase 2: prueba integrada (db-init REAL x2 en supabase/postgres 17.6 limpia/desde main/pre-calendario, trigger 22/22, API real 475/475 x8 corridas y 6/6 mutantes matados, regresión reg 64/64, jest 47/1231 x3 zonas, eslint 0 errores); 2 FAIL menores (NUL → 500; DELETE de departamento con turno → 500), sin bloqueados
+- [2026-10-21] tester → decisions.md — PARA RESOLVER F-AS2-1 (NUL en turno → 500), F-AS2-2 (confirma con evidencia: turno inactivo sigue efectivo, turnos sin versionado, DELETE departamento, ejemplo del contrato), F-AS2-3 (auditoría se pierde con X-Forwarded-For > 45 caracteres)
+- [2026-10-21] [revisor] → reviews.md#2026-10-21-revisor--asistencia-fase-2 — Asistencia Fase 2 (commit 771ea81): 0 críticos, 1 alto (turno inactivo sigue efectivo), 8 medios; aprobado con observaciones
+- [2026-10-21] orquestador → decisions.md — Datos relayados por biotime-34; GO a la Fase 3 relayado NO aceptado (requiere confirmación directa del humano)
+- [2026-10-21] orquestador → decisions.md — Coordinación con biotime-34: contrato v1 adoptado y datos reales de las marcas
 - [2026-10-21] orquestador → decisions.md — Contrato de la ingesta de marcas entregado a la interfaz (docs/asistencia/contrato-ingesta-marcas.md)
 - [2026-10-21] orquestador → decisions.md — Datos reales de BioTime y su efecto en el diseño de turnos, marcas y motor
 - [2026-10-21] [coder] → code-notes.md — Asistencia Fase 2: migración 012 (turnos, vigencias EXCLUDE, marcas, RLS), API /api/asistencia, permisos Asistencia/Turnos, ajuste con datos de BioTime
@@ -189,3 +196,4 @@
 - [2026-10-15] [coder] Correcciones de la revisión final (F-A..F-E: alta de empleado con roles, usuarios privilegiados, toma de cuenta, jefe vigente, UNIQUE usuario_id) -> code-notes.md
 - [2026-10-15] [coder] Segunda ronda de la revisión final (E1 atómico con FOR UPDATE y estado final, permisos de roles privilegiados solo super, esAdmin por permiso, jefe FOR SHARE) -> code-notes.md
 - [2026-10-16] [coder] Correcciones del tipo actividad (codigo en 409, avisos.motivo, migración 011 por columna, Bloq 10 px, cruce de año) -> code-notes.md
+- [2026-10-21] [coder] → code-notes.md — Correcciones de la Fase 2 de asistencia (turno inactivo, NUL a 400, DELETE departamento 409, lotes, incidencias, descanso, índices, contrato ficticio)

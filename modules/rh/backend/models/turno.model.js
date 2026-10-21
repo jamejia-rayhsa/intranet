@@ -166,7 +166,8 @@ const Turno = {
 
   /**
    * Turno efectivo de un empleado en una fecha: la asignación individual vigente; si no hay, la del
-   * departamento ACTUAL del empleado vigente ese día (no existe historial de departamentos). Función
+   * departamento ACTUAL del empleado vigente ese día (no existe historial de departamentos). NO filtra
+   * turnos.activo (ver turno_activo en el resultado). Función
    * reutilizable por el motor de cálculo (Fase 4); `cliente` puede ser de una transacción.
    * @param {number|string} empleadoId
    * @param {string} fecha 'YYYY-MM-DD'
@@ -203,6 +204,9 @@ const Turno = {
     const turno = await Turno.obtenerPorId(fila.turno_id, cliente);
     return {
       origen,
+      // activo=false solo impide NUEVAS asignaciones: las vigentes siguen resolviéndose aquí (hace falta
+      // para recalcular días pasados); turno_activo permite a quien llama distinguirlo.
+      turno_activo: turno.activo,
       asignacion_id: fila.asignacion_id,
       vigente_desde: fila.vigente_desde,
       vigente_hasta: fila.vigente_hasta,

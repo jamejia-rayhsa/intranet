@@ -83,6 +83,15 @@ const ControladorDepartamento = {
           .json({ exito: false, mensaje: "Departamento no encontrado" });
       res.json({ exito: true, mensaje: "Departamento eliminado exitosamente" });
     } catch (error) {
+      if (error && error.code === "23503") {
+        const conTurnos = /^turno_/.test(error.constraint || "");
+        return res.status(409).json({
+          exito: false,
+          mensaje: conTurnos
+            ? "El departamento tiene turnos asignados (el historial de asignaciones se conserva) y no se puede eliminar; desactívalo"
+            : "El departamento tiene empleados u otros registros relacionados y no se puede eliminar; reasígnalos o desactívalo",
+        });
+      }
       console.error("[departamentos]", error);
       res
         .status(500)

@@ -21,6 +21,14 @@ const CAMPOS_MINUTOS = [
 
 const HORA = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+// Caracteres de control: NUL (Postgres no lo admite en texto y daría 500) y el resto de C0/DEL/C1.
+// En textos de una línea no se admite ninguno; en los de varias líneas se permiten \t, \n y \r.
+// eslint-disable-next-line no-control-regex
+const CONTROL_LINEA = /[\u0000-\u001F\u007F-\u009F]/;
+// eslint-disable-next-line no-control-regex
+const CONTROL_TEXTO = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/;
+const tieneControl = (texto, multilinea = false) => (multilinea ? CONTROL_TEXTO : CONTROL_LINEA).test(texto);
+
 /** Fecha estricta 'YYYY-MM-DD' que existe en el calendario (rechaza 2026-02-30). */
 function esFechaValida(valor) {
   if (typeof valor !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(valor)) return false;
@@ -129,6 +137,29 @@ function validarDias(dias) {
   return { dias: completos };
 }
 
+const aMin = (hora) => Number(hora.slice(0, 2)) * 60 + Number(hora.slice(3, 5));
+
+/**
+ * El descanso (inicio + duración) debe caer dentro de la jornada de cada día laborable (misma regla
+ * que el trigger turno_descanso_dentro_jornada de la BD). Con salida al día siguiente la salida
+ * cuenta +24 h y un descanso anterior a la entrada se toma del día siguiente.
+ * @returns {string|null} mensaje de error o null
+ */
+function validarDescansoEnJornada(descansoInicio, descansoMin, dias) {
+  if (!dias || !esHoraValida(descansoInicio)) return null;
+  for (const d of dias) {
+    if (!d.laborable) continue;
+    const entrada = aMin(d.hora_entrada);
+    const salida = aMin(d.hora_salida) + (d.cruza_medianoche ? 1440 : 0);
+    let inicio = aMin(descansoInicio);
+    if (d.cruza_medianoche && inicio < entrada) inicio += 1440;
+    if (inicio < entrada || inicio + descansoMin > salida) {
+      return `El descanso debe quedar dentro de la jornada (entrada a salida) de cada día laborable (día ${d.dia_semana})`;
+    }
+  }
+  return null;
+}
+
 /**
  * Valida el cuerpo de un turno. Alta (parcial=false): nombre y dias obligatorios. Edición
  * (parcial=true): solo los campos presentes. `base` = valores actuales del turno para comprobar
@@ -142,11 +173,13 @@ function validarTurno(cuerpo, { parcial = false, base = null } = {}) {
   if (c.nombre !== undefined || !parcial) {
     const nombre = typeof c.nombre === "string" ? c.nombre.trim() : "";
     if (!nombre) return { error: "El nombre es obligatorio" };
+    if (tieneControl(nombre)) return { error: "El nombre contiene caracteres no válidos" };
     if (nombre.length > MAX_NOMBRE) return { error: `El nombre no puede superar ${MAX_NOMBRE} caracteres` };
     datos.nombre = nombre;
   }
   if (c.descripcion !== undefined && c.descripcion !== null) {
     if (typeof c.descripcion !== "string") return { error: "La descripción debe ser texto" };
+    if (tieneControl(c.descripcion, true)) return { error: "La descripción contiene caracteres no válidos" };
     const descripcion = c.descripcion.trim();
     if (descripcion.length > MAX_DESCRIPCION) {
       return { error: `La descripción no puede superar ${MAX_DESCRIPCION} caracteres` };
@@ -188,6 +221,10 @@ function validarTurno(cuerpo, { parcial = false, base = null } = {}) {
     const { error, dias } = validarDias(c.dias);
     if (error) return { error };
     datos.dias = dias;
+  }
+  if (descansoMin > 0) {
+    const errorDescanso = validarDescansoEnJornada(descansoInicio, descansoMin, datos.dias || (base && base.dias));
+    if (errorDescanso) return { error: errorDescanso };
   }
   if (parcial && Object.keys(datos).length === 0) return { error: "No hay campos para actualizar" };
   return { datos };
@@ -231,5 +268,7 @@ module.exports = {
   validarDias,
   validarTurno,
   validarAsignacion,
+  validarDescansoEnJornada,
+  tieneControl,
   DIAS_SEMANA,
 };

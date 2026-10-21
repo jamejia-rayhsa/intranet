@@ -216,6 +216,37 @@ describe("Turnos - alta", () => {
     expect(registrarAccion).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["nombre con NUL", { nombre: "Mat\u0000utino" }],
+    ["descripción con NUL", { descripcion: "x\u0000" }],
+    ["descripción con control", { descripcion: "x\u0001" }],
+  ])("POST con %s -> 400 sin tocar la BD (no 500)", async (_n, extra) => {
+    const res = await request(app).post("/api/asistencia/turnos").send({ ...CUERPO, ...extra });
+    expect(res.status).toBe(400);
+    expect(res.body.mensaje).toMatch(/no válidos/);
+    expect(bd.hubo(/INSERT INTO turnos /)).toBe(false);
+    expect(bd.grupo.connect).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["nombre", { nombre: "a\u0000b" }],
+    ["descripcion", { descripcion: "a\u0000b" }],
+  ])("PUT con NUL en %s -> 400 sin UPDATE", async (_n, cuerpo) => {
+    simularTurnoExistente();
+    const res = await request(app).put("/api/asistencia/turnos/5").send(cuerpo);
+    expect(res.status).toBe(400);
+    expect(bd.hubo(/UPDATE turnos/)).toBe(false);
+  });
+
+  it("descanso fuera de la jornada -> 400 en POST", async () => {
+    const res = await request(app)
+      .post("/api/asistencia/turnos")
+      .send({ ...CUERPO, descanso_inicio: "18:00", descanso_min: 60 });
+    expect(res.status).toBe(400);
+    expect(res.body.mensaje).toMatch(/dentro de la jornada/);
+    expect(bd.hubo(/INSERT INTO turnos /)).toBe(false);
+  });
+
   it("una auditoría caída no rompe el 201", async () => {
     registrarAccion.mockRejectedValueOnce(new Error("auditoría caída"));
     expect((await request(app).post("/api/asistencia/turnos").send(CUERPO)).status).toBe(201);

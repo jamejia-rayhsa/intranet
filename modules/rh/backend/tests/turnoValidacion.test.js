@@ -5,6 +5,8 @@ const {
   validarDias,
   validarTurno,
   validarAsignacion,
+  tieneControl,
+  validarDescansoEnJornada,
 } = require("../utils/turnoValidacion");
 
 const dia = (n, extra = {}) => ({ dia_semana: n, laborable: true, hora_entrada: "08:00", hora_salida: "17:00", ...extra });
@@ -208,5 +210,96 @@ describe("Validación de asignaciones", () => {
   it("usa la columna indicada (empleado_id)", () => {
     expect(validarAsignacion({ ...ok, empleado_id: 9 }, "empleado_id").datos.empleado_id).toBe(9);
     expect(validarAsignacion(ok, "empleado_id").error).toMatch(/empleado_id/);
+  });
+});
+
+describe("Validación de turnos - caracteres de control (NUL daría 500 en Postgres)", () => {
+  const base = { nombre: "Matutino", dias: [dia(1)] };
+
+  it.each([
+    ["NUL", "a\u0000b"],
+    ["campana", "a\u0007b"],
+    ["escape", "a\u001bb"],
+    ["DEL", "a\u007fb"],
+    ["C1", "a\u0085b"],
+    ["salto de línea en el nombre", "a\nb"],
+    ["tabulador en el nombre", "a\tb"],
+  ])("nombre con %s -> error", (_n, nombre) => {
+    expect(validarTurno({ ...base, nombre }).error).toMatch(/nombre.*no válidos/i);
+    expect(validarTurno({ nombre }, { parcial: true }).error).toMatch(/nombre.*no válidos/i);
+  });
+
+  it.each([
+    ["NUL", "a\u0000b"],
+    ["NUL al final", "texto\u0000"],
+    ["campana", "a\u0007b"],
+    ["escape", "a\u001bb"],
+    ["DEL", "a\u007fb"],
+  ])("descripción con %s -> error (alta y edición)", (_n, descripcion) => {
+    expect(validarTurno({ ...base, descripcion }).error).toMatch(/descripci.n.*no v.lidos/i);
+    expect(validarTurno({ descripcion }, { parcial: true }).error).toMatch(/descripci.n.*no v.lidos/i);
+  });
+
+  it("la descripción admite saltos de línea y tabuladores; el nombre acepta acentos y símbolos", () => {
+    const { datos, error } = validarTurno({ ...base, nombre: "Logística ñ-1 (noche)", descripcion: "L-V\n08:00\t18:00\r\n" });
+    expect(error).toBeUndefined();
+    expect(datos.descripcion).toBe("L-V\n08:00\t18:00");
+  });
+
+  it("tieneControl distingue una línea de varias", () => {
+    expect(tieneControl("a\nb")).toBe(true);
+    expect(tieneControl("a\nb", true)).toBe(false);
+    expect(tieneControl("a\u0000b", true)).toBe(true);
+  });
+});
+
+describe("Validación de turnos - descanso dentro de la jornada", () => {
+  const diaCorto = dia(1, { hora_entrada: "08:00", hora_salida: "12:00" });
+
+  it("acepta el descanso contenido y justo en los bordes", () => {
+    expect(validarTurno({ nombre: "A", dias: [dia(1)], descanso_inicio: "13:00", descanso_min: 60 }).error).toBeUndefined();
+    expect(validarTurno({ nombre: "A", dias: [dia(1)], descanso_inicio: "08:00", descanso_min: 540 }).error).toBeUndefined();
+  });
+
+  it.each([
+    ["inicia antes de la entrada", "07:30", 30],
+    ["termina después de la salida", "16:30", 60],
+    ["inicia después de la salida", "18:00", 30],
+    ["excede la salida por un solo minuto", "08:00", 541],
+  ])("rechaza el descanso que %s", (_n, inicio, minutos) => {
+    expect(validarTurno({ nombre: "A", dias: [dia(1)], descanso_inicio: inicio, descanso_min: minutos }).error).toMatch(
+      /dentro de la jornada/,
+    );
+  });
+
+  it("rechaza si UN día laborable es más corto que el descanso", () => {
+    const r = validarTurno({ nombre: "A", dias: [dia(1), diaCorto.dia_semana ? { ...diaCorto, dia_semana: 6 } : diaCorto], descanso_inicio: "13:00", descanso_min: 60 });
+    expect(r.error).toMatch(/día 6/);
+  });
+
+  it("sin duración (descanso_min 0) no se valida la hora", () => {
+    expect(validarTurno({ nombre: "A", dias: [diaCorto], descanso_inicio: "13:00", descanso_min: 0 }).error).toBeUndefined();
+  });
+
+  it("turno nocturno: el descanso de madrugada cuenta del día siguiente", () => {
+    const noche = dia(1, { hora_entrada: "22:00", hora_salida: "06:00" });
+    expect(validarDescansoEnJornada("02:00", 60, [{ ...noche, laborable: true, cruza_medianoche: true }])).toBeNull();
+    expect(validarDescansoEnJornada("23:30", 60, [{ ...noche, laborable: true, cruza_medianoche: true }])).toBeNull();
+    expect(validarDescansoEnJornada("05:30", 60, [{ ...noche, laborable: true, cruza_medianoche: true }])).toMatch(/dentro/);
+    expect(validarDescansoEnJornada("12:00", 60, [{ ...noche, laborable: true, cruza_medianoche: true }])).toMatch(/dentro/);
+  });
+
+  it("edición: usa los días actuales (base) cuando solo cambia el descanso, y los nuevos si vienen", () => {
+    const actual = {
+      tolerancia_retardo_min: 10,
+      umbral_falta_min: 30,
+      descanso_inicio: "13:00",
+      descanso_min: 60,
+      dias: [{ dia_semana: 1, laborable: true, hora_entrada: "08:00", hora_salida: "12:00", cruza_medianoche: false }],
+    };
+    expect(validarTurno({ descanso_min: 30 }, { parcial: true, base: actual }).error).toMatch(/dentro de la jornada/);
+    const ok = validarTurno({ descanso_inicio: "10:00" }, { parcial: true, base: actual });
+    expect(ok.error).toBeUndefined();
+    expect(validarTurno({ dias: [dia(1)] }, { parcial: true, base: actual }).error).toBeUndefined();
   });
 });

@@ -386,7 +386,35 @@ describe("Turno efectivo de un empleado", () => {
       simularEmpleado();
       const res = await request(app).get(URL(9, "?fecha=2026-10-21"));
       expect(res.status).toBe(200);
-      expect(res.body.datos).toEqual({ empleado_id: 9, fecha: "2026-10-21", origen: null, asignacion_id: null, turno: null });
+      expect(res.body.datos).toEqual({
+        empleado_id: 9,
+        fecha: "2026-10-21",
+        origen: null,
+        asignacion_id: null,
+        turno: null,
+        turno_activo: null,
+      });
+    });
+
+    it("un turno INACTIVO con asignación vigente sigue siendo el efectivo e informa turno_activo=false", async () => {
+      simularEmpleado();
+      bd.cuando(/FROM turnos t WHERE t\.id = \$1/, { rows: [{ ...TURNO_FILA, activo: false }] });
+      bd.cuando(/FROM turno_dias WHERE turno_id/, { rows: [] });
+      bd.cuando(/FROM turno_empleado a/, { rows: [FILA_ASIG] });
+      const res = await request(app).get(URL(9, "?fecha=2020-06-01"));
+      expect(res.status).toBe(200);
+      expect(res.body.datos).toMatchObject({ origen: "empleado", asignacion_id: 11, turno_activo: false });
+      expect(res.body.datos.turno.activo).toBe(false);
+      // la resolución no filtra por turnos.activo (hace falta para recalcular días pasados)
+      expect(bd.sqls().filter((l) => /FROM turno_(empleado|departamento)|JOIN turno_departamento/.test(l.sql)).every((l) => !/activo/.test(l.sql))).toBe(true);
+    });
+
+    it("turno activo -> turno_activo=true (también por departamento)", async () => {
+      simularEmpleado();
+      simularTurno();
+      bd.cuando(/FROM empleados e\s+JOIN turno_departamento a/, { rows: [{ ...FILA_ASIG, asignacion_id: 4 }] });
+      const res = await request(app).get(URL(9, "?fecha=2026-10-21"));
+      expect(res.body.datos).toMatchObject({ origen: "departamento", turno_activo: true });
     });
 
     it("sin fecha usa hoy en America/Mexico_City calculado por la BD", async () => {

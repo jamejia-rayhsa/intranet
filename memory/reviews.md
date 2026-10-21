@@ -2658,3 +2658,118 @@ Hallazgos abiertos:
 **Revisado sin hallazgos:** regresiones en vacaciones (orden 0 hábiles -> actividad -> traslape -> saldo -> cupo, igual en /disponibilidad; `periodo` y autoridad sin cambios); `RECHAZO_ACTIVIDAD` (17 caracteres) cabe en `accion VARCHAR(20)` y `registro_id` es VARCHAR(100); el aviso de POST/PUT solo lo ve quien puede editar el calendario; `esSeleccionable` excluye la fecha bloqueada; `--cal-actividad-*` definidas en `.calendario` (el aviso de VacacionesPage usa colores en línea); contraste #4c1d95 sobre #ede9fe (9,23:1).
 
 **Pruebas (detalle):** `npx jest modules/rh --silent --ci`: 20 suites, 507/507 OK. No se ejecutaron mutaciones ni Postgres (solo lectura).
+
+### [2026-10-21] [revisor] — Asistencia Fase 2
+**Alcance:** commit 771ea81 (migración 012, `turnos`/`turnoValidacion`/`turnoAsignacion` modelos y controladores, rutas `/api/asistencia`, tests, `init.sql`, compose, `docs/supabase.md`, contrato de ingesta). Contra decisions.md (2026-10-21: alcance, endpoint con llave, CONFLICTO RLS, decisiones tras Fase 1, datos BioTime, contrato v1), research.md 1640-1908, code-notes.md "Asistencia Fase 2" y la entrada del coder. Revisión estática y de lectura; no se ejecutaron tests ni Postgres aquí.
+**Veredicto:** APROBADO CON OBSERVACIONES. 0 críticos, 1 alto, 8 medios, 12 bajos. No hay violación de decisión: alcance Fase 2 respetado (sin endpoint de ingesta, sin motor, sin pantallas), sin rol de BD, RLS en las 9 tablas y 004 al final del db-init, `portal_admin` fuera de Turnos, marcas sin UPDATE/DELETE salvo `empleado_id`, zona America/Mexico_City, retención siempre. Decisiones que el orquestador debe tomar antes de Fase 4 (ver medios 2 y 3) y antes de la Fase 3 (ver medio 5 y 6, contrato v1 ya adoptado por el sincronizador).
+
+**Hallazgos:**
+
+**Archivo/línea:** modules/rh/backend/models/turno.model.js:176-200 (obtenerEfectivo)
+**Problema:** el turno efectivo no filtra `turnos.activo`: un turno desactivado sigue devolviéndose como efectivo para individual y departamento, aunque la API de errores diga "desactívalo en lugar de eliminarlo" y la Fase 4 lo aplicaría.
+**Severidad:** alto
+**Fix sugerido:** decidir el comportamiento (turno inactivo = sin turno ese día, o caer a la asignación de departamento) y aplicarlo en la consulta (`JOIN turnos t ... AND t.activo`); añadir test con turno inactivo. Mientras tanto, documentarlo.
+
+**Archivo/línea:** modules/rh/backend/models/turno.model.js:190-193 (departamento actual) y turnoAsignacion.model.js (historialEmpleado)
+**Problema:** el turno de departamento se resuelve con el departamento ACTUAL del empleado; si cambia de departamento, las fechas pasadas se reclasifican al nuevo turno. No hay historial de departamento (limitación ya anotada por el coder).
+**Severidad:** medio
+**Fix sugerido:** decisión del orquestador antes de Fase 4: historial de departamento (tabla con vigencia o snapshot del turno aplicado en `asistencia_diaria`) o aceptar y documentarlo a RH con su consecuencia.
+
+**Archivo/línea:** modules/rh/backend/models/turno.model.js:63-64 (_escribirDias) y :115 (actualizar)
+**Problema:** editar un turno reescribe `turno_dias` en sitio, sin versión ni fecha de vigencia del detalle. Si la Fase 4 recalcula días pasados, esos días cambian retroactivamente; `version_calculo` no protege porque el turno no tiene versión.
+**Severidad:** medio
+**Fix sugerido:** versionar el detalle del turno (tabla `turno_dias_version` con vigencia, o `turnos.version` referenciada desde `asistencia_diaria`), o prohibir editar días con asignaciones/cálculos y exigir alta de turno nuevo. Decidir antes de Fase 4.
+
+**Archivo/línea:** modules/rh/backend/migrations/012-asistencia.sql:185-199 (asistencia_incidencias)
+**Problema:** sin coherencia entre tipo y marca: `correccion_marca` puede no tener `marca_id` ni `marca_ts_corregida`; `marca_ts_corregida` puede existir sin marca; la marca puede ser de otro empleado (no se valida `empleado_id = marca.empleado_id`); `marca_id` sin índice; no hay unicidad de incidencias activas por día.
+**Severidad:** medio
+**Fix sugerido:** CHECK `(tipo <> 'correccion_marca' OR (marca_id IS NOT NULL AND marca_ts_corregida IS NOT NULL))` y `(marca_ts_corregida IS NULL OR marca_id IS NOT NULL)`; validar en la API que la marca pertenezca al empleado; índice en `marca_id`; índice único parcial `(empleado_id, fecha, tipo) WHERE activa` si la regla de negocio lo permite.
+
+**Archivo/línea:** modules/rh/backend/migrations/012-asistencia.sql:126 (ultimo_id_externo BIGINT), :137 (id_externo VARCHAR(100)); contrato docs/asistencia/contrato-ingesta-marcas.md:52 (máx. 64 caracteres, texto o número)
+**Problema:** el cursor es BIGINT pero `id_externo` es texto sin validación numérica ni longitud coherente con el contrato. Un id no numérico o de más de 18-19 dígitos rompería la actualización del cursor (500 o cursor corrupto) en Fase 3.
+**Severidad:** medio
+**Fix sugerido:** CHECK `id_externo ~ '^[0-9]{1,18}$'` (si el origen es BioTime) o validación en la API con test; alinear longitud (64 en contrato o schema). Al actualizar cursor, usar `GREATEST`.
+
+**Archivo/línea:** migrations/012-asistencia.sql:108-119 (asistencia_sync_lotes) frente a docs/asistencia/contrato-ingesta-marcas.md:131 y :92-97 (respuesta)
+**Problema:** el contrato (ya adoptado por el sincronizador, decisions 2026-10-21) promete que la intranet registra en el lote `estado` y `error`, y responde `sin_empleado` y `rechazos`; la tabla no tiene `estado`, `error` ni `sin_empleado`, y los `rechazos` no se persisten (solo viajan en la respuesta).
+**Severidad:** medio
+**Fix sugerido:** añadir columnas aditivas a 012 mientras no esté aplicada en staging/producción (`estado VARCHAR(20)`, `error TEXT`, `sin_empleado INT`, `rechazos JSONB` acotado a 50), o cambiar el contrato por versión. Si la 012 ya está aplicada en algún entorno, es cambio de versión del contrato.
+
+**Archivo/línea:** modules/rh/backend/migrations/012-asistencia.sql:159-180 (trigger asistencia_marcas_inmutable) y 185-198
+**Problema:** (a) la comparación usa una lista fija de columnas: una columna añadida en migraciones futuras quedará mutable en silencio; (b) no hay ruta de mantenimiento para purgar datos de prueba (staging, simulador) ni corregir marcas erróneas por un bug de ingesta, salvo `TRUNCATE` o desactivar el trigger; (c) el cambio de `empleado_id` (vinculación) no deja rastro de auditoría. Verificado: el trigger NO rompe el flujo previsto (`ON CONFLICT DO NOTHING` en ingesta, backfill con UPDATE de `empleado_id`, `restore.sh` con TRUNCATE + `--disable-triggers`, ON DELETE SET NULL de empleados).
+**Severidad:** medio
+**Fix sugerido:** comentario en el trigger "al añadir columnas, añadirlas aquí" y test que lo verifique; procedimiento documentado de mantenimiento (`ALTER TABLE ... DISABLE TRIGGER` dentro de transacción, con registro); registrar en `asistencia_sync_lotes` o en auditoría cada vinculación de `empleado_id`. Para Fase 3: prohibido `ON CONFLICT DO UPDATE` sobre `asistencia_marcas` (el trigger lo rompería).
+
+**Archivo/línea:** modules/rh/backend/tests/asistencia-migracion.test.js (todo el archivo); tests/fakeAsistenciaDb.js:8-22; tests/turnoAsignacion.test.js:36-60
+**Problema:** ninguna prueba del repo ejecuta SQL real: EXCLUDE, trigger, semilla, RLS y permisos de la 012 se verifican solo por regex o a mano (code-notes); el fake (a) desestructura `params[2]` y `params[3]` del SQL de `verificarPermiso` e ignora `rol_id`, así que no detecta permisos por rol; (b) devuelve `{rows: []}` para cualquier SQL sin regla, lo que puede dar por bueno un camino por accidente; (c) el test de permisos `Asistencia:consulta` usa un regex laxo (`[\s\S]*'consulta'`) que acepta casi cualquier texto.
+**Severidad:** medio
+**Fix sugerido:** suite de integración opcional (`TEST_PG_URL`) que aplique init.sql + 012 + 004 dos veces y pruebe traslape, trigger, semilla, permisos por rol y RLS, ejecutada en CI con postgres:16 y supabase/postgres; que el fake lance error para SQL no mockeado; que el helper filtre por `rol_id`; endurecer el regex de permisos.
+
+**Archivo/línea:** docs/asistencia/contrato-ingesta-marcas.md:132 (sincronizador "reintento") y :125 (vinculación "se reintentan periódicamente")
+**Problema:** el contrato promete reintentos periódicos de la vinculación de `empleado_id` y un cursor que retrocede; no hay job, scheduler ni tarea asignada en Fase 3/4 (research: el repo no tiene scheduler).
+**Severidad:** medio
+**Fix sugerido:** asignar explícitamente a Fase 3 o 4 el mecanismo (barrido cada 15 min con advisory lock, opción A/B/C de research) y documentarlo en roadmap.md antes de que el sincronizador empiece a enviar.
+
+**Archivo/línea:** modules/rh/backend/migrations/012-asistencia.sql:12 (CREATE EXTENSION) y :249 (REVOKE solo anon/authenticated)
+**Problema:** `btree_gist` queda en `public` (sus funciones `gbt_*` son ejecutables por PUBLIC) y el REVOKE no cubre PUBLIC; la 004 final tampoco. Riesgo bajo: las funciones reciben tipos `internal` y no son invocables de forma útil por la API.
+**Severidad:** bajo
+**Fix sugerido:** crear la extensión en un esquema dedicado (`extensions`) si existe en Supabase, o `REVOKE ALL ON FUNCTION asistencia_marcas_inmutable() FROM PUBLIC`. No bloqueante.
+
+**Archivo/línea:** migrations/012-asistencia.sql:201-223 (asistencia_diaria), :185-199 (incidencias), :134-155 (marcas), :123-132 (sync_estado)
+**Problema:** FKs sin índice: `asistencia_diaria(turno_id, solicitud_vacaciones_id, permiso_id, calendario_id, incidencia_id)`, `asistencia_incidencias(marca_id, creado_por)`, `asistencia_marcas(lote_id)`, `asistencia_sync_estado(ultimo_lote_id)`. Afecta a DELETE de padres (seq scan) y a joins de Fase 4.
+**Severidad:** bajo
+**Fix sugerido:** índices sobre esas columnas en la 012 (`CREATE INDEX IF NOT EXISTS`).
+
+**Archivo/línea:** migrations/012-asistencia.sql:29-50 (turnos) y modules/rh/backend/utils/turnoValidacion.js (validarDias)
+**Problema:** no hay validación de que `descanso_inicio` caiga dentro de la jornada de los días laborables; el descanso puede quedar fuera del turno o en día de descanso. Además `turnos.fecha_creacion` es TIMESTAMP sin zona (se serializa con desfase si el servidor no está en la zona de la app).
+**Severidad:** bajo
+**Fix sugerido:** validar en `validarTurno` que `descanso_inicio` y `descanso_inicio + descanso_min` queden dentro de [hora_entrada, hora_salida] de algún día laborable; usar TIMESTAMPTZ en las columnas nuevas.
+
+**Archivo/línea:** migrations/012-asistencia.sql:108-121 (UNIQUE sobre lote_externo) y docs/asistencia/contrato-ingesta-marcas.md (cuerpo sin lote_externo)
+**Problema:** `UNIQUE (origen, lote_externo) WHERE lote_externo IS NOT NULL` nunca se alimenta: el contrato no envía lote externo, así que cada POST crea un lote nuevo (reenvíos incluidos). Los datos siguen siendo idempotentes por `(origen, id_externo)`, pero el log de lotes tendrá filas repetidas.
+**Severidad:** bajo
+**Fix sugerido:** o quitar el UNIQUE, o acordar con el sincronizador un `lote_externo` opcional en el contrato (cambio de versión) o usar `hash_cuerpo` como clave de reenvío.
+
+**Archivo/línea:** migrations/012-asistencia.sql:134-151 (asistencia_marcas)
+**Problema:** faltan CHECK que el contrato ya promete: `btrim(codigo_empleado) <> ''`, `crudo` ≤ 2 KB (`pg_column_size(crudo) <= 2048`), `id_externo` no vacío. No hay CHECK de `marca_ts` futura (queda solo en la API).
+**Severidad:** bajo
+**Fix sugerido:** añadir esos CHECK (defensa en profundidad); mantener la validación de API como primera barrera y probar ambas.
+
+**Archivo/línea:** migrations/012-asistencia.sql:290-324 (permisos)
+**Problema:** `Asistencia:edicion` se siembra para rh_admin y super_admin, pero ningún endpoint usa esa edición (las rutas de Asistencia son solo lectura). El permiso de escritura de incidencias/correcciones (Fase 4-5) aún no existe.
+**Severidad:** bajo
+**Fix sugerido:** sembrar solo `consulta` para Asistencia, o documentar que `edicion` quedará reservada para incidencias (Fase 4-5). Confirmar con el orquestador si "Administradores" de la decisión incluye a portal_admin (hoy se excluye).
+
+**Archivo/línea:** modules/rh/backend/controllers/departamento.controller.js:77-91
+**Problema:** borrar un departamento con turno asignado (FK `turno_departamento`, 012:80) responde 500 genérico "Error al eliminar departamento" en vez de 409 (ya ocurría por empleados; la 012 suma un caso).
+**Severidad:** bajo
+**Fix sugerido:** mapear 23503 a 409 con mensaje que indique desasignar turnos y empleados.
+
+**Archivo/línea:** modules/rh/backend/controllers/turno.controller.js (actualizar: lectura de `previo` fuera de la transacción)
+**Problema:** la validación de umbral/tolerancia usa un `previo` leído fuera del lock de `Turno.actualizar`; con dos ediciones concurrentes la validación puede usar valores obsoletos.
+**Severidad:** bajo
+**Fix sugerido:** leer el `previo` dentro de la misma transacción con `FOR UPDATE`, o revalidar contra la fila bloqueada.
+
+**Archivo/línea:** modules/rh/backend/tests/asistencia-migracion.test.js:211-212 (escáner de datos reales)
+**Problema:** el escáner solo busca `10.x.x.x` y `CN\d{8,}`; no cubre 172.16-31, 192.168, otros formatos de serie ni los archivos del contrato. Verificado a mano en este commit: no hay IPs, números de serie ni emp_code reales en ningún archivo del commit; `docs/respuesta_intranet.md` no está versionado ni en el historial.
+**Severidad:** bajo
+**Fix sugerido:** ampliar el patrón (RFC1918 completo, `CN\d+`) y aplicarlo también a `docs/asistencia/*.md` y a `turno.controller.js`.
+
+**Archivo/línea:** docs/asistencia/contrato-ingesta-marcas.md:32-40 (ejemplo)
+**Problema:** el ejemplo se construyó a partir de un registro real de `docs/respuesta_intranet.md`: `id_externo` "1566931", `subida_ts` (mismo instante que el upload_time real), `terminal_alias`/`area_externa` "CORPORATIVO". No es IP, serie ni emp_code, y la decisión nombra solo IPs y números de serie, así que lo clasifico como bajo. Si el orquestador entiende que "esos valores" incluye cualquier dato de ese archivo, sube a crítico y es una violación de decisions.md.
+**Severidad:** bajo (escalar para decisión del orquestador)
+**Fix sugerido:** sustituir id, timestamps y alias por valores ficticios en el ejemplo y revisar el `terminal_alias` real en los tests.
+
+**Archivo/línea:** docs/asistencia/contrato-ingesta-marcas.md:52, :58
+**Problema:** el contrato dice `máximo 64 caracteres` para `id_externo` y mapea `area_externa` a "area_alias" (nombre distinto del campo); la tabla tiene VARCHAR(100).
+**Severidad:** bajo
+**Fix sugerido:** unificar la longitud y el nombre del campo antes de la v1 definitiva.
+
+**Archivo/línea:** modules/rh/backend/migrations/012-asistencia.sql (ausencia de `fecha_local`) frente a research.md (propuesta de asistencia_marcas con `fecha_local` y `tipo_marca`)
+**Problema:** la tabla no tiene día local ni índice por fecha local; el motor (Fase 4) tendrá que convertir `marca_ts` en cada consulta. La decisión (2026-10-21) manda convertir en el motor, así que es consecuencia aceptada: falta índice de expresión `((marca_ts AT TIME ZONE 'America/Mexico_City')::date)` o columna derivada.
+**Severidad:** bajo
+**Fix sugerido:** anotar en roadmap de Fase 4 el índice de expresión o la columna derivada con test de rendimiento.
+
+**Revisado sin hallazgos:** idempotencia de la 012 (CREATE ... IF NOT EXISTS, DROP/CREATE del trigger, semilla solo si `turnos` vacía, ON CONFLICT en permisos con PK de `rol_opcion_permisos`); falla segura (`CREATE EXTENSION` sin fallback y ON_ERROR_STOP en entrypoint y compose, así que si falla el backend no arranca); EXCLUDE con `daterange '[]'` y NULL = abierta (correcto); `terminar` solo acorta (409 si no acorta, FOR UPDATE, sin candado de traslape necesario porque acortar no crea solapes); mapeo de días BioTime 0=domingo a ISO 7 correcto y coincide con la semilla; ventanas, tolerancias y descanso de la semilla coinciden con att_timeinterval/att_breaktime de docs/respuesta_intranet.md; nocturno derivado y duración correctas; fechas como texto (Date.UTC solo para validar, nunca new Date(texto)); acceso a `/empleados/:id/turno` (propio, jefe vigente con `jefe_inmediato_id` actual, RH con Empleados:edicion, 403 uniforme sin revelar existencia para no-RH); `portal_admin` sin Turnos ni Asistencia (init.sql solo le da portal); 500 genéricos sin texto SQL; auditoría sin datos sensibles; candados de asistencia (4301/4302) no colisionan con vacaciones (4217); no hay timers ni `new Date()` en los tests nuevos (la inestabilidad de 5 suites del coder está en delegacionPermisos/portal, fuera de este commit); el schema admite los datos reales que el sincronizador describe (terminal_sn vacío, verify_type 0, source 2, codigo_empleado de 1-3 dígitos como texto, estado_marca '0').
+
+**Pruebas (detalle):** revisión estática, lectura de código, migración, compose, docs y tests. No se ejecutó jest ni Postgres en esta revisión. Verificación del coder (no repetida aquí): 47 suites / 1231 tests OK, 57 mutaciones, Postgres 16 y supabase/postgres 17.6 en contenedores desechables.

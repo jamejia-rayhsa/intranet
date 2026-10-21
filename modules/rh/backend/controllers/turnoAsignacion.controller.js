@@ -123,7 +123,7 @@ const ControladorTurnoEmpleado = {
         exito: true,
         datos: efectivo
           ? { empleado_id: empleado.id, fecha, ...efectivo }
-          : { empleado_id: empleado.id, fecha, origen: null, asignacion_id: null, turno: null },
+          : { empleado_id: empleado.id, fecha, origen: null, asignacion_id: null, turno: null, turno_activo: null },
       });
     } catch (error) {
       responderError(res, "consultar el turno del empleado", error);

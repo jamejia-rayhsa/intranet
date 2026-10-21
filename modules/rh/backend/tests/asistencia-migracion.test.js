@@ -92,7 +92,54 @@ describe("Migración 012 asistencia - esquema", () => {
     // La marca original no cambia: subida_ts y las demás columnas crudas están en la comparación
     expect(sql).toMatch(/NEW\.marca_ts, NEW\.subida_ts/);
     expect(sql).toMatch(/OLD\.marca_ts, OLD\.subida_ts/);
-    expect(sql).not.toMatch(/NEW\.empleado_id/); // empleado_id es lo único que puede cambiar
+    // empleado_id es lo único que puede cambiar: no está en la comparación de la función de inmutabilidad
+    const funcion = sql.slice(sql.indexOf("FUNCTION asistencia_marcas_inmutable"), sql.indexOf("DROP TRIGGER IF EXISTS trg_asistencia_marcas_inmutable"));
+    expect(funcion.length).toBeGreaterThan(100);
+    expect(funcion).not.toMatch(/NEW\.empleado_id/);
+  });
+
+  it("lotes: estatus (en_curso/ok/error), error y sin_empleado; sin lote_externo ni su UNIQUE; sin llave_id (Fase 3)", () => {
+    const sql = normalizar(MIGRACION);
+    const lotes = sql.slice(sql.indexOf("CREATE TABLE IF NOT EXISTS asistencia_sync_lotes"), sql.indexOf("CREATE TABLE IF NOT EXISTS asistencia_sync_estado"));
+    expect(lotes).toMatch(/estatus VARCHAR\(20\) NOT NULL DEFAULT 'en_curso'/);
+    expect(lotes).toMatch(/CHECK \(estatus IN \('en_curso', 'ok', 'error'\)\)/);
+    expect(lotes).toMatch(/error TEXT/);
+    expect(lotes).toMatch(/sin_empleado INT NOT NULL DEFAULT 0/);
+    expect(lotes).not.toMatch(/llave_id/);
+    expect(sql).not.toMatch(/lote_externo/);
+  });
+
+  it("incidencias: la corrección exige marca y hora; la hora exige marca; la marca debe ser del mismo empleado (trigger)", () => {
+    const sql = normalizar(MIGRACION);
+    expect(sql).toMatch(/tipo <> 'correccion_marca' OR \(marca_id IS NOT NULL AND marca_ts_corregida IS NOT NULL\)/);
+    expect(sql).toMatch(/marca_ts_corregida IS NULL OR \(marca_id IS NOT NULL AND tipo = 'correccion_marca'\)/);
+    expect(sql).toMatch(/SELECT m\.empleado_id INTO empleado_marca FROM asistencia_marcas m WHERE m\.id = NEW\.marca_id/);
+    expect(sql).toMatch(/empleado_marca IS DISTINCT FROM NEW\.empleado_id THEN RAISE EXCEPTION/);
+    expect(sql).toMatch(/BEFORE INSERT OR UPDATE OF empleado_id, marca_id ON asistencia_incidencias/);
+  });
+
+  it("descanso dentro de la jornada: trigger de restricción diferido en turnos y turno_dias", () => {
+    const sql = normalizar(MIGRACION);
+    expect(sql).toMatch(/CREATE CONSTRAINT TRIGGER trg_turnos_descanso AFTER INSERT OR UPDATE OF descanso_inicio, descanso_min ON turnos DEFERRABLE INITIALLY DEFERRED/);
+    expect(sql).toMatch(/CREATE CONSTRAINT TRIGGER trg_turno_dias_descanso AFTER INSERT OR UPDATE OR DELETE ON turno_dias DEFERRABLE INITIALLY DEFERRED/);
+    expect(sql).toMatch(/r\.ini < m\.ent OR r\.ini \+ t\.descanso_min > m\.sal/);
+  });
+
+  it.each([
+    ["turnos", "creado_por"],
+    ["turno_departamento", "creado_por"],
+    ["turno_empleado", "creado_por"],
+    ["asistencia_sync_estado", "ultimo_lote_id"],
+    ["asistencia_marcas", "lote_id"],
+    ["asistencia_incidencias", "marca_id"],
+    ["asistencia_incidencias", "creado_por"],
+    ["asistencia_diaria", "turno_id"],
+    ["asistencia_diaria", "solicitud_vacaciones_id"],
+    ["asistencia_diaria", "permiso_id"],
+    ["asistencia_diaria", "calendario_id"],
+    ["asistencia_diaria", "incidencia_id"],
+  ])("FK sin índice propio: %s(%s) tiene índice", (tabla, columna) => {
+    expect(normalizar(MIGRACION)).toMatch(new RegExp(`CREATE INDEX IF NOT EXISTS \\w+ ON ${tabla}\\(${columna}\\)`));
   });
 
   it("sincronización: cursor por id y por subida", () => {
@@ -205,10 +252,24 @@ describe("Archivos de asistencia - sin datos reales de la red de BioTime", () =>
     "modules/rh/backend/models/turno.model.js",
     "modules/rh/backend/models/turnoAsignacion.model.js",
     "docs/supabase.md",
+    "docs/asistencia/contrato-ingesta-marcas.md",
   ];
   it.each(archivos)("%s no contiene IPs privadas ni números de serie de terminal", (archivo) => {
     const texto = leer(archivo);
     expect(texto).not.toMatch(/\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);
     expect(texto).not.toMatch(/\bCN\d{8,}\b/);
+  });
+});
+
+describe("Contrato de ingesta - ejemplos ficticios", () => {
+  const contrato = leer("docs/asistencia/contrato-ingesta-marcas.md");
+  it("no usa el id, los instantes ni el alias de un registro real", () => {
+    expect(contrato).not.toMatch(/1566931|1567430|1567001|CORPORATIVO|2026-10-21T/);
+    expect(contrato).toContain('"id_externo": "1000123"');
+    expect(contrato).toContain('"marca_ts": "2026-01-15T14:00:00Z"');
+    expect(contrato).toContain('"terminal_alias": "SEDE-A"');
+  });
+  it("documenta estatus, error y sin_empleado del lote", () => {
+    expect(contrato).toMatch(/`estatus` \(`en_curso`, `ok` o `error`\)/);
   });
 });

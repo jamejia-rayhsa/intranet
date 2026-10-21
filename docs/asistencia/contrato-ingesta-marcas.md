@@ -29,15 +29,15 @@ Para: equipo de la interfaz con BioTime. De: equipo de la intranet (módulo RH, 
   "origen": "biotime",
   "marcas": [
     {
-      "id_externo": "1566931",
+      "id_externo": "1000123",
       "codigo_empleado": "1234",
-      "marca_ts": "2026-10-21T14:10:22Z",
-      "subida_ts": "2026-10-21T14:10:24.134Z",
+      "marca_ts": "2026-01-15T14:00:00Z",
+      "subida_ts": "2026-01-15T14:00:02Z",
       "estado_marca": 0,
       "tipo_verificacion": 15,
       "terminal_sn": "SN-DE-EJEMPLO",
-      "terminal_alias": "CORPORATIVO",
-      "area_externa": "CORPORATIVO",
+      "terminal_alias": "SEDE-A",
+      "area_externa": "SEDE-A",
       "crudo": { "work_code": "0", "source": 1, "is_attendance": null }
     }
   ]
@@ -62,7 +62,7 @@ No conviertan la hora a la zona de México ni la normalicen: el instante en UTC 
 
 ### Límites
 
-- **Máximo 500 marcas y 1 MB por envío** (decidido por la intranet; propusieron 1,000). Con 500 por envío, la carga de unas 134 mil marcas históricas son unos 270 envíos.
+- **Máximo 500 marcas y 1 MB por envío** (decidido por la intranet; propusieron 1,000). Con 500 por envío, la carga de unas 100 mil marcas históricas son unos 200 envíos.
 - Un envío a la vez (secuencial), por orden ascendente de `id`.
 - Hasta 60 envíos por minuto por llave; más devuelve `429` con `Retry-After`.
 - Un cuerpo de más de 1 MB devuelve `413`; una lista de más de 500 marcas, `400`.
@@ -79,9 +79,9 @@ No conviertan la hora a la zona de México ni la normalicen: el instante en UTC 
     "duplicadas": 2,
     "rechazadas": 1,
     "sin_empleado": 12,
-    "ultimo_id_externo": "1567430",
+    "ultimo_id_externo": "1000622",
     "rechazos": [
-      { "indice": 41, "id_externo": "1567001", "motivo": "marca_ts sin zona horaria" }
+      { "indice": 41, "id_externo": "1000150", "motivo": "marca_ts sin zona horaria" }
     ]
   }
 }
@@ -114,12 +114,12 @@ Los errores devuelven `{ "exito": false, "mensaje": "..." }` sin detalles intern
   "exito": true,
   "datos": {
     "origen": "biotime",
-    "ultimo_id_externo": "1567430",
-    "ultima_marca_ts": "2026-10-21T20:03:11Z",
-    "ultima_subida_ts": "2026-10-21T20:03:13Z",
-    "ultimo_exito": "2026-10-21T20:15:02Z",
+    "ultimo_id_externo": "1000622",
+    "ultima_marca_ts": "2026-01-15T20:00:00Z",
+    "ultima_subida_ts": "2026-01-15T20:00:02Z",
+    "ultimo_exito": "2026-01-15T20:15:00Z",
     "ultimo_error": null,
-    "total_marcas": 134264
+    "total_marcas": 100000
   }
 }
 ```
@@ -128,7 +128,7 @@ Con esto la interfaz puede retomar sin guardar nada propio: pide a BioTime las t
 
 ## 4. Quién registra qué
 
-- **La intranet** crea el registro de cada envío (`asistencia_sync_lotes`: recibidas, insertadas, duplicadas, rechazadas, estado, error) y actualiza el cursor (`asistencia_sync_estado`). **La interfaz no tiene que mandar ni escribir nada de eso**; solo hace el `POST`.
+- **La intranet** crea el registro de cada envío (`asistencia_sync_lotes`: recibidas, insertadas, duplicadas, rechazadas, `sin_empleado`, `estatus` (`en_curso`, `ok` o `error`) y `error`) y actualiza el cursor (`asistencia_sync_estado`). **La interfaz no tiene que mandar ni escribir nada de eso**; solo hace el `POST`.
 - **`empleado_id` lo llena la intranet**, no la interfaz: al recibir la marca busca un empleado cuyo `numero_nomina` sea igual a `codigo_empleado`. Si hay una sola coincidencia lo vincula; si no hay (ex empleados, códigos desconocidos) o hay varias, queda vacío y se cuenta en `sin_empleado`. Los vacíos se reintentan periódicamente.
 - Las marcas **nunca se editan ni se borran** y se conservan siempre.
 
