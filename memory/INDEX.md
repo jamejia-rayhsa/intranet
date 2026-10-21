@@ -13,6 +13,8 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-21] [coder] → code-notes.md — Asistencia Fase 3: ingesta con llave (migración 013, middleware X-Api-Key, POST /ingesta/marcas, GET /estado, administración de llaves, TRUST_PROXY, simulador; jest 1700, 127 mutantes, pg16+pg17 db-init real)
+- [2026-10-21] orquestador → decisions.md — Decisión del humano: opción A (snapshot + quincenas cerradas a los 3 días, reabre solo RH y super_admin)
 - [2026-10-21] orquestador → decisions.md — GO del humano a la Fase 3 de asistencia; orden: cerrar Fase 2 y luego lanzar el endpoint
 - [2026-10-21] orquestador → decisions.md — Confirmaciones directas del humano: frecuencia 07-20 h cada 15 min, BioTime 1.0.6.4, IP interna de la interfaz
 - [2026-10-21] tester → tests.md — Asistencia Fase 2: prueba integrada (db-init REAL x2 en supabase/postgres 17.6 limpia/desde main/pre-calendario, trigger 22/22, API real 475/475 x8 corridas y 6/6 mutantes matados, regresión reg 64/64, jest 47/1231 x3 zonas, eslint 0 errores); 2 FAIL menores (NUL → 500; DELETE de departamento con turno → 500), sin bloqueados

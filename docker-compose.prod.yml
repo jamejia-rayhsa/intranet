@@ -47,6 +47,8 @@ services:
       MSSQL_USER: ${MSSQL_USER}
       MSSQL_PASSWORD: ${MSSQL_PASSWORD}
       MSSQL_DB: ${MSSQL_DB}
+      # Proxies de confianza para req.ip (lista de IP de las llaves de ingesta): vacío = ninguno
+      TRUST_PROXY: ${TRUST_PROXY:-}
     restart: always
     depends_on:
       supabase-db-init:

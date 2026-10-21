@@ -77,6 +77,6 @@
 ## Fase 1 — Investigación (repo, reglas de cruce, modelo de turnos de BioTime, diseño) — CERRADA (research.md 1640-1908)
 ## Fase 2 — BD (turnos, asignaciones, marcas, asistencia diaria, incidencias), API, permisos, auditoría — EN CURSO (coder)
 ## Fase 3 — Endpoint de ingesta con llave + contrato para la interfaz de BioTime + simulador de marcas — NO INICIADA
-## Fase 4 — Motor de análisis (retardo/falta/salida anticipada/incompleta, cruce con vacaciones, permisos y calendario) — NO INICIADA
+## Fase 4 — Motor de análisis (retardo/falta/salida anticipada/incompleta, cruce con vacaciones, permisos y calendario) con snapshot de turno y periodos quincenales cerrados a los 3 días — NO INICIADA
 ## Fase 5 — Pantallas: Mi asistencia, Equipo (jefe), RH (turnos, asignaciones, justificaciones, estado de sincronización) — NO INICIADA
 ## Fase 6 — Revisión final, pruebas integrales y cierre — NO INICIADA

@@ -37,6 +37,8 @@ services:
       MSSQL_USER: ${MSSQL_USER:-sa}
       MSSQL_PASSWORD: ${MSSQL_PASSWORD:-dev_password_123}
       MSSQL_DB: ${MSSQL_DB:-bi_data}
+      # Proxies de confianza para req.ip (lista de IP de las llaves de ingesta): vacío = ninguno
+      TRUST_PROXY: ${TRUST_PROXY:-}
     ports:
       - "${BACKEND_PORT:-4000}:4000"
     volumes:

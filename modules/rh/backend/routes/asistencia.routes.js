@@ -1,6 +1,7 @@
 const { Router } = require("express");
 const ControladorTurno = require("../controllers/turno.controller");
 const ControladorAsignacion = require("../controllers/turnoAsignacion.controller");
+const ControladorLlave = require("../controllers/llaveIngesta.controller");
 const TurnoAsignacion = require("../models/turnoAsignacion.model");
 const { authenticateJWT } = require("../../../portal/backend/middleware/auth.middleware");
 const { verificarPermiso } = require("../../../portal/backend/middleware/permisos.middleware");
@@ -56,5 +57,18 @@ router.get(
 );
 // El historial de asignaciones es de gestión: solo quien administra Turnos
 router.get("/empleados/:empleadoId/turnos", VER_ASIGNACIONES, validarId("empleadoId"), ControladorAsignacion.historial);
+
+// --- Ingesta de marcas: administración (la ingesta misma va por llave en ingesta.routes.js) ---
+// Opción Ingesta: solo rh_admin y super_admin (portal_admin excluido). La llave en claro solo se muestra al
+// crear o rotar. Revocar y editar IP tienen efecto inmediato (el middleware de llave consulta la BD cada vez).
+const VER_INGESTA = verificarPermiso("rh", "Ingesta", "consulta");
+const ADMIN_INGESTA = verificarPermiso("rh", "Ingesta", "edicion");
+router.get("/llaves", VER_INGESTA, ControladorLlave.listar);
+router.post("/llaves", ADMIN_INGESTA, ControladorLlave.crear);
+router.post("/llaves/:id/rotar", ADMIN_INGESTA, ControladorLlave.rotar);
+router.post("/llaves/:id/revocar", ADMIN_INGESTA, ControladorLlave.revocar);
+router.put("/llaves/:id/ips", ADMIN_INGESTA, ControladorLlave.editarIps);
+router.get("/lotes", VER_INGESTA, ControladorLlave.lotes);
+router.post("/marcas/revincular", ADMIN_INGESTA, ControladorLlave.revincular);
 
 module.exports = router;

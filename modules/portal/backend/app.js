@@ -3,6 +3,7 @@ const cors = require("cors");
 const { probarConexion } = require("./config/database");
 const Storage = require("./services/storage.service");
 const { manejadorErrores } = require("./middleware/errores.middleware");
+const { leerTrustProxy } = require("../../rh/backend/utils/trustProxy");
 
 const app = express();
 const PUERTO = process.env.PORT || 4000;
@@ -19,8 +20,18 @@ function prepararBuckets(reintentar) {
 }
 prepararBuckets(true);
 
+// Proxies de confianza (TRUST_PROXY): define qué IP ve req.ip y por tanto la lista de IP permitidas de las
+// llaves de ingesta. Por defecto ninguno (se ignora X-Forwarded-For); ver docs/asistencia/operacion-ingesta.md
+const trustProxy = leerTrustProxy(process.env.TRUST_PROXY);
+if (trustProxy !== false) app.set("trust proxy", trustProxy);
+
 // Middleware global
 app.use(cors());
+
+// Ingesta de marcas de asistencia: autenticación por llave X-Api-Key y parser JSON propio de 1 MB.
+// DEBE ir antes del parser global (100 kb), que cortaría los envíos de hasta 500 marcas con 413.
+app.use("/api/asistencia/ingesta", require("../../rh/backend/routes/ingesta.routes"));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
