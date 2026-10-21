@@ -19,6 +19,7 @@ curl -s -X POST "$URL/api/asistencia/llaves" \
 
 - La respuesta (201) trae el campo `llave` **una sola vez** (con `Cache-Control: no-store`). Cópiala de inmediato a un gestor de contraseñas y entrégala a la interfaz por ese medio; nunca por chat, correo ni repositorio.
 - No se puede volver a ver: si se pierde, se crea otra (o se rota). Tampoco se registra en logs ni en la auditoría.
+- **Recomendación para producción: siempre con `ips_permitidas`.** Una llave creada sin IP sirve desde cualquier IP y la respuesta lo avisa en `aviso_ips`. Procedimiento: crearla sin IP en una prueba, comprobar `ultima_ip` en el listado (sección 5) y luego `PUT .../ips`.
 - Campos: `nombre` (obligatorio, 1-100), `ips_permitidas` (lista; vacía = sin restricción de IP), `vigente_hasta` (opcional, ISO 8601 con zona y futuro; sin él no vence). `origen` solo admite `biotime`.
 
 ## 3. Listar, rotar, revocar, editar IP
@@ -26,7 +27,7 @@ curl -s -X POST "$URL/api/asistencia/llaves" \
 | Acción | Petición | Notas |
 |---|---|---|
 | Listar | `GET /api/asistencia/llaves` | prefijo, nombre, estado (`estado_efectivo`: activa, vencida, revocada, pendiente), vigencia, `ultimo_uso`, `ultima_ip`, IP permitidas. Nunca la llave ni su hash |
-| Rotar | `POST /api/asistencia/llaves/:id/rotar` con `{"solape_horas":24}` | crea la llave nueva (mismos datos; opcionalmente `nombre` e `ips_permitidas` nuevos) y **fija la vigencia de la anterior** a ahora + solape. Por omisión 24 h, máximo 720; `0` = la anterior termina ya. Durante el solape valen las dos. La respuesta trae la llave nueva una sola vez y el `vigente_hasta` de la anterior. Solo se rota una llave activa y vigente |
+| Rotar | `POST /api/asistencia/llaves/:id/rotar` con `{"solape_horas":24}` | crea la llave nueva (mismos datos; opcionalmente `nombre` e `ips_permitidas` nuevos) y **fija la vigencia de la anterior** a ahora + solape. Por omisión 24 h, máximo 720; `0` = la anterior termina ya. Durante el solape valen las dos. La respuesta trae la llave nueva una sola vez y el `vigente_hasta` de la anterior. Solo se rota una llave activa y vigente **sin vencimiento**: una llave ya rotada (está en su solape) o con `vigente_hasta` responde 409 (rota su sucesora o revócala), y dos rotaciones simultáneas se serializan (una 201 y otra 409) |
 | Revocar | `POST /api/asistencia/llaves/:id/revocar` | efecto **inmediato** (el middleware lee la fila en cada petición; no hay caché). 409 si ya estaba revocada |
 | Editar IP | `PUT /api/asistencia/llaves/:id/ips` con `{"ips_permitidas":[...]}` | efecto inmediato; `[]` quita la restricción. No aplica a una llave revocada |
 
@@ -42,7 +43,8 @@ Toda acción (crear, rotar, revocar, editar IP) queda en la bitácora de auditor
 |---|---|---|
 | 401 | falta `X-Api-Key`, formato incorrecto, prefijo desconocido o hash que no coincide | `Llave de acceso no válida` (idéntico en todos los casos) |
 | 403 | llave revocada, fuera de vigencia (vencida o aún no vigente) o IP no permitida | `Acceso denegado` (idéntico en todos los casos) |
-| 429 | más de 60 envíos por minuto con la misma llave (también 60 consultas de `/estado`) | cabecera `Retry-After` |
+| 429 | más de 60 envíos por minuto con la misma llave (también 60 consultas de `/estado`), **o** más de 30 fallos de autenticación por minuto desde la misma IP | cabecera `Retry-After` |
+| 415 | `Content-Type` con charset distinto de UTF-8 | |
 | 413 | cuerpo mayor de 1 MB | |
 | 400 | JSON inválido, `marcas` ausente/vacía, más de 500, origen distinto al de la llave | |
 | 500 | falla interna | `Error interno ...` genérico, nunca texto de SQL |
@@ -66,8 +68,9 @@ La variable llega al backend desde los compose de dev, staging y prod (`TRUST_PR
 
 ## 6. Límites
 
-- 500 marcas y 1 MB por envío; el parser global de la app (100 kb) no aplica a la ingesta: ella monta su propio parser **antes** de `express.json()` en `app.js`.
+- 500 marcas y 1 MB por envío (vale el que se alcance primero: 500 marcas con `crudo` de 2 KB pesan unos 1,07 MB y dan 413; un lote real pesa unos 300 KB); el parser global de la app (100 kb) no aplica a la ingesta: ella monta su propio parser **antes** de `express.json()` en `app.js`.
 - 60 envíos por minuto por llave (ventana deslizante en memoria, por proceso: exacto con una sola réplica del backend, como hoy; con varias réplicas cada una contaría por separado). Las consultas de `/estado` tienen su propio contador de 60/min.
+- **Fallos por IP:** más de 30 peticiones rechazadas (sin cabecera, llave mala, revocada o IP no permitida) por minuto desde la misma IP reciben 429 **antes de consultar la base de datos**, para que una ráfaga de llaves inválidas no sature el pool compartido con el resto de la intranet. Se configura con `INGESTA_LIMITE_FALLOS_IP_POR_MINUTO` (por omisión 30; un valor inválido usa el defecto) y se aplica a todas las peticiones de esa IP mientras dure el bloqueo (hasta un minuto), también a las que traigan una llave válida: si la interfaz falla repetidamente (por ejemplo con una llave ya revocada) quedará bloqueada un minuto tras corregir. Como la IP depende de `TRUST_PROXY` (sección 5), mal configurado todas las peticiones compartirían IP.
 - `ultimo_uso` se actualiza como mucho cada 30 s por llave y sin bloquear la petición.
 
 ## 7. Ver lotes, estado y rechazos
@@ -100,11 +103,11 @@ FROM asistencia_llaves_rechazos ORDER BY ultima DESC LIMIT 50;
 ## 8. Si la interfaz se queda atrás o falla
 
 - **No hay nada que arreglar en la intranet para "ponerse al día":** la interfaz consulta `GET /estado`, lee `ultimo_id_externo` y envía lo posterior (retrocediendo unos cientos de ids). Reenviar es seguro: lo repetido se cuenta como `duplicadas`.
-- **429 repetidos:** la interfaz envía más de 60 por minuto; debe respetar `Retry-After`. Una carga histórica de 100 mil marcas son 200 envíos (unos 4 minutos al ritmo permitido).
+- **429 repetidos:** la interfaz envía más de 60 por minuto; debe respetar `Retry-After`. Una carga histórica de unas 134 mil marcas son unos 268 envíos: unos 4 o 5 minutos al ritmo permitido.
 - **403 de golpe:** revisar si se revocó o venció la llave (listado) o si cambió la IP de la interfaz (`ultima_ip` y `asistencia_llaves_rechazos`); editar las IP permitidas o rotar.
 - **Los lotes salen en `error`:** es una falla de la intranet (BD, red). Los envíos se revirtieron completos, así que no hay datos a medias; el log del backend tiene el detalle (`[Ingesta] Error al procesar el envío`) y la interfaz reintenta sola.
 - **El cursor no avanza pero hay lotes `ok`:** todo lo enviado ya estaba guardado (duplicadas) o fue rechazado; revisar `rechazadas` y los motivos en la respuesta que ve la interfaz.
-- **Marcas sin empleado (`sin_empleado`):** se guardan igual (`empleado_id` vacío). La vinculación compara `codigo_empleado` (recortado de espacios) con `empleados.numero_nomina` **como texto exacto, solo si hay UNA coincidencia**. `007` no coincide con `7`: los ceros a la izquierda no se normalizan (decisión pendiente; hoy los códigos observados no los llevan). Si dos empleados comparten el número de nómina no se vincula a ninguno.
+- **Marcas sin empleado (`sin_empleado`):** se guardan igual (`empleado_id` vacío). La vinculación compara `codigo_empleado` (recortado de espacios) con `empleados.numero_nomina` **como texto exacto, solo si hay UNA coincidencia cuyo periodo de empleo contiene la fecha de la marca** (`fecha_ingreso <= fecha de la marca en America/Mexico_City <= fecha_baja`; una fecha vacía es abierta). Así un `numero_nomina` reutilizado por otra persona no atribuye marcas viejas al empleado nuevo; si los periodos de dos empleados con el mismo número se traslapan en esa fecha, no se vincula a ninguno. La re-vinculación usa exactamente la misma regla. `007` no coincide con `7`: los ceros a la izquierda no se normalizan (decisión pendiente; hoy los códigos observados no los llevan). Si dos empleados comparten el número de nómina no se vincula a ninguno.
 - **Re-vincular marcas huérfanas** (por ejemplo después de dar de alta empleados): `POST /api/asistencia/marcas/revincular` con `{"limite":5000}` (permiso Ingesta:edicion); responde `{vinculadas, pendientes}`. La función `Ingesta.vincularHuerfanas` (`modules/rh/backend/models/ingesta.model.js`) es la que ejecutará periódicamente el motor de la Fase 4 (todavía no hay job).
 
 ## 9. Qué NO hace la ingesta

@@ -72,7 +72,7 @@
 > Rama `feat/asistencia-rh`. Fases = PROPUESTA del orquestador; cada una cierra con GO/NO-GO del humano. Decisiones en decisions.md (2026-10-21).
 
 ## Estado global
-- **Fase actual:** 2 en cierre (correcciones del coder) → 3 EN CURSO tras el commit de cierre de la Fase 2 (GO del humano 2026-10-21). **Actualizado:** 2026-10-21
+- **Fase actual:** 3 LISTA PARA GO/NO-GO (commit hecho en la rama). Fases 1 y 2 CERRADAS. **Actualizado:** 2026-10-21
 
 ## Fase 1 — Investigación (repo, reglas de cruce, modelo de turnos de BioTime, diseño) — CERRADA (research.md 1640-1908)
 ## Fase 2 — BD (turnos, asignaciones, marcas, asistencia diaria, incidencias), API, permisos, auditoría — EN CURSO (coder)

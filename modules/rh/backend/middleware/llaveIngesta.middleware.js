@@ -10,6 +10,7 @@
 // existió, si está revocada ni qué IP se espera. Los mensajes son genéricos; el motivo real solo queda en la
 // auditoría acotada (asistencia_llaves_rechazos).
 const LlaveIngesta = require("../models/llaveIngesta.model");
+const { crearLimitador } = require("../utils/limiteTasa");
 const { registrarRechazo } = require("../services/rechazosIngesta.service");
 const { analizarLlave, hashLlave, hashesIguales } = require("../utils/llaveIngesta");
 const { normalizarIp, ipPermitida } = require("../utils/ipPermitida");
@@ -28,17 +29,35 @@ function ipDeLaPeticion(req) {
   return normalizarIp(req.ip) || normalizarIp(req.socket && req.socket.remoteAddress);
 }
 
+// Fallos de autenticación por IP y minuto antes de cortar SIN consultar la BD (INGESTA_LIMITE_FALLOS_IP_POR_MINUTO).
+// Una ráfaga de llaves inválidas no debe saturar el pool compartido con el resto de la intranet.
+const FALLOS_IP_POR_DEFECTO = 30;
+function enteroEnv(nombre, defecto) {
+  const n = Number.parseInt(process.env[nombre], 10);
+  return Number.isInteger(n) && n > 0 ? n : defecto;
+}
+
 function crearAutenticadorLlave({
   modelo = LlaveIngesta,
   rechazo = registrarRechazo,
   ahora = () => Date.now(),
   intervaloUsoMs = 30000,
+  fallosIpPorMinuto = enteroEnv("INGESTA_LIMITE_FALLOS_IP_POR_MINUTO", FALLOS_IP_POR_DEFECTO),
+  limitadorIp = crearLimitador({ maximo: fallosIpPorMinuto, ventanaMs: 60000, ahora }),
 } = {}) {
   const ultimoUso = new Map(); // llave_id -> ms del último UPDATE de ultimo_uso (evita una escritura por petición)
 
-  return async function autenticarLlave(req, res, next) {
+  async function autenticarLlave(req, res, next) {
     const ip = ipDeLaPeticion(req);
+    const claveIp = ip || "desconocida";
+    // IP con demasiados fallos recientes: 429 antes de cualquier consulta a la BD
+    const bloqueo = limitadorIp.consultar(claveIp);
+    if (!bloqueo.permitido) {
+      res.set("Retry-After", String(bloqueo.reintentarEnSeg));
+      return res.status(429).json({ exito: false, mensaje: "Demasiadas peticiones: espera antes de reintentar" });
+    }
     const denegar = (estado, motivo, extra = {}) => {
+      limitadorIp.intentar(claveIp);
       try {
         rechazo({ ip, motivo, ...extra });
       } catch (error) {
@@ -81,7 +100,9 @@ function crearAutenticadorLlave({
         .catch((error) => console.error("[Ingesta] No se pudo actualizar ultimo_uso:", error.message));
     }
     return next();
-  };
+  }
+  autenticarLlave.limitadorIp = limitadorIp; // para reiniciarlo en pruebas
+  return autenticarLlave;
 }
 
 /** Límite de tasa por llave y por ruta: responde 429 con Retry-After. `limitador` = crearLimitador(). */
@@ -95,6 +116,7 @@ function limitarPorLlave(limitador, nombre) {
 }
 
 module.exports = {
+  FALLOS_IP_POR_DEFECTO,
   crearAutenticadorLlave,
   autenticarLlave: crearAutenticadorLlave(),
   limitarPorLlave,

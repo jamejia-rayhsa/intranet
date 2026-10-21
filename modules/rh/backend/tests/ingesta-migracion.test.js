@@ -185,7 +185,7 @@ describe("Archivos de la Fase 3 - sin datos reales de la red de BioTime ni llave
     expect(texto).not.toMatch(/\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);
     expect(texto).not.toMatch(/\b192\.168\.\d{1,3}\.\d{1,3}\b/);
     expect(texto).not.toMatch(/\b172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b/);
-    expect(texto).not.toMatch(/\bCN\d{8,}\b/);
+    expect(texto).not.toMatch(/\bCN(96\d*|\d{8,})\b/);
     expect(texto).not.toMatch(/rhk_[0-9a-f]{8}_[A-Za-z0-9_-]{43}/);
   });
 

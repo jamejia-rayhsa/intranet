@@ -5,32 +5,32 @@ const { crearLimitador } = require("../utils/limiteTasa");
 
 describe("ipPermitida - normalizarIp", () => {
   it.each([
-    ["10.1.2.3", "10.1.2.3"],
-    ["::ffff:10.1.2.3", "10.1.2.3"],
-    ["::FFFF:10.1.2.3", "10.1.2.3"],
-    ["  10.1.2.3 ", "10.1.2.3"],
+    ["203.0.113.3", "203.0.113.3"],
+    ["::ffff:203.0.113.3", "203.0.113.3"],
+    ["::FFFF:203.0.113.3", "203.0.113.3"],
+    ["  203.0.113.3 ", "203.0.113.3"],
     ["2001:DB8::1", "2001:db8::1"],
     ["::1", "::1"],
     ["fe80::1%eth0", "fe80::1"], // la zona no es parte de la dirección
   ])("%p -> %p", (entrada, esperado) => {
     expect(normalizarIp(entrada)).toBe(esperado);
   });
-  it.each([[undefined], [null], [5], [""], ["no-ip"], ["10.1.2"], ["300.1.1.1"], ["10.1.2.3/24"]])("%p no es una IP", (entrada) => {
+  it.each([[undefined], [null], [5], [""], ["no-ip"], ["192.0.2"], ["300.1.1.1"], ["203.0.113.3/24"]])("%p no es una IP", (entrada) => {
     expect(normalizarIp(entrada)).toBeNull();
   });
 });
 
 describe("ipPermitida - validarListaIps", () => {
   it("acepta IPv4, IPv6 y CIDR, normaliza y quita repetidos", () => {
-    expect(validarListaIps(["10.1.2.3", " 10.1.2.3 ", "192.168.0.0/16", "2001:DB8::/32", "::ffff:10.9.9.9", "::1"])).toEqual({
-      lista: ["10.1.2.3", "192.168.0.0/16", "2001:db8::/32", "10.9.9.9", "::1"],
+    expect(validarListaIps(["203.0.113.3", " 203.0.113.3 ", "192.168.0.0/16", "2001:DB8::/32", "::ffff:198.51.100.9", "::1"])).toEqual({
+      lista: ["203.0.113.3", "192.168.0.0/16", "2001:db8::/32", "198.51.100.9", "::1"],
     });
   });
   it("la lista vacía es válida (sin restricción)", () => {
     expect(validarListaIps([])).toEqual({ lista: [] });
   });
   it.each([
-    ["no es lista", "10.1.2.3"],
+    ["no es lista", "203.0.113.3"],
     ["objeto", { a: 1 }],
     ["null", null],
     ["undefined", undefined],
@@ -38,25 +38,25 @@ describe("ipPermitida - validarListaIps", () => {
     ["entrada vacía", [""]],
     ["texto cualquiera", ["cualquiera"]],
     ["IPv4 inválida", ["256.1.1.1"]],
-    ["IPv4 incompleta", ["10.1.1"]],
-    ["prefijo fuera de rango IPv4", ["10.0.0.0/33"]],
+    ["IPv4 incompleta", ["192.0.2"]],
+    ["prefijo fuera de rango IPv4", ["192.0.2.0/33"]],
     ["prefijo fuera de rango IPv6", ["2001:db8::/129"]],
     ["prefijo /0 (para eso está la lista vacía)", ["0.0.0.0/0"]],
     ["prefijo /0 IPv6", ["::/0"]],
-    ["prefijo no numérico", ["10.0.0.0/a"]],
-    ["prefijo negativo", ["10.0.0.0/-1"]],
-    ["dos barras", ["10.0.0.0/8/8"]],
+    ["prefijo no numérico", ["192.0.2.0/a"]],
+    ["prefijo negativo", ["192.0.2.0/-1"]],
+    ["dos barras", ["192.0.0.0/8/8"]],
     ["con zona IPv6", ["fe80::1%eth0"]],
-    ["rango con guion", ["10.0.0.1-10.0.0.9"]],
-    ["comodín", ["10.0.0.*"]],
+    ["rango con guion", ["192.0.2.1-192.0.2.9"]],
+    ["comodín", ["192.0.2.*"]],
     ["demasiado larga", ["1".repeat(80)]],
   ])("rechaza: %s", (_nombre, valor) => {
     expect(validarListaIps(valor).error).toMatch(/ips_permitidas/);
   });
   it(`admite como máximo ${MAX_IPS} entradas`, () => {
-    const ok = Array.from({ length: MAX_IPS }, (_, i) => `10.0.0.${i + 1}`);
+    const ok = Array.from({ length: MAX_IPS }, (_, i) => `192.0.2.${i + 1}`);
     expect(validarListaIps(ok).lista).toHaveLength(MAX_IPS);
-    expect(validarListaIps([...ok, "10.0.1.1"]).error).toMatch(/máximo/);
+    expect(validarListaIps([...ok, "198.51.100.1"]).error).toMatch(/máximo/);
   });
 });
 
@@ -67,9 +67,9 @@ describe("ipPermitida - comprobación", () => {
     expect(ipPermitida("203.0.113.9", null)).toBe(true);
   });
   it("IP exacta y CIDR (IPv4 e IPv6)", () => {
-    const lista = ["10.1.2.3", "192.168.0.0/16", "2001:db8::/32", "::1"];
-    expect(ipPermitida("10.1.2.3", lista)).toBe(true);
-    expect(ipPermitida("10.1.2.4", lista)).toBe(false);
+    const lista = ["203.0.113.3", "192.168.0.0/16", "2001:db8::/32", "::1"];
+    expect(ipPermitida("203.0.113.3", lista)).toBe(true);
+    expect(ipPermitida("203.0.113.4", lista)).toBe(false);
     expect(ipPermitida("192.168.77.1", lista)).toBe(true);
     expect(ipPermitida("192.169.0.1", lista)).toBe(false);
     expect(ipPermitida("2001:db8:ffff::5", lista)).toBe(true);
@@ -77,25 +77,25 @@ describe("ipPermitida - comprobación", () => {
     expect(ipPermitida("::1", lista)).toBe(true);
   });
   it("una IPv4 mapeada en IPv6 (lo que reporta Node) cuenta como la IPv4", () => {
-    expect(ipPermitida("::ffff:10.1.2.3", ["10.1.2.3"])).toBe(true);
-    expect(ipPermitida("::ffff:10.1.2.9", ["10.1.2.3"])).toBe(false);
+    expect(ipPermitida("::ffff:203.0.113.3", ["203.0.113.3"])).toBe(true);
+    expect(ipPermitida("::ffff:203.0.113.9", ["203.0.113.3"])).toBe(false);
     expect(ipPermitida("::ffff:192.168.5.5", ["192.168.0.0/16"])).toBe(true);
   });
   it("con lista, una IP ilegible o ausente NO está permitida", () => {
-    expect(ipPermitida(undefined, ["10.1.2.3"])).toBe(false);
-    expect(ipPermitida("basura", ["10.1.2.3"])).toBe(false);
-    expect(ipPermitida("", ["10.1.2.3"])).toBe(false);
+    expect(ipPermitida(undefined, ["203.0.113.3"])).toBe(false);
+    expect(ipPermitida("basura", ["203.0.113.3"])).toBe(false);
+    expect(ipPermitida("", ["203.0.113.3"])).toBe(false);
   });
   it("una entrada corrupta en la lista nunca autoriza (y no rompe las demás)", () => {
-    expect(ipPermitida("10.1.2.3", ["basura", "0.0.0.0/0"])).toBe(false);
-    expect(ipPermitida("10.1.2.3", ["basura", "10.1.2.3"])).toBe(true);
+    expect(ipPermitida("203.0.113.3", ["basura", "0.0.0.0/0"])).toBe(false);
+    expect(ipPermitida("203.0.113.3", ["basura", "203.0.113.3"])).toBe(true);
   });
   it("una IPv4 no coincide con una regla IPv6 ni al revés", () => {
-    expect(ipPermitida("10.1.2.3", ["2001:db8::/32"])).toBe(false);
-    expect(ipPermitida("2001:db8::1", ["10.0.0.0/8"])).toBe(false);
+    expect(ipPermitida("203.0.113.3", ["2001:db8::/32"])).toBe(false);
+    expect(ipPermitida("2001:db8::1", ["192.0.0.0/8"])).toBe(false);
   });
   it("analizarEntrada devuelve familia y prefijo", () => {
-    expect(analizarEntrada("10.0.0.0/8")).toMatchObject({ familia: 4, prefijo: 8, texto: "10.0.0.0/8" });
+    expect(analizarEntrada("192.0.0.0/8")).toMatchObject({ familia: 4, prefijo: 8, texto: "192.0.0.0/8" });
     expect(analizarEntrada("2001:db8::1")).toMatchObject({ familia: 6, prefijo: null });
     expect(analizarEntrada("x")).toBeNull();
   });
@@ -113,7 +113,7 @@ describe("trustProxy - TRUST_PROXY seguro", () => {
     expect(interpretarTrustProxy(crudo)).toEqual({ valor: esperado });
   });
   it("lista de IP y CIDR de los proxies", () => {
-    expect(interpretarTrustProxy("172.18.0.0/16, 10.0.0.5")).toEqual({ valor: ["172.18.0.0/16", "10.0.0.5"] });
+    expect(interpretarTrustProxy("172.18.0.0/16, 192.0.2.5")).toEqual({ valor: ["172.18.0.0/16", "192.0.2.5"] });
   });
   it.each([
     ["true"],
@@ -129,7 +129,7 @@ describe("trustProxy - TRUST_PROXY seguro", () => {
     ["11"],
     ["-1"],
     ["1.5"],
-    ["10.0.0.5, basura"],
+    ["192.0.2.5, basura"],
   ])("%p se rechaza (confiar en todo o en la red privada permitiría falsear la IP)", (crudo) => {
     expect(interpretarTrustProxy(crudo).error).toMatch(/TRUST_PROXY/);
   });

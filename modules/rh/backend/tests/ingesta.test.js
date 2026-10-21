@@ -15,6 +15,8 @@ const { __esc: esc } = require("../../../portal/backend/config/database");
 const { registrarRechazo } = require("../services/rechazosIngesta.service");
 const { generarLlave } = require("../utils/llaveIngesta");
 const router = require("../routes/ingesta.routes");
+const IngestaControlador = require("../controllers/ingesta.controller");
+const { crearAutenticadorLlave } = require("../middleware/llaveIngesta.middleware");
 
 const { bd } = esc;
 const MARCAS = "/api/asistencia/ingesta/marcas";
@@ -54,6 +56,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   esc.reiniciar();
   router.limitador.reiniciar();
+  router.limitadorIp.reiniciar();
   esc.fila = { ...esc.fila, id: ++contadorLlave, estado: "activa", ips_permitidas: [], vigente_ahora: true, origen: "biotime" };
   esc.filas = null;
   esc.empleados = [];
@@ -139,13 +142,13 @@ describe("Ingesta - autenticación por llave", () => {
   });
 
   it("IP fuera de la lista -> 403; dentro (IP y CIDR) -> 200; lista vacía -> cualquiera", async () => {
-    esc.fila.ips_permitidas = ["10.99.99.99"];
+    esc.fila.ips_permitidas = ["198.51.100.99"];
     let r = await enviar({ marcas: [marca(1)] });
     expect(r.status).toBe(403);
     expect(r.body).toEqual(RECHAZO_GENERICO_403);
     expect(registrarRechazo).toHaveBeenCalledWith(expect.objectContaining({ motivo: "ip_no_permitida" }));
 
-    esc.fila.ips_permitidas = ["10.99.99.99", "127.0.0.0/8"];
+    esc.fila.ips_permitidas = ["198.51.100.99", "127.0.0.0/8"];
     r = await enviar({ marcas: [marca(1)] });
     expect(r.status).toBe(200);
 
@@ -155,21 +158,21 @@ describe("Ingesta - autenticación por llave", () => {
   });
 
   it("sin TRUST_PROXY, X-Forwarded-For se IGNORA (no sirve para falsear la IP)", async () => {
-    esc.fila.ips_permitidas = ["10.99.99.99"];
-    const r = await enviar({ marcas: [marca(1)] }, { encabezados: { "X-Forwarded-For": "10.99.99.99" } });
+    esc.fila.ips_permitidas = ["198.51.100.99"];
+    const r = await enviar({ marcas: [marca(1)] }, { encabezados: { "X-Forwarded-For": "198.51.100.99" } });
     expect(r.status).toBe(403);
     expect(registrarRechazo).toHaveBeenCalledWith(expect.objectContaining({ motivo: "ip_no_permitida", ip: "127.0.0.1" }));
   });
 
   it("con un proxy de confianza se usa la IP que ese proxy añadió; lo que escribe el cliente a la izquierda no cuenta", async () => {
     const detras = crearApp(1);
-    esc.fila.ips_permitidas = ["10.99.99.99"];
-    // el cliente envía "10.99.99.99" por delante; el proxy añade la IP real (8.8.8.8) al final
-    let r = await enviar({ marcas: [marca(1)] }, { aplicacion: detras, encabezados: { "X-Forwarded-For": "10.99.99.99, 8.8.8.8" } });
+    esc.fila.ips_permitidas = ["198.51.100.99"];
+    // el cliente envía "198.51.100.99" por delante; el proxy añade la IP real (8.8.8.8) al final
+    let r = await enviar({ marcas: [marca(1)] }, { aplicacion: detras, encabezados: { "X-Forwarded-For": "198.51.100.99, 8.8.8.8" } });
     expect(r.status).toBe(403);
     expect(registrarRechazo).toHaveBeenLastCalledWith(expect.objectContaining({ ip: "8.8.8.8" }));
     // la IP real que añade el proxy sí está en la lista
-    r = await enviar({ marcas: [marca(1)] }, { aplicacion: detras, encabezados: { "X-Forwarded-For": "10.99.99.99" } });
+    r = await enviar({ marcas: [marca(1)] }, { aplicacion: detras, encabezados: { "X-Forwarded-For": "198.51.100.99" } });
     expect(r.status).toBe(200);
   });
 
@@ -284,14 +287,17 @@ describe("Ingesta - límites del envío", () => {
     // El servidor responde 413 sin leer todo el cuerpo: el cliente puede ver EPIPE/ECONNRESET según la carga de
     // la máquina (no es un fallo de la ingesta); se reintenta hasta 5 veces solo ante esos errores de socket.
     let r;
+    let ultimoError;
     for (let intento = 0; intento < 5 && !r; intento += 1) {
       try {
         r = await request(app).post(MARCAS).set("X-Api-Key", esc.llave).set("Content-Type", "application/json").send(enorme);
       } catch (error) {
         if (!["EPIPE", "ECONNRESET"].includes(error.code)) throw error;
+        ultimoError = error;
         router.limitador.reiniciar();
       }
     }
+    if (!r) throw new Error(`El 413 no se pudo comprobar: 5 intentos con EPIPE/ECONNRESET (${ultimoError && ultimoError.code})`);
     expect(r.status).toBe(413);
     expect(r.body.exito).toBe(false);
     expect(bd.hubo(/INSERT INTO asistencia_sync_lotes|BEGIN/)).toBe(false);
@@ -308,7 +314,19 @@ describe("Ingesta - límites del envío", () => {
     expect(r.status).toBe(400);
   });
 
-  it("charset no admitido -> 415 genérico", async () => {
+  it.each(["utf-16", "UTF-16LE", "latin1", "iso-8859-1", "ascii", "utf-7"])("charset %s -> 415 genérico (solo UTF-8)", async (charset) => {
+    const r = await request(app).post(MARCAS).set("X-Api-Key", esc.llave).set("Content-Type", `application/json; charset=${charset}`).send(JSON.stringify({ marcas: [marca(1)] }));
+    expect(r.status).toBe(415);
+    expect(r.body.exito).toBe(false);
+    expect(bd.hubo(/INSERT INTO asistencia_marcas|BEGIN/)).toBe(false);
+  });
+
+  it.each(["utf-8", "UTF-8", '"utf-8"'])("charset %s y sin charset se aceptan", async (charset) => {
+    const r = await request(app).post(MARCAS).set("X-Api-Key", esc.llave).set("Content-Type", `application/json; charset=${charset}`).send(JSON.stringify({ marcas: [marca(1)] }));
+    expect(r.status).toBe(200);
+  });
+
+  it("charset no admitido (antiguo) -> 415 genérico", async () => {
     const r = await request(app).post(MARCAS).set("X-Api-Key", esc.llave).set("Content-Type", "application/json; charset=latin1").send("{}");
     expect(r.status).toBe(415);
     expect(r.body.exito).toBe(false);
@@ -326,12 +344,85 @@ describe("Ingesta - límites del envío", () => {
   });
 
   it("los campos que llena el servidor (id, lote_id, empleado_id, fecha_importacion) se ignoran si vienen", async () => {
-    esc.empleados = [{ numero_nomina: "1", id: 11, coincidencias: 1 }];
+    esc.empleados = [{ numero_nomina: "1", id: 11 }];
     const r = await enviar({ marcas: [marca(1, { id: 5, lote_id: 9, empleado_id: 999, fecha_importacion: "2020-01-01T00:00:00Z" })] });
     expect(r.status).toBe(200);
     expect(esc.guardadas[0]).toMatchObject({ loteId: 812, empleado_id: 11 });
     const sql = lotes()[0].sql;
     expect(sql).toMatch(/\$2\s*FROM unnest/);
+  });
+});
+
+describe("Ingesta - límite por IP antes de la BD (fallos de autenticación)", () => {
+  const invalida = () => request(app).post(MARCAS).set("X-Api-Key", `${esc.prefijo}_${"Z".repeat(43)}`).send({});
+
+  it("tras 30 fallos en un minuto la IP recibe 429 con Retry-After SIN consultar la BD (ni siquiera con llave válida)", async () => {
+    for (let i = 0; i < 30; i += 1) expect((await invalida()).status).toBe(401);
+    bd.grupo.query.mockClear();
+    const n = bd.sqls().length;
+    for (const peticion of [invalida(), enviar({ marcas: [marca(1)] }), request(app).get(ESTADO), request(app).post(MARCAS).send({})]) {
+      const r = await peticion;
+      expect(r.status).toBe(429);
+      expect(Number(r.headers["retry-after"])).toBeGreaterThanOrEqual(1);
+      expect(r.body).toEqual({ exito: false, mensaje: "Demasiadas peticiones: espera antes de reintentar" });
+    }
+    expect(bd.sqls().length).toBe(n); // ninguna consulta nueva
+    expect(esc.guardadas).toHaveLength(0);
+  });
+
+  it("el bloqueo expira solo (ventana de un minuto)", async () => {
+    const reloj = jest.spyOn(Date, "now");
+    reloj.mockReturnValue(1_800_000_000_000);
+    for (let i = 0; i < 31; i += 1) await invalida();
+    expect((await enviar({ marcas: [marca(1)] })).status).toBe(429);
+    reloj.mockReturnValue(1_800_000_000_000 + 61_000);
+    expect((await enviar({ marcas: [marca(1)] })).status).toBe(200);
+  });
+
+  it("los envíos válidos no cuentan como fallos", async () => {
+    for (let i = 0; i < 40; i += 1) expect((await enviar({ marcas: [marca(9000 + i)] })).status).toBe(200);
+  });
+
+  it("también cuentan los 403 (llave revocada) y las peticiones sin cabecera", async () => {
+    esc.fila.estado = "revocada";
+    for (let i = 0; i < 15; i += 1) await enviar({ marcas: [marca(1)] });
+    for (let i = 0; i < 15; i += 1) await request(app).get(ESTADO);
+    expect((await request(app).get(ESTADO)).status).toBe(429);
+  });
+
+  it("el máximo es configurable por INGESTA_LIMITE_FALLOS_IP_POR_MINUTO y por parámetro", async () => {
+    process.env.INGESTA_LIMITE_FALLOS_IP_POR_MINUTO = "3";
+    let local;
+    try {
+      local = crearAutenticadorLlave({ rechazo: jest.fn() });
+    } finally {
+      delete process.env.INGESTA_LIMITE_FALLOS_IP_POR_MINUTO;
+    }
+    const mini = express();
+    mini.use(local, (_req, res) => res.json({ ok: true }));
+    const codigos = [];
+    for (let i = 0; i < 5; i += 1) codigos.push((await request(mini).get("/")).status);
+    expect(codigos).toEqual([401, 401, 401, 429, 429]);
+    process.env.INGESTA_LIMITE_FALLOS_IP_POR_MINUTO = "abc";
+    try {
+      const porDefecto = crearAutenticadorLlave({ rechazo: jest.fn() });
+      const otra = express();
+      otra.use(porDefecto, (_req, res) => res.json({ ok: true }));
+      for (let i = 0; i < 30; i += 1) expect((await request(otra).get("/")).status).toBe(401);
+      expect((await request(otra).get("/")).status).toBe(429);
+    } finally {
+      delete process.env.INGESTA_LIMITE_FALLOS_IP_POR_MINUTO;
+    }
+  });
+});
+
+describe("Ingesta - errores inesperados del manejador", () => {
+  it("recibir() captura cualquier excepción: 500 genérico, sin error.message", async () => {
+    const res = { estado: null, cuerpo: null, status(n) { this.estado = n; return this; }, json(c) { this.cuerpo = c; return this; } };
+    await IngestaControlador.recibir({ body: { marcas: [{}] }, llave: undefined }, res);
+    expect(res.estado).toBe(500);
+    expect(res.cuerpo).toEqual({ exito: false, mensaje: "Error interno al procesar el envío" });
+    expect(JSON.stringify(res.cuerpo)).not.toMatch(/undefined|origen/);
   });
 });
 
@@ -365,14 +456,14 @@ describe("Ingesta - rate limit (60 envíos por minuto por llave)", () => {
   });
 
   it("un rechazo por llave inválida no consume el cupo de la llave real", async () => {
-    for (let i = 0; i < 70; i += 1) await request(app).post(MARCAS).set("X-Api-Key", `${esc.prefijo}_${"Z".repeat(43)}`).send({});
+    for (let i = 0; i < 20; i += 1) await request(app).post(MARCAS).set("X-Api-Key", `${esc.prefijo}_${"Z".repeat(43)}`).send({});
     expect((await enviar({ marcas: [marca(1)] })).status).toBe(200);
   });
 });
 
 describe("Ingesta - envío válido, éxito parcial e idempotencia", () => {
   it("respuesta con la forma del contrato v1", async () => {
-    esc.empleados = [{ numero_nomina: "1", id: 11, coincidencias: 1 }];
+    esc.empleados = [{ numero_nomina: "1", id: 11 }];
     const r = await enviar({ origen: "biotime", marcas: [marca(1000123, { subida_ts: "2026-01-15T14:00:02Z" }), marca(1000124, { codigo_empleado: "999" })] });
     expect(r.status).toBe(200);
     expect(r.body).toEqual({
@@ -443,7 +534,7 @@ describe("Ingesta - envío válido, éxito parcial e idempotencia", () => {
     expect(r.body.datos).toMatchObject({ recibidas: 5, insertadas: 2, duplicadas: 3, rechazadas: 0 });
     expect(lotes()[0].params[2]).toEqual(["40", "41"]);
     // la primera aparición gana
-    expect(lotes()[0].params[5]).toEqual(["2026-01-15T14:00:00.000Z", "2026-01-15T14:00:00.000Z"]);
+    expect(lotes()[0].params[4]).toEqual(["2026-01-15T14:00:00.000Z", "2026-01-15T14:00:00.000Z"]);
   });
 
   it("una marca válida repetida después de una inválida con el mismo id sí se guarda", async () => {
@@ -467,53 +558,50 @@ describe("Ingesta - envío válido, éxito parcial e idempotencia", () => {
     });
     const p = lotes()[0].params;
     expect(p[2]).toEqual(["60", "61", "62"]);
-    expect(p[7]).toEqual(["0", "3", null]); // estado_marca
-    expect(p[8]).toEqual(["0", "15", null]); // tipo_verificacion
-    expect(p[9]).toEqual(["", null, null]); // terminal_sn
-    expect(p[10]).toEqual(["", null, null]); // terminal_alias
-    expect(p[11]).toEqual(["", null, null]); // area_externa
-    expect(JSON.parse(p[12][0])).toEqual({ work_code: "0", source: 2 });
-    expect(p[12][1]).toBeNull();
+    expect(p[6]).toEqual(["0", "3", null]); // estado_marca
+    expect(p[7]).toEqual(["0", "15", null]); // tipo_verificacion
+    expect(p[8]).toEqual(["", null, null]); // terminal_sn
+    expect(p[9]).toEqual(["", null, null]); // terminal_alias
+    expect(p[10]).toEqual(["", null, null]); // area_externa
+    expect(JSON.parse(p[11][0])).toEqual({ work_code: "0", source: 2 });
+    expect(p[11][1]).toBeNull();
   });
 
   it("la hora se guarda en UTC aunque llegue con desplazamiento", async () => {
     await enviar({ marcas: [marca(70, { marca_ts: "2026-01-15T08:00:00-06:00" })] });
-    expect(lotes()[0].params[5]).toEqual(["2026-01-15T14:00:00.000Z"]);
+    expect(lotes()[0].params[4]).toEqual(["2026-01-15T14:00:00.000Z"]);
   });
 });
 
-describe("Ingesta - vinculación de empleado_id por numero_nomina", () => {
-  const vinculos = () => lotes()[0].params[4];
+describe("Ingesta - vinculación de empleado_id por numero_nomina y periodo de empleo", () => {
+  const vinculados = () => esc.guardadas.map((g) => g.empleado_id);
+  const emp = (numero_nomina, id, extra = {}) => ({ numero_nomina, id, ...extra });
 
   it("una sola coincidencia -> se vincula; ninguna -> NULL y se cuenta como sin_empleado", async () => {
-    esc.empleados = [{ numero_nomina: "1", id: 11, coincidencias: 1 }];
+    esc.empleados = [emp("1", 11)];
     const r = await enviar({ marcas: [marca(80), marca(81, { codigo_empleado: "2" })] });
-    expect(vinculos()).toEqual([11, null]);
+    expect(vinculados()).toEqual([11, null]);
     expect(r.body.datos).toMatchObject({ insertadas: 2, sin_empleado: 1 });
   });
 
-  it("varias coincidencias (numero_nomina repetido) -> NULL y sin_empleado: no se adivina", async () => {
-    esc.empleados = [{ numero_nomina: "1", id: 11, coincidencias: 2 }];
+  it("varias coincidencias vigentes (numero_nomina repetido) -> NULL y sin_empleado: no se adivina", async () => {
+    esc.empleados = [emp("1", 11), emp("1", 12)];
     const r = await enviar({ marcas: [marca(82)] });
-    expect(vinculos()).toEqual([null]);
+    expect(vinculados()).toEqual([null]);
     expect(r.body.datos.sin_empleado).toBe(1);
   });
 
-  it("comparación de texto exacta: el código '007' NO coincide con el empleado '7' (ni al revés); sin normalizar ceros", async () => {
-    esc.empleados = [{ numero_nomina: "7", id: 77, coincidencias: 1 }, { numero_nomina: "0123", id: 123, coincidencias: 1 }];
+  it("comparación de texto exacta: '007' NO coincide con '7' (ni al revés); sin normalizar ceros", async () => {
+    esc.empleados = [emp("7", 77), emp("0123", 123)];
     const r = await enviar({ marcas: [marca(83, { codigo_empleado: "007" }), marca(84, { codigo_empleado: "123" }), marca(85, { codigo_empleado: "0123" })] });
-    expect(vinculos()).toEqual([null, null, 123]);
+    expect(vinculados()).toEqual([null, null, 123]);
     expect(r.body.datos.sin_empleado).toBe(2);
-    // la consulta de empleados es por igualdad exacta (sin lower/trim/cast sobre la columna)
-    const consulta = bd.sqls().find((l) => /FROM empleados WHERE numero_nomina = ANY/.test(l.sql)).sql;
-    expect(consulta).toMatch(/WHERE numero_nomina = ANY\(\$1::text\[\]\) GROUP BY numero_nomina/);
-    expect(consulta).not.toMatch(/lower|upper|trim|numero_nomina::|cast/i);
   });
 
   it("el código se recorta de espacios (trim) antes de comparar y de guardar", async () => {
-    esc.empleados = [{ numero_nomina: "1", id: 11, coincidencias: 1 }];
+    esc.empleados = [emp("1", 11)];
     await enviar({ marcas: [marca(86, { codigo_empleado: "  1\t" })] });
-    expect(vinculos()).toEqual([11]);
+    expect(vinculados()).toEqual([11]);
     expect(lotes()[0].params[3]).toEqual(["1"]);
   });
 
@@ -523,11 +611,59 @@ describe("Ingesta - vinculación de empleado_id por numero_nomina", () => {
     expect(r.body.datos).toMatchObject({ insertadas: 1, duplicadas: 1, sin_empleado: 1 });
   });
 
-  it("solo busca empleados cuando hay marcas válidas, y una vez por envío (códigos únicos)", async () => {
-    await enviar({ marcas: [marca(90), marca(91), marca(92, { codigo_empleado: "2" })] });
-    const consultas = bd.sqls().filter((l) => /FROM empleados WHERE numero_nomina = ANY/.test(l.sql));
-    expect(consultas).toHaveLength(1);
-    expect(consultas[0].params[0].sort()).toEqual(["1", "2"]);
+  it("la vinculación se resuelve en el propio INSERT con la regla compartida (sin consulta aparte a empleados)", async () => {
+    await enviar({ marcas: [marca(90), marca(91)] });
+    expect(bd.hubo(/FROM empleados WHERE numero_nomina = ANY/)).toBe(false);
+    const sql = lotes()[0].sql.replace(/\s+/g, " ");
+    expect(sql).toMatch(/SELECT MIN\(e\.id\) FROM empleados e WHERE e\.numero_nomina = t\.codigo_empleado/);
+    expect(sql).toMatch(/e\.fecha_ingreso IS NULL OR e\.fecha_ingreso <= \(t\.marca_ts::timestamptz AT TIME ZONE 'America\/Mexico_City'\)::date/);
+    expect(sql).toMatch(/e\.fecha_baja IS NULL OR e\.fecha_baja >= \(t\.marca_ts::timestamptz AT TIME ZONE 'America\/Mexico_City'\)::date\) HAVING COUNT\(\*\) = 1/);
+    expect(sql).not.toMatch(/lower|upper|trim\(|numero_nomina::|cast/i); // comparación exacta
+  });
+
+  describe("periodo de empleo (reuso de numero_nomina)", () => {
+    it("empleado dado de baja: las marcas posteriores a fecha_baja NO se vinculan; las anteriores sí; el día de la baja sí", async () => {
+      esc.empleados = [emp("1", 11, { fecha_baja: "2026-01-15" })];
+      await enviar({
+        marcas: [
+          marca(100, { marca_ts: "2026-01-14T15:00:00Z" }),
+          marca(101, { marca_ts: "2026-01-15T15:00:00Z" }),
+          marca(102, { marca_ts: "2026-01-16T15:00:00Z" }),
+        ],
+      });
+      expect(vinculados()).toEqual([11, 11, null]);
+    });
+
+    it("ingreso posterior: las marcas anteriores a fecha_ingreso NO se vinculan; el día de ingreso sí", async () => {
+      esc.empleados = [emp("1", 11, { fecha_ingreso: "2026-02-01" })];
+      await enviar({ marcas: [marca(110, { marca_ts: "2026-01-31T15:00:00Z" }), marca(111, { marca_ts: "2026-02-01T15:00:00Z" })] });
+      expect(vinculados()).toEqual([null, 11]);
+    });
+
+    it("nómina reutilizada: cada marca va con el empleado cuyo periodo la contiene", async () => {
+      esc.empleados = [emp("1", 11, { fecha_ingreso: "2020-01-01", fecha_baja: "2026-01-31" }), emp("1", 12, { fecha_ingreso: "2026-02-01" })];
+      await enviar({ marcas: [marca(120, { marca_ts: "2026-01-20T15:00:00Z" }), marca(121, { marca_ts: "2026-02-10T15:00:00Z" })] });
+      expect(vinculados()).toEqual([11, 12]);
+    });
+
+    it("periodos que se traslapan en la fecha de la marca -> ambiguo, NULL", async () => {
+      esc.empleados = [emp("1", 11, { fecha_baja: "2026-02-15" }), emp("1", 12, { fecha_ingreso: "2026-02-01" })];
+      await enviar({ marcas: [marca(130, { marca_ts: "2026-02-10T15:00:00Z" })] });
+      expect(vinculados()).toEqual([null]);
+    });
+
+    it("la fecha de la marca es la de America/Mexico_City, no la de UTC", async () => {
+      esc.empleados = [emp("1", 11, { fecha_baja: "2026-01-15" })];
+      // 2026-01-16T03:00Z = 2026-01-15 21:00 en México (UTC-6): todavía es el día de la baja
+      await enviar({ marcas: [marca(140, { marca_ts: "2026-01-16T03:00:00Z" }), marca(141, { marca_ts: "2026-01-16T07:00:00Z" })] });
+      expect(vinculados()).toEqual([11, null]);
+    });
+
+    it("fecha_ingreso y fecha_baja NULL = periodo abierto", async () => {
+      esc.empleados = [emp("1", 11)];
+      await enviar({ marcas: [marca(150, { marca_ts: "2001-01-01T15:00:00Z" }), marca(151, { marca_ts: "2026-06-01T15:00:00Z" })] });
+      expect(vinculados()).toEqual([11, 11]);
+    });
   });
 });
 
@@ -570,12 +706,12 @@ describe("Ingesta - lote, estado y transacción", () => {
     expect(r.body.datos.ultimo_id_externo).toBe("5000000");
   });
 
-  it("todo en UNA transacción y UN cliente: BEGIN -> lote -> empleados -> marcas -> lote ok -> estado -> COMMIT; sin consultas por el pool", async () => {
+  it("todo en UNA transacción y UN cliente: BEGIN -> lote -> marcas (con la vinculación) -> lote ok -> estado -> COMMIT; sin consultas por el pool", async () => {
     bd.grupo.connect.mockClear();
     await enviar({ marcas: [marca(140)] });
     expect(bd.grupo.connect).toHaveBeenCalledTimes(1);
     const sqls = bd.sqls().map((l) => l.sql.replace(/\s+/g, " "));
-    const orden = [/^BEGIN/, /INSERT INTO asistencia_sync_lotes/, /FROM empleados/, /INSERT INTO asistencia_marcas/, /UPDATE asistencia_sync_lotes SET estatus = 'ok'/, /INSERT INTO asistencia_sync_estado/, /^COMMIT/];
+    const orden = [/^BEGIN/, /INSERT INTO asistencia_sync_lotes/, /INSERT INTO asistencia_marcas/, /UPDATE asistencia_sync_lotes SET estatus = 'ok'/, /INSERT INTO asistencia_sync_estado/, /^COMMIT/];
     let desde = 0;
     for (const re of orden) {
       const i = sqls.findIndex((s, idx) => idx >= desde && re.test(s));
@@ -610,7 +746,7 @@ describe("Ingesta - lote, estado y transacción", () => {
     const previo = process.env.NODE_ENV;
     process.env.NODE_ENV = "development";
     try {
-      esc.falla = { re: /FROM empleados/, error: new Error("password authentication failed for user postgres") };
+      esc.falla = { re: /INSERT INTO asistencia_marcas/, error: new Error("password authentication failed for user postgres") };
       const r = await enviar({ marcas: [marca(151)] });
       expect(r.status).toBe(500);
       expect(JSON.stringify(r.body)).not.toMatch(/password|postgres|detalle/);
@@ -759,7 +895,9 @@ describe("Ingesta - la llave nunca se expone", () => {
     ];
     esc.falla = { re: /INSERT INTO asistencia_marcas/, error: new Error("falló con la llave") };
     respuestas.push(await enviar({ marcas: [marca(161)] }));
-    const secreto = esc.llave.split("_")[2];
+    // el secreto base64url puede contener "_": se corta tras el prefijo (rhk_ + 8 hex + "_"), no con split
+    const secreto = esc.llave.slice(esc.llave.indexOf("_", 4) + 1);
+    expect(secreto).toHaveLength(43);
     const todo = JSON.stringify([
       respuestas.map((r) => [r.body, r.headers]),
       espiaError.mock.calls,

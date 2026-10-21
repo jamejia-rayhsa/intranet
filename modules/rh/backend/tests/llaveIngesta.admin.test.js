@@ -90,7 +90,7 @@ function instalarBD() {
     return { rows: [publica(f)] };
   });
   bd.cuando(/FROM asistencia_sync_lotes l LEFT JOIN asistencia_llaves/, (_sql, p) => ({ rows: [{ id: 3, estatus: "ok", limite: p[0] }] }));
-  bd.cuando(/WITH unicos AS/, () => ({ rows: [{ id: 1 }, { id: 2 }], rowCount: 2 }));
+  bd.cuando(/WITH candidatas AS/, () => ({ rows: [{ id: 1 }, { id: 2 }], rowCount: 2 }));
   bd.cuando(/COUNT\(\*\) AS total FROM asistencia_marcas WHERE empleado_id IS NULL/, () => ({ rows: [{ total: "7" }] }));
 }
 
@@ -159,12 +159,12 @@ describe("Llaves de ingesta - permisos", () => {
 
 describe("Llaves de ingesta - crear", () => {
   it("devuelve la llave en claro UNA vez (formato, 32 bytes) y guarda solo su hash", async () => {
-    const r = await crear({ nombre: "  BioTime planta  ", ips_permitidas: ["10.0.0.5"] });
+    const r = await crear({ nombre: "  BioTime planta  ", ips_permitidas: ["192.0.2.5"] });
     expect(r.status).toBe(201);
     expect(r.headers["cache-control"]).toBe("no-store");
     const { llave, ...fila } = r.body.datos;
     expect(llave).toMatch(LLAVE);
-    expect(fila).toMatchObject({ id: 1, nombre: "BioTime planta", origen: "biotime", estado: "activa", prefijo: llave.slice(0, 12), ips_permitidas: ["10.0.0.5"], creado_por: 5 });
+    expect(fila).toMatchObject({ id: 1, nombre: "BioTime planta", origen: "biotime", estado: "activa", prefijo: llave.slice(0, 12), ips_permitidas: ["192.0.2.5"], creado_por: 5 });
     expect(fila).not.toHaveProperty("hash_llave");
     expect(r.body.aviso).toMatch(/no se vuelve a mostrar/);
     // BD: hash y prefijo, nunca la llave
@@ -173,6 +173,14 @@ describe("Llaves de ingesta - crear", () => {
     expect(insert.params[3]).toBe(hashLlave(llave));
     expect(JSON.stringify(insert.params)).not.toContain(llave);
     expect(tienda[0].hash_llave).toBe(hashLlave(llave));
+  });
+
+  it("sin IP permitidas la respuesta trae aviso_ips; con IP no", async () => {
+    const sin = await crear({ nombre: "sin ip" });
+    expect(sin.status).toBe(201);
+    expect(sin.body.aviso_ips).toMatch(/SIN IP permitidas.*producción/);
+    const con = await crear({ nombre: "con ip", ips_permitidas: ["192.0.2.5"] });
+    expect(con.body).not.toHaveProperty("aviso_ips");
   });
 
   it("es transaccional (con SAVEPOINT por si el prefijo choca) y sin vencimiento por omisión", async () => {
@@ -191,7 +199,7 @@ describe("Llaves de ingesta - crear", () => {
       respuesta: () => {
         intentos += 1;
         if (intentos < 3) throw Object.assign(new Error('duplicate key value violates unique constraint "asistencia_llaves_prefijo_key"'), { code: "23505" });
-        return { rows: [{ id: 1, nombre: "x", prefijo: "p", estado: "activa" }] };
+        return { rows: [{ id: 1, nombre: "x", prefijo: "p", estado: "activa", ips_permitidas: [] }] };
       },
     });
     expect((await crear()).status).toBe(201);
@@ -225,9 +233,9 @@ describe("Llaves de ingesta - crear", () => {
     ["nombre con NUL", { nombre: "a\u0000b" }],
     ["origen no admitido", { nombre: "x", origen: "otro" }],
     ["origen no texto", { nombre: "x", origen: 5 }],
-    ["ips no es lista", { nombre: "x", ips_permitidas: "10.0.0.5" }],
-    ["ip inválida", { nombre: "x", ips_permitidas: ["10.0.0.256"] }],
-    ["demasiadas ip", { nombre: "x", ips_permitidas: Array.from({ length: 21 }, (_, i) => `10.0.0.${i + 1}`) }],
+    ["ips no es lista", { nombre: "x", ips_permitidas: "192.0.2.5" }],
+    ["ip inválida", { nombre: "x", ips_permitidas: ["192.0.2.256"] }],
+    ["demasiadas ip", { nombre: "x", ips_permitidas: Array.from({ length: 21 }, (_, i) => `192.0.2.${i + 1}`) }],
     ["vigente_hasta pasado", { nombre: "x", vigente_hasta: "2020-01-01T00:00:00Z" }],
     ["vigente_hasta sin zona", { nombre: "x", vigente_hasta: "2099-01-01T00:00:00" }],
     ["vigente_hasta basura", { nombre: "x", vigente_hasta: "mañana" }],
@@ -248,7 +256,7 @@ describe("Llaves de ingesta - crear", () => {
 describe("Llaves de ingesta - listar", () => {
   it("solo expone prefijo, nombre, estado, vigencia, último uso e IP; jamás la llave ni el hash", async () => {
     const a = await crear({ nombre: "A" });
-    await crear({ nombre: "B", ips_permitidas: ["10.0.0.5"] });
+    await crear({ nombre: "B", ips_permitidas: ["192.0.2.5"] });
     const r = await request(app).get(URL);
     expect(r.status).toBe(200);
     expect(r.body.datos.map((x) => x.nombre)).toEqual(["B", "A"]);
@@ -269,20 +277,58 @@ describe("Llaves de ingesta - listar", () => {
 
 describe("Llaves de ingesta - rotar", () => {
   it("crea la llave nueva (con los mismos datos) y fija la vigencia de la anterior: solape de 24 h por omisión", async () => {
-    const original = await crear({ nombre: "BioTime", ips_permitidas: ["10.0.0.5"] });
+    const original = await crear({ nombre: "BioTime", ips_permitidas: ["192.0.2.5"] });
     const r = await request(app).post(`${URL}/1/rotar`).send({});
     expect(r.status).toBe(201);
     expect(r.headers["cache-control"]).toBe("no-store");
     const { llave, anterior, ...nueva } = r.body.datos;
     expect(llave).toMatch(LLAVE);
     expect(llave).not.toBe(original.body.datos.llave);
-    expect(nueva).toMatchObject({ id: 2, nombre: "BioTime", ips_permitidas: ["10.0.0.5"], reemplaza_a: 1, estado: "activa" });
+    expect(nueva).toMatchObject({ id: 2, nombre: "BioTime", ips_permitidas: ["192.0.2.5"], reemplaza_a: 1, estado: "activa" });
     expect(anterior).toEqual({ id: 1, prefijo: original.body.datos.prefijo, vigente_hasta: `en ${24 * 3600} s` });
     expect(tienda).toHaveLength(2);
     expect(tienda[1].hash_llave).toBe(hashLlave(llave));
     const acotar = bd.sqls().find((l) => /SET vigente_hasta = LEAST/.test(l.sql));
     expect(acotar.params).toEqual([1, 24 * 3600]);
     expect(acotar.sql).toMatch(/LEAST\(COALESCE\(vigente_hasta, 'infinity'::timestamptz\)/); // nunca amplía un vencimiento más corto
+  });
+
+  it("rotar una llave ya rotada (en su solape) o con vencimiento -> 409 y no crea otra llave activa", async () => {
+    await crear({ nombre: "A" });
+    expect((await request(app).post(`${URL}/1/rotar`).send({})).status).toBe(201);
+    const segunda = await request(app).post(`${URL}/1/rotar`).send({});
+    expect(segunda.status).toBe(409);
+    expect(segunda.body.mensaje).toMatch(/ya fue rotada o tiene vencimiento/);
+    expect(tienda).toHaveLength(2);
+    // la sucesora sí se puede rotar; una llave con vencimiento propio no
+    expect((await request(app).post(`${URL}/2/rotar`).send({})).status).toBe(201);
+    await crear({ nombre: "con vencimiento", vigente_hasta: "2099-01-01T00:00:00Z" });
+    expect((await request(app).post(`${URL}/4/rotar`).send({})).status).toBe(409);
+    expect(tienda).toHaveLength(4);
+  });
+
+  it("dos rotaciones simultáneas: la segunda espera el FOR UPDATE y ve la llave ya acotada -> una sola 201", async () => {
+    await crear({ nombre: "A" });
+    let liberar;
+    const compuerta = new Promise((r) => (liberar = r));
+    let entradas = 0;
+    // El bloqueo de fila se simula: la segunda lectura FOR UPDATE espera a que la primera transacción termine
+    bd.estado.reglas.unshift({
+      re: /FROM asistencia_llaves WHERE id = \$1 FOR UPDATE/,
+      respuesta: async (_sql, p) => {
+        entradas += 1;
+        if (entradas === 2) await compuerta;
+        const f = tienda.find((x) => x.id === p[0]);
+        return { rows: f ? [publica(f)] : [] };
+      },
+    });
+    const a = request(app).post(`${URL}/1/rotar`).send({}).then((r) => r);
+    const b = request(app).post(`${URL}/1/rotar`).send({}).then((r) => r);
+    await new Promise((r) => setTimeout(r, 50));
+    liberar();
+    const estados = (await Promise.all([a, b])).map((r) => r.status).sort();
+    expect(estados).toEqual([201, 409]);
+    expect(tienda).toHaveLength(2);
   });
 
   it("solape configurable (horas) y 0 = la anterior termina ya", async () => {
@@ -296,11 +342,11 @@ describe("Llaves de ingesta - rotar", () => {
   });
 
   it("puede renombrar y cambiar las IP de la llave nueva sin tocar las de la anterior", async () => {
-    await crear({ nombre: "Vieja", ips_permitidas: ["10.0.0.5"] });
-    const r = await request(app).post(`${URL}/1/rotar`).send({ nombre: "Nueva", ips_permitidas: ["10.0.0.6"] });
+    await crear({ nombre: "Vieja", ips_permitidas: ["192.0.2.5"] });
+    const r = await request(app).post(`${URL}/1/rotar`).send({ nombre: "Nueva", ips_permitidas: ["192.0.2.6"] });
     expect(r.status).toBe(201);
-    expect(tienda[1]).toMatchObject({ nombre: "Nueva", ips_permitidas: ["10.0.0.6"] });
-    expect(tienda[0]).toMatchObject({ nombre: "Vieja", ips_permitidas: ["10.0.0.5"] });
+    expect(tienda[1]).toMatchObject({ nombre: "Nueva", ips_permitidas: ["192.0.2.6"] });
+    expect(tienda[0]).toMatchObject({ nombre: "Vieja", ips_permitidas: ["192.0.2.5"] });
   });
 
   it("la lectura de la anterior se bloquea (FOR UPDATE) y todo va en una transacción", async () => {
@@ -341,8 +387,8 @@ describe("Llaves de ingesta - rotar", () => {
     expect(tienda).toHaveLength(antes);
   });
 
-  it("id inválido -> 400", async () => {
-    for (const id of ["0", "abc", "-1", "1.5", "99999999999"]) {
+  it("id inválido o fuera de rango int4 -> 400, nunca 500", async () => {
+    for (const id of ["0", "abc", "-1", "1.5", "99999999999", "2147483648", "00000000001", "9".repeat(30)]) {
       expect((await request(app).post(`${URL}/${id}/rotar`).send({})).status).toBe(400);
     }
   });
@@ -379,14 +425,14 @@ describe("Llaves de ingesta - revocar y editar IP", () => {
   });
 
   it("edita las IP permitidas (vacía = sin restricción) y valida el formato", async () => {
-    await crear({ nombre: "x", ips_permitidas: ["10.0.0.5"] });
-    let r = await request(app).put(`${URL}/1/ips`).send({ ips_permitidas: ["10.0.0.0/24", "2001:db8::/32"] });
+    await crear({ nombre: "x", ips_permitidas: ["192.0.2.5"] });
+    let r = await request(app).put(`${URL}/1/ips`).send({ ips_permitidas: ["192.0.2.0/24", "2001:db8::/32"] });
     expect(r.status).toBe(200);
-    expect(r.body.datos.ips_permitidas).toEqual(["10.0.0.0/24", "2001:db8::/32"]);
+    expect(r.body.datos.ips_permitidas).toEqual(["192.0.2.0/24", "2001:db8::/32"]);
     r = await request(app).put(`${URL}/1/ips`).send({ ips_permitidas: [] });
     expect(r.status).toBe(200);
     expect(tienda[0].ips_permitidas).toEqual([]);
-    for (const malo of [undefined, "10.0.0.1", ["10.0.0.1/33"], ["10.0.0.0/0"], [5], ["a", "b"]]) {
+    for (const malo of [undefined, "192.0.2.1", ["192.0.2.1/33"], ["192.0.2.0/0"], [5], ["a", "b"]]) {
       expect((await request(app).put(`${URL}/1/ips`).send({ ips_permitidas: malo })).status).toBe(400);
     }
     expect(tienda[0].ips_permitidas).toEqual([]);
@@ -413,7 +459,7 @@ describe("Llaves de ingesta - auditoría y secreto", () => {
   it("audita crear, rotar, revocar y editar IP con el usuario, sin la llave ni el hash", async () => {
     const c = await crear({ nombre: "A" });
     const rot = await request(app).post(`${URL}/1/rotar`).send({ solape_horas: 12 });
-    await request(app).put(`${URL}/2/ips`).send({ ips_permitidas: ["10.0.0.9"] });
+    await request(app).put(`${URL}/2/ips`).send({ ips_permitidas: ["192.0.2.9"] });
     await request(app).post(`${URL}/1/revocar`).send({});
     const acciones = Auditoria.crear.mock.calls.map(([d]) => [d.accion, d.registro_id, d.usuario_id, d.modulo, d.tabla]);
     expect(acciones).toEqual([
@@ -479,19 +525,21 @@ describe("Lotes y re-vinculación de marcas", () => {
     const r = await request(app).post("/api/asistencia/marcas/revincular").send({});
     expect(r.status).toBe(200);
     expect(r.body.datos).toEqual({ vinculadas: 2, pendientes: 7 });
-    const vincular = bd.sqls().find((l) => /WITH unicos AS/.test(l.sql));
+    const vincular = bd.sqls().find((l) => /WITH candidatas AS/.test(l.sql));
     expect(vincular.params).toEqual([5000]);
-    // solo huérfanas, solo numero_nomina con UNA coincidencia, por lotes y sin esperar filas bloqueadas
-    expect(vincular.sql).toMatch(/GROUP BY numero_nomina HAVING COUNT\(\*\) = 1/);
-    expect(vincular.sql).toMatch(/WHERE m\.empleado_id IS NULL/);
-    expect(vincular.sql).toMatch(/JOIN unicos u ON u\.numero_nomina = m\.codigo_empleado/);
-    expect(vincular.sql).toMatch(/ORDER BY m\.id LIMIT \$1\s+FOR UPDATE OF m SKIP LOCKED/);
-    expect(vincular.sql).toMatch(/SET empleado_id = c\.empleado_id/);
+    // solo huérfanas, misma regla que la ingesta (una coincidencia exacta + periodo de empleo), por lotes
+    const sql = vincular.sql.replace(/\s+/g, " ");
+    expect(sql).toMatch(/WHERE e\.numero_nomina = m\.codigo_empleado/);
+    expect(sql).toMatch(/e\.fecha_ingreso IS NULL OR e\.fecha_ingreso <= \(m\.marca_ts AT TIME ZONE 'America\/Mexico_City'\)::date/);
+    expect(sql).toMatch(/e\.fecha_baja IS NULL OR e\.fecha_baja >= \(m\.marca_ts AT TIME ZONE 'America\/Mexico_City'\)::date\) HAVING COUNT\(\*\) = 1/);
+    expect(sql).toMatch(/WHERE m\.empleado_id IS NULL/);
+    expect(sql).toMatch(/WHERE empleado_id IS NOT NULL ORDER BY id LIMIT \$1/);
+    expect(sql).toMatch(/SET empleado_id = c\.empleado_id FROM elegidas c WHERE m\.id = c\.id AND m\.empleado_id IS NULL/);
     expect(vincular.sql).not.toMatch(/SET (?!empleado_id)\w+ =/); // la marca original no se toca
     expect(Auditoria.crear.mock.calls[0][0]).toMatchObject({ accion: "REVINCULAR_MARCAS", tabla: "asistencia_marcas" });
 
     Auditoria.crear.mockClear();
-    bd.estado.reglas.unshift({ re: /WITH unicos AS/, respuesta: { rows: [], rowCount: 0 } });
+    bd.estado.reglas.unshift({ re: /WITH candidatas AS/, respuesta: { rows: [], rowCount: 0 } });
     await request(app).post("/api/asistencia/marcas/revincular").send({ limite: 10 });
     expect(Auditoria.crear).not.toHaveBeenCalled();
   });
@@ -500,7 +548,7 @@ describe("Lotes y re-vinculación de marcas", () => {
     for (const malo of [0, 50001, "x", -5, 1.5]) {
       expect((await request(app).post("/api/asistencia/marcas/revincular").send({ limite: malo })).status).toBe(400);
     }
-    bd.estado.reglas.unshift({ re: /WITH unicos AS/, respuesta: () => { throw new Error('deadlock detected: SELECT * FROM asistencia_marcas'); } });
+    bd.estado.reglas.unshift({ re: /WITH candidatas AS/, respuesta: () => { throw new Error('deadlock detected: SELECT * FROM asistencia_marcas'); } });
     const r = await request(app).post("/api/asistencia/marcas/revincular").send({});
     expect(r.status).toBe(500);
     expect(JSON.stringify(r.body)).not.toMatch(/deadlock|SELECT/);

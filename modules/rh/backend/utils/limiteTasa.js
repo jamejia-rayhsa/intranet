@@ -23,6 +23,15 @@ function crearLimitador({ maximo = 60, ventanaMs = 60000, ahora = () => Date.now
       registros.set(clave, marcas);
       return { permitido: true };
     },
+    /** ¿Ya se alcanzó el máximo? Igual que intentar() pero SIN contar la petición. */
+    consultar(clave) {
+      const t = ahora();
+      const marcas = (registros.get(clave) || []).filter((m) => m > t - ventanaMs);
+      if (marcas.length >= maximo) {
+        return { permitido: false, reintentarEnSeg: Math.max(1, Math.ceil((marcas[0] + ventanaMs - t) / 1000)) };
+      }
+      return { permitido: true };
+    },
     reiniciar() {
       registros.clear();
     },

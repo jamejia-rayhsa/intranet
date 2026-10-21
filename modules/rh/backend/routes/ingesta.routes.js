@@ -15,6 +15,15 @@ const ENVIOS_POR_MINUTO = 60;
 // Un limitador por proceso; cuenta por llave y por ruta (60 envíos/min en POST y 60 consultas/min en GET)
 const limitador = crearLimitador({ maximo: ENVIOS_POR_MINUTO, ventanaMs: 60000 });
 
+// El contrato es JSON UTF-8: un charset declarado distinto de utf-8 (utf-16, latin1...) -> 415, no un 400 confuso
+function exigirUtf8(req, res, next) {
+  const m = /;\s*charset\s*=\s*"?([^";\s]+)"?/i.exec(req.headers["content-type"] || "");
+  if (m && !/^utf-8$/i.test(m[1])) {
+    return res.status(415).json({ exito: false, mensaje: "Tipo de contenido o codificación no admitidos: usa JSON en UTF-8" });
+  }
+  return next();
+}
+
 const router = Router();
 router.use(autenticarLlave);
 
@@ -22,6 +31,7 @@ router.get("/estado", limitarPorLlave(limitador, "estado"), IngestaControlador.e
 router.post(
   "/marcas",
   limitarPorLlave(limitador, "marcas"),
+  exigirUtf8,
   express.json({
     limit: LIMITE_CUERPO,
     // Huella del cuerpo recibido (asistencia_sync_lotes.hash_cuerpo); no se guarda el contenido
@@ -55,3 +65,4 @@ module.exports = router;
 module.exports.LIMITE_CUERPO = LIMITE_CUERPO;
 module.exports.ENVIOS_POR_MINUTO = ENVIOS_POR_MINUTO;
 module.exports.limitador = limitador;
+module.exports.limitadorIp = autenticarLlave.limitadorIp;

@@ -2773,3 +2773,93 @@ Hallazgos abiertos:
 **Revisado sin hallazgos:** idempotencia de la 012 (CREATE ... IF NOT EXISTS, DROP/CREATE del trigger, semilla solo si `turnos` vacía, ON CONFLICT en permisos con PK de `rol_opcion_permisos`); falla segura (`CREATE EXTENSION` sin fallback y ON_ERROR_STOP en entrypoint y compose, así que si falla el backend no arranca); EXCLUDE con `daterange '[]'` y NULL = abierta (correcto); `terminar` solo acorta (409 si no acorta, FOR UPDATE, sin candado de traslape necesario porque acortar no crea solapes); mapeo de días BioTime 0=domingo a ISO 7 correcto y coincide con la semilla; ventanas, tolerancias y descanso de la semilla coinciden con att_timeinterval/att_breaktime de docs/respuesta_intranet.md; nocturno derivado y duración correctas; fechas como texto (Date.UTC solo para validar, nunca new Date(texto)); acceso a `/empleados/:id/turno` (propio, jefe vigente con `jefe_inmediato_id` actual, RH con Empleados:edicion, 403 uniforme sin revelar existencia para no-RH); `portal_admin` sin Turnos ni Asistencia (init.sql solo le da portal); 500 genéricos sin texto SQL; auditoría sin datos sensibles; candados de asistencia (4301/4302) no colisionan con vacaciones (4217); no hay timers ni `new Date()` en los tests nuevos (la inestabilidad de 5 suites del coder está en delegacionPermisos/portal, fuera de este commit); el schema admite los datos reales que el sincronizador describe (terminal_sn vacío, verify_type 0, source 2, codigo_empleado de 1-3 dígitos como texto, estado_marca '0').
 
 **Pruebas (detalle):** revisión estática, lectura de código, migración, compose, docs y tests. No se ejecutó jest ni Postgres en esta revisión. Verificación del coder (no repetida aquí): 47 suites / 1231 tests OK, 57 mutaciones, Postgres 16 y supabase/postgres 17.6 en contenedores desechables.
+
+### [2026-10-21] [revisor] — Asistencia Fase 3
+**Alcance:** commit `3599349` (migración 013, middleware de llave, rutas de ingesta, controlador/modelo/validación, administración de llaves, TRUST_PROXY, simulador, docs y tests). Solo lectura: no se modificó código.
+**Veredicto:** APROBADO CON CORRECCIONES MENORES. Sin hallazgos críticos: no hay violación de decisions.md ni bug claro de seguridad o de datos.
+
+**Verificado sin hallazgos:**
+- Llave: 32 bytes aleatorios, SHA-256 en BD, `timingSafeEqual`, 401 idénticos, 403 solo con llave auténtica, revocación y vigencia leídas de la BD en cada petición, sin caché.
+- Sin oráculo de prefijo ni de hash; la llave no sale en respuestas (salvo alta/rotación, con no-store), auditoría, logs ni parámetros de BD.
+- Ingesta: una transacción, un cliente, sin pool anidado; orden ascendente numérico y ON CONFLICT DO NOTHING; sin deadlock entre envíos traslapados (prueba de carga del coder).
+- Cursor BIGINT con comparación numérica; marca_ts canonizada a UTC (la comparación de cadenas es válida).
+- Vinculación por numero_nomina: solo con una coincidencia exacta; `vincularHuerfanas` usa SKIP LOCKED y el trigger permite cambiar solo empleado_id.
+- Montaje antes de express.json global; 1 MB solo en la ingesta; el resto de la API no cambia; 415 y 413 correctos.
+- Permisos: Ingesta solo rh_admin y super_admin; portal_admin excluido.
+- Migración 013 idéntica a su bloque de init.sql; RLS y REVOKE presentes; el ON CONFLICT de permisos tiene PK.
+- Columnas de BD (VARCHAR) compatibles con los límites de validación.
+- docs/respuesta_intranet.md: sin seguimiento git y excluido en .git/info/exclude. Sus IP y números de serie no aparecen en el commit ni en el repo.
+
+**Hallazgos:**
+
+**Archivo/línea:** modules/rh/backend/tests/ingesta.test.js:762 y 772
+**Problema:** test intermitente "la llave nunca se expone". `secreto = esc.llave.split("_")[2]` falla porque el alfabeto base64url incluye "_": en el 47 % de las llaves el fragmento no es el secreto completo y en el 5,9 % mide 3 caracteres o menos; coincide por azar con el ETag (base64) de la respuesta. Reproducido 1 de 12 corridas concurrentes; aislado pasa.
+**Severidad:** medio
+**Fix sugerido (causa raíz y arreglo exacto):** sustituir la línea 762 por `const secreto = esc.llave.slice(esc.llave.indexOf("_", 4) + 1); expect(secreto).toHaveLength(43);`. Así el secreto son los 43 caracteres base64url completos (256 bits), sin fragmentos cortos.
+
+**Archivo/línea:** modules/rh/backend/tests/ingesta.test.js:282-296
+**Problema:** el test del 413 reintenta ante EPIPE/ECONNRESET, pero si los 5 intentos fallan `r` queda indefinido y el error es un TypeError que oculta la causa. No reproduje EPIPE (2 suites completas y 12 corridas concurrentes sin fallo). La hipótesis EPIPE es plausible (el servidor responde 413 sin leer el cuerpo), pero no está confirmada.
+**Severidad:** medio
+**Fix sugerido:** tras el bucle, añadir `if (!r) throw new Error("sin respuesta 413 tras 5 intentos (EPIPE/ECONNRESET)");` y salir del bucle con `break` al tener respuesta. Si vuelve a aparecer, pasar a enviar el cuerpo con `http.request` y tratar el error de socket como válido solo tras recibir la respuesta.
+
+**Archivo/línea:** modules/rh/backend/routes/ingesta.routes.js:12 (`router.use(autenticarLlave)`), middleware/llaveIngesta.middleware.js (`buscarPorPrefijo`)
+**Problema:** las peticiones sin llave válida no tienen límite de tasa antes de consultar la BD; cada una hace una consulta en el pool compartido con el resto de la aplicación. Un flujo de peticiones con prefijos al azar puede saturar el pool.
+**Severidad:** medio (sube a alto si el endpoint se publica a Internet)
+**Fix sugerido:** límite de intentos fallidos por IP antes de `buscarPorPrefijo` (p. ej. 30/min), con 429 sin consultar la BD.
+
+**Archivo/línea:** modules/rh/backend/models/ingesta.model.js (`vincularHuerfanas`) y ON DELETE SET NULL de `asistencia_marcas.empleado_id`
+**Problema:** la vinculación por numero_nomina se fija en la ingesta y no se vuelve a evaluar. Si un empleado se borra o cambia su nómina, sus marcas quedan huérfanas y la re-vinculación puede asignarlas a quien reciba ese número: riesgo de atribución errónea.
+**Severidad:** medio
+**Fix sugerido:** registrar la fecha y el origen de la vinculación y no revincular marcas cuyo empleado fue borrado; o exigir confirmación de RH antes de revincular marcas ya asociadas a un empleado anterior.
+
+**Archivo/línea:** modules/rh/backend/utils/marcaValidacion.js (`interpretarIdExterno`, rama number) frente a docs/asistencia/contrato-ingesta-marcas.md sección 7
+**Problema:** el contrato dice "número JSON o texto de dígitos, hasta 18 dígitos", pero un número JSON solo se acepta si es entero seguro (hasta ~16 dígitos). Un id de 17-18 dígitos enviado como número se rechaza, sin corrupción de datos.
+**Severidad:** bajo
+**Fix sugerido:** o bien corregir el contrato a "texto de dígitos" para ids largos, o bien aceptar hasta 18 dígitos como cadena en la rama number. Elegir una de las dos y documentarla.
+
+**Archivo/línea:** modules/rh/backend/controllers/ingesta.controller.js (bucle `marcas.forEach(validarMarca)` antes del `try`)
+**Problema:** en Express 4 un error lanzado en un manejador async fuera de try deja la petición sin respuesta (la promesa rechazada no la captura Express).
+**Severidad:** bajo (no alcanzable con los datos actuales)
+**Fix sugerido:** envolver la validación en el mismo try o en un try propio que responda 500 genérico.
+
+**Archivo/línea:** modules/rh/backend/services/rechazosIngesta.service.js (tope `maxClavesPorHora = 200`)
+**Problema:** el tope de claves nuevas es global. Un atacante con muchas IP puede agotarlo en una hora y dejar sin auditar los rechazos del resto (solo se pierde la auditoría, no la protección).
+**Severidad:** bajo
+**Fix sugerido:** tope por IP además del global, o reserva de claves para motivos de llave auténtica (llave_revocada, ip_no_permitida).
+
+**Archivo/línea:** modules/rh/backend/controllers/llaveIngesta.controller.js (`rotar`, `revocar`, `editarIps`) y utils/turnoValidacion.js:44 (`esIdValido`)
+**Problema:** `esIdValido` admite hasta 10 dígitos, pero el id es INT (máx. 2147483647): un id mayor da error de BD y 500 en lugar de 404/400.
+**Severidad:** bajo
+**Fix sugerido:** validar `<= 2147483647` en la ruta de llaves y lotes.
+
+**Archivo/línea:** modules/rh/backend/controllers/llaveIngesta.controller.js (`rotar`)
+**Problema:** dos rotaciones concurrentes de la misma llave activa crean dos sucesoras (la anterior sigue "activa" durante el solape). No es una brecha, pero deja llaves activas de más.
+**Severidad:** bajo
+**Fix sugerido:** rechazar con 409 si ya existe una sucesora vigente (`reemplaza_a = previa.id`) dentro de la transacción.
+
+**Archivo/línea:** modules/rh/backend/models/ingesta.model.js (`estado`, `COUNT(*)` sobre asistencia_marcas)
+**Problema:** cada GET /estado cuenta todas las marcas del origen; crece con el histórico (100 mil marcas o más) y se ejecuta hasta 60 veces por minuto y llave.
+**Severidad:** bajo
+**Fix sugerido:** guardar el total en asistencia_sync_estado e incrementarlo en la misma transacción de procesarEnvio.
+
+**Archivo/línea:** modules/rh/backend/models/ingesta.model.js (UPSERT de asistencia_sync_estado, `ultimo_lote_id = EXCLUDED.ultimo_lote_id`)
+**Problema:** bajo concurrencia, un envío más antiguo que confirme después puede sobrescribir el lote más reciente.
+**Severidad:** bajo
+**Fix sugerido:** `ultimo_lote_id = GREATEST(asistencia_sync_estado.ultimo_lote_id, EXCLUDED.ultimo_lote_id)`.
+
+**Archivo/línea:** modules/rh/backend/controllers/llaveIngesta.controller.js (`crear`, valor por defecto de `ips_permitidas`)
+**Problema:** una llave nueva sin lista de IP es válida desde cualquier IP. Es una decisión del diseño (lista opcional), pero el valor por defecto es el más abierto.
+**Severidad:** bajo
+**Fix sugerido:** avisar en la respuesta de crear cuando la lista esté vacía, o exigirla en producción.
+
+**Archivo/línea:** docker-compose.dev.yml (puerto 4000 publicado) y utils/trustProxy.js
+**Problema:** con TRUST_PROXY=N, un cliente que llegue directo al backend puede falsear X-Forwarded-For y evadir la lista de IP. Está documentado en operacion-ingesta.md, pero el arranque no avisa.
+**Severidad:** bajo
+**Fix sugerido:** aviso en el arranque cuando TRUST_PROXY esté definido y el puerto esté publicado, o no publicar 4000 en dev.
+
+**Archivo/línea:** modules/rh/backend/middleware/llaveIngesta.middleware.js (`crearAutenticadorLlave`)
+**Problema:** el límite de tasa es por proceso; con varias réplicas el límite se multiplica. Ya documentado por el coder.
+**Severidad:** bajo (informativo)
+**Fix sugerido:** ninguno hasta tener más de una réplica; anotar en la Fase 4.
+
+**Pendientes sin verificar:** nginx/Traefik reales con TRUST_PROXY (el coder lo marcó como no verificado); la IP real de la interfaz; el valor "Staging = 2 saltos" de la documentación.

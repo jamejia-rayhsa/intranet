@@ -4,6 +4,8 @@
 const { crearBD } = require("./fakeAsistenciaDb");
 const { generarLlave } = require("../utils/llaveIngesta");
 
+const fechaMexico = (iso) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City" }).format(new Date(iso));
+
 function crearEscenario() {
   const bd = crearBD();
   const { llave, prefijo, hash } = generarLlave();
@@ -22,7 +24,7 @@ function crearEscenario() {
       ips_permitidas: [],
       vigente_ahora: true,
     },
-    empleados: [], // { numero_nomina, id, coincidencias }
+    empleados: [], // { numero_nomina, id, fecha_ingreso?, fecha_baja? }
     existentes: new Set(), // id_externo ya guardados (conflicto -> duplicada)
     guardadas: [], // marcas realmente insertadas por la simulación
     idLote: 812,
@@ -30,6 +32,19 @@ function crearEscenario() {
     estado: null, // fila de asistencia_sync_estado devuelta a GET /estado
     totalMarcas: 0,
     falla: null, // { re, error }: lanza ese error al ejecutar el SQL que coincida
+  };
+
+  // Espejo de la regla SQL de vinculación (empleadoVigenteSql): UNA coincidencia exacta de numero_nomina cuyo
+  // periodo de empleo contiene la fecha de la marca en America/Mexico_City (fechas NULL = abierto)
+  e.empleadoPara = (codigo, marcaTs) => {
+    const dia = fechaMexico(marcaTs);
+    const coincide = e.empleados.filter(
+      (x) =>
+        x.numero_nomina === codigo &&
+        (!x.fecha_ingreso || x.fecha_ingreso <= dia) &&
+        (!x.fecha_baja || x.fecha_baja >= dia),
+    );
+    return coincide.length === 1 ? coincide[0].id : null;
   };
 
   const regla = (re, respuesta) =>
@@ -51,22 +66,20 @@ function crearEscenario() {
     regla(/INSERT INTO asistencia_sync_lotes .*'en_curso'/s, () => ({
       rows: [{ id: e.idLote }],
     }));
-    regla(/FROM empleados WHERE numero_nomina = ANY/, (_sql, params) => ({
-      rows: e.empleados.filter((x) => params[0].includes(x.numero_nomina)),
-    }));
     regla(/INSERT INTO asistencia_marcas/, (_sql, params) => {
-      const [origen, loteId, ids, codigos, empleadoIds] = params;
+      const [origen, loteId, ids, codigos, marcasTs] = params;
       const rows = [];
       ids.forEach((id, i) => {
         if (e.existentes.has(id) || rows.some((r) => r.id_externo === id))
           return;
-        rows.push({ id_externo: id, empleado_id: empleadoIds[i] });
+        const empleadoId = e.empleadoPara(codigos[i], marcasTs[i]);
+        rows.push({ id_externo: id, empleado_id: empleadoId });
         e.guardadas.push({
           origen,
           loteId,
           id_externo: id,
           codigo_empleado: codigos[i],
-          empleado_id: empleadoIds[i],
+          empleado_id: empleadoId,
         });
       });
       rows.forEach((r) => e.existentes.add(r.id_externo));

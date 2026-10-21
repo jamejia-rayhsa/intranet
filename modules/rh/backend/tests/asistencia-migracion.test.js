@@ -257,14 +257,14 @@ describe("Archivos de asistencia - sin datos reales de la red de BioTime", () =>
   it.each(archivos)("%s no contiene IPs privadas ni números de serie de terminal", (archivo) => {
     const texto = leer(archivo);
     expect(texto).not.toMatch(/\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);
-    expect(texto).not.toMatch(/\bCN\d{8,}\b/);
+    expect(texto).not.toMatch(/\bCN(96\d*|\d{8,})\b/);
   });
 });
 
 describe("Contrato de ingesta - ejemplos ficticios", () => {
   const contrato = leer("docs/asistencia/contrato-ingesta-marcas.md");
   it("no usa el id, los instantes ni el alias de un registro real", () => {
-    expect(contrato).not.toMatch(/1566931|1567430|1567001|CORPORATIVO|2026-10-21T/);
+    expect(contrato).not.toMatch(/\b15[67]\d{4}\b|2026-10-21T/); // ids de iclock_transaction y fechas de registros reales (patrón genérico)
     expect(contrato).toContain('"id_externo": "1000123"');
     expect(contrato).toContain('"marca_ts": "2026-01-15T14:00:00Z"');
     expect(contrato).toContain('"terminal_alias": "SEDE-A"');

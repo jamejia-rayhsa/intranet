@@ -12,6 +12,15 @@ const iso = (fecha) => (fecha ? new Date(fecha).toISOString().replace(".000Z", "
 
 const IngestaControlador = {
   async recibir(req, res) {
+    try {
+      return await IngestaControlador._recibir(req, res);
+    } catch (error) {
+      console.error("[Ingesta] Error inesperado al recibir el envío:", error && error.message);
+      return res.status(500).json({ exito: false, mensaje: "Error interno al procesar el envío" });
+    }
+  },
+
+  async _recibir(req, res) {
     const cuerpo = req.body;
     if (!esObjetoPlano(cuerpo)) {
       return res.status(400).json({ exito: false, mensaje: "El cuerpo debe ser un objeto JSON con la lista marcas" });

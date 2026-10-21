@@ -12,6 +12,8 @@ const { ipDeLaPeticion } = require("../middleware/llaveIngesta.middleware");
 
 const MSG_ID = "El identificador debe ser un número entero positivo";
 const ORIGENES_VALIDOS = ["biotime"];
+const AVISO_IPS =
+  "La llave se creó SIN IP permitidas: sirve desde cualquier IP. En producción restríngela con PUT /api/asistencia/llaves/:id/ips (primero comprueba ultima_ip y TRUST_PROXY, ver operacion-ingesta.md)";
 const SOLAPE_POR_DEFECTO_HORAS = 24;
 const SOLAPE_MAXIMO_HORAS = 720;
 const LIMITE_LOTES_MAXIMO = 200;
@@ -79,13 +81,14 @@ function validarVencimiento(valor) {
   return { valor: r.fecha.toISOString() };
 }
 
-function respuestaConLlave(res, estado, fila, llave, mensaje, extra = {}) {
+function respuestaConLlave(res, estado, fila, llave, mensaje, extra = {}, raiz = {}) {
   res.set("Cache-Control", "no-store");
   return res.status(estado).json({
     exito: true,
     datos: { ...fila, llave, ...extra },
     mensaje,
     aviso: "Guarda la llave ahora en un gestor de contraseñas: no se vuelve a mostrar",
+    ...raiz,
   });
 }
 
@@ -119,7 +122,8 @@ const LlaveControlador = {
         ),
       );
       await auditar(req, "CREAR_LLAVE", fila.id, null, resumen(fila));
-      return respuestaConLlave(res, 201, fila, llave, "Llave creada");
+      const raiz = fila.ips_permitidas.length === 0 ? { aviso_ips: AVISO_IPS } : {};
+      return respuestaConLlave(res, 201, fila, llave, "Llave creada", {}, raiz);
     } catch (error) {
       return responderError(res, "crear la llave", error);
     }
@@ -151,6 +155,12 @@ const LlaveControlador = {
         if (!previa) throw new ErrorAsistencia(404, "Llave no encontrada");
         if (previa.estado_efectivo !== "activa") {
           throw new ErrorAsistencia(409, "Solo se puede rotar una llave activa y vigente");
+        }
+        // Ya rotada (su vigente_hasta es el fin del solape) o con vencimiento propio: rotarla otra vez crearía una
+        // segunda llave vigente sin vencimiento. El FOR UPDATE de arriba serializa rotaciones concurrentes: la
+        // segunda espera, lee la fila ya acotada y recibe este 409. Para la sucesora, rotar ESA llave.
+        if (previa.vigente_hasta !== null) {
+          throw new ErrorAsistencia(409, "La llave ya fue rotada o tiene vencimiento: rota su llave sucesora o revócala");
         }
         const nueva = await Llave.insertar(
           {

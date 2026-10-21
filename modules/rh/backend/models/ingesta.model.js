@@ -1,6 +1,21 @@
 const { grupo } = require("../../../portal/backend/config/database");
 
 const MENSAJE_ERROR_LOTE = "Error interno al procesar el envío";
+const ZONA = "America/Mexico_City";
+
+/**
+ * ÚNICA regla de vinculación marca -> empleado (la usan la ingesta y la re-vinculación). Subconsulta escalar que
+ * devuelve el id del empleado solo si hay EXACTAMENTE UNO con numero_nomina igual al código (texto exacto, sin
+ * normalizar ceros) cuyo periodo de empleo contiene la fecha de la marca en America/Mexico_City:
+ * fecha_ingreso <= fecha <= fecha_baja (NULL = abierto). Así un numero_nomina reutilizado por otra persona no
+ * atribuye marcas viejas al empleado nuevo. 0 o varios -> NULL (la marca queda huérfana).
+ */
+const empleadoVigenteSql = (codigo, marcaTs) => `(
+  SELECT MIN(e.id) FROM empleados e
+  WHERE e.numero_nomina = ${codigo}
+    AND (e.fecha_ingreso IS NULL OR e.fecha_ingreso <= (${marcaTs} AT TIME ZONE '${ZONA}')::date)
+    AND (e.fecha_baja IS NULL OR e.fecha_baja >= (${marcaTs} AT TIME ZONE '${ZONA}')::date)
+  HAVING COUNT(*) = 1)`;
 
 const Ingesta = {
   /**
@@ -24,18 +39,6 @@ const Ingesta = {
         );
         const loteId = lote.rows[0].id;
 
-        // empleado_id: solo con UNA coincidencia exacta de numero_nomina (texto exacto, sin normalizar ceros)
-        const vinculos = new Map();
-        if (validas.length > 0) {
-          const codigos = [...new Set(validas.map((m) => m.codigo_empleado))];
-          const empleados = await cliente.query(
-            `SELECT numero_nomina, MIN(id) AS id, COUNT(*)::int AS coincidencias
-             FROM empleados WHERE numero_nomina = ANY($1::text[]) GROUP BY numero_nomina`,
-            [codigos],
-          );
-          for (const e of empleados.rows) if (e.coincidencias === 1) vinculos.set(e.numero_nomina, e.id);
-        }
-
         let insertadas = 0;
         let sinEmpleado = 0;
         if (validas.length > 0) {
@@ -43,11 +46,12 @@ const Ingesta = {
           const guardadas = await cliente.query(
             `INSERT INTO asistencia_marcas (origen, id_externo, codigo_empleado, empleado_id, marca_ts, subida_ts,
                 estado_marca, tipo_verificacion, terminal_sn, terminal_alias, area_externa, crudo, lote_id)
-             SELECT $1, t.id_externo, t.codigo_empleado, t.empleado_id, t.marca_ts::timestamptz, t.subida_ts::timestamptz,
+             SELECT $1, t.id_externo, t.codigo_empleado, ${empleadoVigenteSql("t.codigo_empleado", "t.marca_ts::timestamptz")},
+                t.marca_ts::timestamptz, t.subida_ts::timestamptz,
                 t.estado_marca, t.tipo_verificacion, t.terminal_sn, t.terminal_alias, t.area_externa, t.crudo::jsonb, $2
-             FROM unnest($3::text[], $4::text[], $5::int[], $6::text[], $7::text[], $8::text[], $9::text[],
-                         $10::text[], $11::text[], $12::text[], $13::text[])
-               WITH ORDINALITY AS t(id_externo, codigo_empleado, empleado_id, marca_ts, subida_ts, estado_marca,
+             FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[],
+                         $9::text[], $10::text[], $11::text[], $12::text[])
+               WITH ORDINALITY AS t(id_externo, codigo_empleado, marca_ts, subida_ts, estado_marca,
                                     tipo_verificacion, terminal_sn, terminal_alias, area_externa, crudo, orden)
              ORDER BY t.orden
              ON CONFLICT (origen, id_externo) DO NOTHING
@@ -57,7 +61,6 @@ const Ingesta = {
               loteId,
               col("id_externo"),
               col("codigo_empleado"),
-              validas.map((m) => vinculos.get(m.codigo_empleado) ?? null),
               col("marca_ts"),
               col("subida_ts"),
               col("estado_marca"),
@@ -163,24 +166,21 @@ const Ingesta = {
 
   /**
    * Re-vinculación de marcas huérfanas (empleado_id NULL) cuyo codigo_empleado coincide con UN SOLO
-   * numero_nomina (texto exacto). Lotes de `limite` filas con SKIP LOCKED; el trigger de inmutabilidad
+   * numero_nomina (texto exacto) y periodo de empleo vigente en la fecha de la marca (misma regla que la ingesta). Por lotes de `limite` filas (solo se evalúan las huérfanas, que son pocas); el trigger de inmutabilidad
    * permite el cambio porque solo toca empleado_id. La Fase 4 la ejecutará periódicamente.
    * Devuelve { vinculadas, pendientes } (pendientes = huérfanas que siguen sin empleado).
    */
   async vincularHuerfanas({ limite = 5000 } = {}, cliente = grupo) {
     const r = await cliente.query(
-      `WITH unicos AS (
-         SELECT numero_nomina, MIN(id) AS id FROM empleados
-         WHERE numero_nomina IS NOT NULL GROUP BY numero_nomina HAVING COUNT(*) = 1
-       ), candidatas AS (
-         SELECT m.id, u.id AS empleado_id
-         FROM asistencia_marcas m JOIN unicos u ON u.numero_nomina = m.codigo_empleado
+      `WITH candidatas AS (
+         SELECT m.id, ${empleadoVigenteSql("m.codigo_empleado", "m.marca_ts")} AS empleado_id
+         FROM asistencia_marcas m
          WHERE m.empleado_id IS NULL
-         ORDER BY m.id LIMIT $1
-         FOR UPDATE OF m SKIP LOCKED
+       ), elegidas AS (
+         SELECT id, empleado_id FROM candidatas WHERE empleado_id IS NOT NULL ORDER BY id LIMIT $1
        )
        UPDATE asistencia_marcas m SET empleado_id = c.empleado_id
-       FROM candidatas c WHERE m.id = c.id
+       FROM elegidas c WHERE m.id = c.id AND m.empleado_id IS NULL
        RETURNING m.id`,
       [limite],
     );

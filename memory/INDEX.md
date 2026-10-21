@@ -13,6 +13,9 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-21] orquestador → decisions.md — Fase 3 de asistencia (ingesta con llave) lista para GO/NO-GO
+- [2026-10-21] orquestador → decisions.md — Fase 3 de asistencia: síntesis de revisión y pruebas y ronda de correcciones
+- [2026-10-21] [revisor] → reviews.md#asistencia-fase-3 — Asistencia Fase 3 (commit 3599349): sin críticos; test intermitente de la llave (causa raíz: split("_") en base64url) y 413/EPIPE; falta límite de tasa previo a la BD
 - [2026-10-21] [coder] → code-notes.md — Asistencia Fase 3: ingesta con llave (migración 013, middleware X-Api-Key, POST /ingesta/marcas, GET /estado, administración de llaves, TRUST_PROXY, simulador; jest 1700, 127 mutantes, pg16+pg17 db-init real)
 - [2026-10-21] orquestador → decisions.md — Decisión del humano: opción A (snapshot + quincenas cerradas a los 3 días, reabre solo RH y super_admin)
 - [2026-10-21] orquestador → decisions.md — GO del humano a la Fase 3 de asistencia; orden: cerrar Fase 2 y luego lanzar el endpoint
@@ -199,3 +202,5 @@
 - [2026-10-15] [coder] Segunda ronda de la revisión final (E1 atómico con FOR UPDATE y estado final, permisos de roles privilegiados solo super, esAdmin por permiso, jefe FOR SHARE) -> code-notes.md
 - [2026-10-16] [coder] Correcciones del tipo actividad (codigo en 409, avisos.motivo, migración 011 por columna, Bloq 10 px, cruce de año) -> code-notes.md
 - [2026-10-21] [coder] → code-notes.md — Correcciones de la Fase 2 de asistencia (turno inactivo, NUL a 400, DELETE departamento 409, lotes, incidencias, descanso, índices, contrato ficticio)
+- [2026-10-21] [tester] → tests.md — Asistencia Fase 3: prueba integrada (db-init REAL x2 en supabase/postgres 17.6 limpia/desde main/desde Fase 2, llaves por API 170/170, contrato v1 + lote de la interfaz + carga de 134 mil marcas exacta, nginx real con TRUST_PROXY 48/48, concurrencia/rotación/revocación/caída de BD, vinculación, jest x10 y eslint 0 errores); 2 FAIL menores (test intermitente por `split("_")[2]` 1/64; valores reales/IP 10.x versionados), sin bloqueados
+- [2026-10-21] [tester] → decisions.md — PARA RESOLVER F-AS3-1 (test intermitente), F-AS3-2 (valores del doc local e IP 10.x en versionados), F-AS3-3 (charset utf-16, rotar dos veces, 500 x 2 KB > 1 MB)
