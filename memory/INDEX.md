@@ -13,6 +13,7 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-21] orquestador → decisions.md — Publicación y despliegue a staging del módulo de asistencia (PR #13, merge 28a433c)
 - [2026-10-21] [revisor] → reviews.md#puerta-de-ingesta-dedicada — Puerta de ingesta dedicada (commit 1f301ed): CON OBSERVACIONES, sin críticos; F2 test intermitente de puertos antes de fusionar
 - [2026-10-21] orquestador → decisions.md — OK del humano para desplegar a staging la ingesta de asistencia
 - [2026-10-21] orquestador → decisions.md — Decisión del humano: puerta de ingesta dedicada por la red interna (opción 1)
