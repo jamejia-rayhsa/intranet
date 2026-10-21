@@ -68,11 +68,11 @@ Los mensajes no dicen cuál fue el motivo: la llave 403 solo se evalúa si la ll
 - **Puerto 4010 (`INGESTA_PORT`):** sirve SOLO `POST /api/asistencia/ingesta/marcas` y `GET /api/asistencia/ingesta/estado`; cualquier otra ruta es 404. Usa el mismo middleware de llave, el mismo parser de 1 MB, los mismos contadores de tasa (60 envíos/min por llave) y de fallos por IP, el mismo pool y la misma lógica que cualquier otro camino (es el mismo proceso).
 - **Sin proxy y sin `TRUST_PROXY`:** esa puerta ignora `TRUST_PROXY` y `X-Forwarded-For`/`CF-Connecting-IP`: `req.ip` es la dirección del socket TCP, o sea la IP real de la interfaz, y la lista de IP permitidas de la llave funciona con ella. Por eso `TRUST_PROXY` se deja **vacío** (sección 6): no hay ningún proxy entre la interfaz y el backend en esta ruta, y ninguna cabecera falsificable decide la IP.
 - **Puerto público cerrado (`INGESTA_SOLO_PUERTO_DEDICADO`):** con `INGESTA_PORT` definido, por defecto `true` (seguro por defecto): en el puerto 4000 (y por tanto por el túnel) `/api/asistencia/ingesta/*` responde 404 con la forma de cualquier ruta inexistente, sin pasar por la llave. Nada de la ingesta se alcanza desde Internet. En dev el compose lo pone en `false` (la ingesta sigue en ambos puertos) para probar con el simulador en `localhost:4000`.
-- **Fallo rápido:** si `INGESTA_PORT` es inválido, igual al principal o no se puede abrir (puerto ocupado...), el backend registra el motivo y termina con código 1; no arranca a medias. `SIGTERM`/`SIGINT` cierran ordenadamente los dos servidores.
+- **Modo degradado (la puerta es opcional, el portal no se cae):** si `INGESTA_PORT` es inválido, igual al principal o no se puede abrir (puerto ocupado...), el portal **arranca igual** y sirve todo menos la ingesta. El backend escribe en el log, muy visible, `INGESTA NO DISPONIBLE: <motivo>` al arrancar y **cada 5 minutos**, hace **un solo reintento** de apertura a los 5 s por si el puerto se libera (si lo logra escribe `INGESTA DISPONIBLE: la puerta dedicada se abrió en el reintento`), y la ingesta en el puerto principal sigue **cerrada (404)** mientras `INGESTA_SOLO_PUERTO_DEDICADO` sea true. Es una decisión deliberada: con `restart: always` un fallo opcional no debe dejar el portal en un bucle de reinicios. **Consecuencia:** la interfaz no podrá enviar (conexión rechazada) hasta que se corrija el puerto y se reinicie el backend; revisa `docker logs <backend> | grep "INGESTA NO DISPONIBLE"` tras cada despliegue. Lo único que sigue tumbando el proceso es no poder abrir el puerto principal. `SIGTERM`/`SIGINT` cierran ordenadamente los dos servidores (cierre forzado de conexiones a los 8 s, antes de los 10 s del `stop` de Docker).
 
 ### Configurar la publicación (`INGESTA_BIND`)
 
-Los compose de dev, staging y prod publican `${INGESTA_BIND:-127.0.0.1}:${INGESTA_PORT:-4010}:${INGESTA_PORT:-4010}`. Por omisión solo escucha en loopback del servidor. En el servidor se fija en el `.env.<entorno>` (no versionado; no escribas la IP en el repositorio):
+Los compose de dev, staging y prod publican `${INGESTA_BIND:-127.0.0.1}:${INGESTA_PORT:-4010}:${INGESTA_PORT:-4010}`. Por omisión solo escucha en loopback del servidor. **`INGESTA_PORT` vacío en el compose NO desactiva la puerta**: `${INGESTA_PORT:-4010}` trata el vacío como ausente y vuelve a 4010. (El backend ejecutado sin compose sí entiende vacío como "sin puerta dedicada".) Con compose la puerta siempre existe; si se quiere usar la ingesta por el puerto principal, como en dev, se pone `INGESTA_SOLO_PUERTO_DEDICADO=false` (el 4010 sigue abierto solo en loopback, inofensivo). En el servidor se fija en el `.env.<entorno>` (no versionado; no escribas la IP en el repositorio):
 
 ```
 INGESTA_BIND=<ip-interna>      # la IP interna del servidor, la misma con la que se entra por SSH
@@ -80,6 +80,8 @@ INGESTA_PORT=4010
 # INGESTA_SOLO_PUERTO_DEDICADO=true   (ya es el valor por omisión en staging/prod)
 # TRUST_PROXY=                        (vacío)
 ```
+
+**No uses `INGESTA_BIND=0.0.0.0` (ni `::`, ni la IP pública del servidor):** publicaría la puerta en todas las interfaces, accesible sin pasar por Cloudflare, con HTTP sin TLS y como únicas barreras la llave y el límite de fallos. Usa siempre la IP interna concreta (`<ip-interna>`). El backend no valida este valor: es responsabilidad de quien edita el `.env.<entorno>`; revisa con `docker compose config | grep -A3 4010` que `host_ip` sea la interna.
 
 Luego `docker compose ... up -d backend`. La URL base de la ingesta pasa a ser `http://<ip-interna>:4010` (las rutas son las mismas del contrato).
 
@@ -101,14 +103,17 @@ Resultados: `TcpTestSucceeded : True` y un JSON con `ultimo_id_externo` = todo b
 Docker publica los puertos saltándose `INPUT`/`ufw`: **`ufw` por sí solo no filtra los puertos publicados por Docker**. La defensa en profundidad correcta va en la cadena `DOCKER-USER`, que Docker consulta antes de sus propias reglas (en el ejemplo, `<ip-interfaz>` es la IP fija del PC de la interfaz):
 
 ```bash
-# Permitir solo a la interfaz hacia el puerto de ingesta (el puerto es el del contenedor, antes del DNAT: --dport 4010)
-sudo iptables -I DOCKER-USER -p tcp --dport 4010 -s <ip-interfaz> -j ACCEPT
-sudo iptables -I DOCKER-USER 2 -p tcp --dport 4010 -j DROP
+# Permitir solo a la interfaz hacia el puerto de ingesta. DOCKER-USER ve el paquete DESPUÉS del DNAT de Docker, así que
+# --dport sería el puerto del CONTENEDOR; con conntrack se compara el puerto ORIGINAL publicado en el host (--ctorigdstport),
+# que es robusto aunque el puerto del host y el del contenedor sean distintos.
+sudo iptables -I DOCKER-USER -p tcp -m conntrack --ctorigdstport 4010 --ctdir ORIGINAL -s <ip-interfaz> -j ACCEPT
+sudo iptables -I DOCKER-USER 2 -p tcp -m conntrack --ctorigdstport 4010 --ctdir ORIGINAL -j DROP
 sudo iptables -L DOCKER-USER -n --line-numbers      # verificar el orden: ACCEPT primero, DROP después
 ```
 
 - Las reglas `iptables` no sobreviven a un reinicio: persístelas (por ejemplo con `iptables-persistent`/`netfilter-persistent save`, o una unidad systemd que las reaplique **después** de que arranque Docker, porque Docker recrea la cadena).
 - Si la regla es incorrecta puede cortar la ingesta (o, con `-j DROP` mal puesto, otros servicios): pruébala primero con `Test-NetConnection` desde la interfaz y desde otro equipo (este debe fallar).
+- **El DROP también corta al propio servidor y a otros contenedores:** el tráfico del host (o de otro contenedor) hacia `<ip-interna>:4010` también pasa por `DOCKER-USER`, así que tras aplicar la regla **no podrás probar con `curl` desde el servidor**; las pruebas se hacen desde la interfaz. Si necesitas probar desde el host, añade antes del DROP un `ACCEPT` con la IP del propio host (decisión del administrador).
 - Esta regla es opcional pero recomendada; la aplica el administrador del servidor, no el despliegue de la aplicación. La lista de IP permitidas de la llave sigue siendo la segunda barrera.
 
 **Riesgo aceptado:** la red interna usa **HTTP sin TLS**: la llave y las marcas viajan sin cifrar dentro de la LAN (la llave se puede revocar y rotar al instante, y la IP permitida limita su uso). Si algún día se necesita cifrado, se pone un proxy TLS interno delante de ese puerto (y entonces habría que declarar `TRUST_PROXY`, que esta puerta no admite a propósito).

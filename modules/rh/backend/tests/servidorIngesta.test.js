@@ -22,6 +22,8 @@ const {
   abrirServidorIngesta,
   cerrarServidor,
   cerrarTodos,
+  resolverConfigIngesta,
+  iniciarPuertaDedicada,
 } = require("../servidorIngesta");
 
 const { bd } = esc;
@@ -337,5 +339,136 @@ describe("abrirServidorIngesta / cerrarServidor", () => {
     expect(a.listening).toBe(false);
     expect(b.listening).toBe(false);
     expect((await enCurso).estado).toBe(200);
+  });
+});
+
+describe("resolverConfigIngesta (modo degradado: nunca lanza)", () => {
+  it("configuración válida = leerConfigIngesta", () => {
+    expect(resolverConfigIngesta({ INGESTA_PORT: "4010" }, 4000)).toEqual({ puerto: 4010, soloDedicado: true });
+    expect(resolverConfigIngesta({}, 4000)).toEqual({ puerto: null, soloDedicado: false });
+  });
+
+  it.each([["abc"], ["0"], ["70000"], ["4000"]])("INGESTA_PORT=%s -> deshabilitada con el motivo, sin lanzar", (valor) => {
+    const c = resolverConfigIngesta({ INGESTA_PORT: valor }, 4000);
+    expect(c).toMatchObject({ puerto: null, deshabilitada: true, soloDedicado: true });
+    expect(c.error).toMatch(/INGESTA_PORT/);
+  });
+
+  it("la ingesta del principal queda cerrada (404) con la puerta deshabilitada, salvo SOLO=false explícito", async () => {
+    const cerrada = crearPrincipal(resolverConfigIngesta({ INGESTA_PORT: "abc" }, 4000));
+    expect((await request(cerrada).get(ESTADO).set("X-Api-Key", esc.llave)).status).toBe(404);
+    const abierta = crearPrincipal(resolverConfigIngesta({ INGESTA_PORT: "abc", INGESTA_SOLO_PUERTO_DEDICADO: "false" }, 4000));
+    expect((await request(abierta).get(ESTADO).set("X-Api-Key", esc.llave)).status).toBe(200);
+  });
+});
+
+describe("iniciarPuertaDedicada (reintento único y recordatorio)", () => {
+  const montar = (opciones = {}) => {
+    const t = { registros: [], infos: [], temporizadores: [], repeticiones: [], cancelados: [] };
+    const puerta = iniciarPuertaDedicada({
+      config: { puerto: 4010, soloDedicado: true },
+      registrar: (m) => t.registros.push(m),
+      informar: (m) => t.infos.push(m),
+      programar: (fn, ms) => {
+        const h = { fn, ms };
+        t.temporizadores.push(h);
+        return h;
+      },
+      repetir: (fn, ms) => {
+        const h = { fn, ms };
+        t.repeticiones.push(h);
+        return h;
+      },
+      cancelar: (h) => t.cancelados.push(h),
+      cancelarRepeticion: (h) => t.cancelados.push(h),
+      ...opciones,
+    });
+    return { puerta, t };
+  };
+  const tick = () => new Promise((r) => setImmediate(r));
+  const errorPuerto = Object.assign(new Error("listen EADDRINUSE"), { code: "EADDRINUSE" });
+
+  it("abre a la primera: informa y no hay avisos ni recordatorios", async () => {
+    const servidor = { listening: true };
+    const { puerta, t } = montar({ abrir: jest.fn().mockResolvedValue(servidor) });
+    await puerta.listo;
+    expect(puerta.servidor()).toBe(servidor);
+    expect(puerta.estado()).toBe("activa");
+    expect(t.registros).toHaveLength(0);
+    expect(t.repeticiones).toHaveLength(0);
+    expect(t.infos[0]).toMatch(/escuchando en el puerto 4010/);
+  });
+
+  it("falla: avisa de inmediato, reintenta UNA vez tras el plazo y, si vuelve a fallar, queda degradada con recordatorio cada 5 min", async () => {
+    const abrir = jest.fn().mockRejectedValue(errorPuerto);
+    const { puerta, t } = montar({ abrir });
+    await tick();
+    await tick();
+    expect(abrir).toHaveBeenCalledTimes(1);
+    expect(t.registros).toHaveLength(1);
+    expect(t.registros[0]).toMatch(/INGESTA NO DISPONIBLE: no se pudo abrir la puerta de ingesta en el puerto 4010 \(EADDRINUSE\)/);
+    expect(t.temporizadores).toHaveLength(1);
+    expect(t.temporizadores[0].ms).toBe(5000);
+    t.temporizadores[0].fn(); // vence el plazo del reintento
+    await puerta.listo;
+    expect(abrir).toHaveBeenCalledTimes(2); // un solo reintento
+    expect(t.registros).toHaveLength(2);
+    expect(t.repeticiones).toHaveLength(1);
+    expect(t.repeticiones[0].ms).toBe(5 * 60 * 1000);
+    expect(puerta.estado()).toBe("no disponible");
+    t.repeticiones[0].fn();
+    t.repeticiones[0].fn();
+    expect(t.registros).toHaveLength(4);
+    expect(t.registros.every((m) => /INGESTA NO DISPONIBLE/.test(m))).toBe(true);
+    expect(abrir).toHaveBeenCalledTimes(2); // nunca más de dos intentos
+  });
+
+  it("si el reintento funciona: sin recordatorios y avisa que ya está disponible", async () => {
+    const servidor = { listening: true };
+    const abrir = jest.fn().mockRejectedValueOnce(errorPuerto).mockResolvedValueOnce(servidor);
+    const { puerta, t } = montar({ abrir });
+    await tick();
+    await tick();
+    t.temporizadores[0].fn();
+    await puerta.listo;
+    expect(puerta.estado()).toBe("activa");
+    expect(t.repeticiones).toHaveLength(0);
+    expect(t.infos.some((m) => /INGESTA DISPONIBLE/.test(m))).toBe(true);
+  });
+
+  it("configuración deshabilitada: aviso inmediato con el motivo, sin intentar abrir, y recordatorio", async () => {
+    const abrir = jest.fn();
+    const { puerta, t } = montar({ abrir, config: { puerto: null, soloDedicado: true, deshabilitada: true, error: "INGESTA_PORT=\"abc\" no es un puerto válido (1-65535)" } });
+    await puerta.listo;
+    expect(abrir).not.toHaveBeenCalled();
+    expect(t.registros[0]).toMatch(/INGESTA NO DISPONIBLE: configuración inválida: INGESTA_PORT="abc"/);
+    expect(t.repeticiones).toHaveLength(1);
+    expect(puerta.estado()).toBe("no disponible");
+  });
+
+  it("sin puerto: no hace nada; detener() cancela el recordatorio y el reintento pendiente", async () => {
+    const abrir = jest.fn();
+    const { puerta, t } = montar({ abrir, config: { puerto: null, soloDedicado: false } });
+    await puerta.listo;
+    expect(abrir).not.toHaveBeenCalled();
+    expect(puerta.estado()).toBe("sin puerta dedicada");
+    expect(t.registros).toHaveLength(0);
+
+    const m = montar({ abrir: jest.fn().mockRejectedValue(errorPuerto) });
+    await tick();
+    await tick();
+    m.puerta.detener();
+    expect(m.t.cancelados).toContain(m.t.temporizadores[0]);
+  });
+
+  it("el aviso dice qué pasa con el puerto principal según INGESTA_SOLO_PUERTO_DEDICADO", async () => {
+    const a = montar({ abrir: jest.fn().mockRejectedValue(errorPuerto) });
+    await tick();
+    await tick();
+    expect(a.t.registros[0]).toMatch(/sigue cerrado a la ingesta: responde 404/);
+    const b = montar({ abrir: jest.fn().mockRejectedValue(errorPuerto), config: { puerto: 4010, soloDedicado: false } });
+    await tick();
+    await tick();
+    expect(b.t.registros[0]).toMatch(/la ingesta sigue disponible en el puerto principal/);
   });
 });

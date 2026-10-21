@@ -164,18 +164,24 @@ describe("app.js - montaje de la ingesta", () => {
     }
   });
 
-  it("app.js: la puerta dedicada falla rápido (exit 1), cierra con SIGTERM/SIGINT y no escucha al importarse", () => {
-    expect(APP).toMatch(/abrirServidorIngesta\(\{ puerto: configIngesta\.puerto \}\)/);
-    expect(APP).toMatch(/process\.exit\(1\)/);
-    expect(APP).toMatch(/await cerrarTodos\(\[principal, dedicado\]\)/);
+  it("app.js: puerta dedicada en modo degradado (no tumba el portal), principal primero, cierre de ambos y sin escuchar al importarse", () => {
+    expect(APP).toMatch(/resolverConfigIngesta\(process\.env, PUERTO\)/);
+    expect(APP).not.toMatch(/leerConfigIngesta/);
+    expect(APP).toMatch(/iniciarPuertaDedicada\(\{/);
+    // el principal se abre ANTES que la puerta dedicada
+    expect(APP.indexOf("app.listen(PUERTO")).toBeLessThan(APP.indexOf("iniciarPuertaDedicada({"));
+    // process.exit(1) solo por no poder abrir el puerto principal
+    expect([...APP.matchAll(/process\.exit\(1\)/g)]).toHaveLength(1);
+    expect(APP).toMatch(/await cerrarTodos\(\[principal, puerta\.servidor\(\)\]\)/);
     expect(APP).toMatch(/process\.on\("SIGTERM"/);
     expect(APP).toMatch(/process\.on\("SIGINT"/);
     expect(APP).toMatch(/if \(require\.main === module\) iniciar\(\);/);
+    expect(leer("modules/rh/backend/servidorIngesta.js")).toMatch(/function cerrarServidor\(servidor, esperaMs = 8000\)/); // < 10 s del stop de Docker
   });
 
   it("la documentación describe la puerta dedicada, DOCKER-USER, PowerShell y el riesgo de HTTP sin TLS", () => {
     const op = leer("docs/asistencia/operacion-ingesta.md");
-    for (const t of ["INGESTA_BIND", "DOCKER-USER", "Test-NetConnection", "ufw", "sin TLS", "<ip-interna>", "<ip-interfaz>", "iptables-persistent"]) expect(op).toContain(t);
+    for (const t of ["Modo degradado", "INGESTA NO DISPONIBLE", "--ctorigdstport", "--ctdir ORIGINAL", "no podrás probar con `curl` desde el servidor", "INGESTA_BIND=0.0.0.0", "NO desactiva la puerta", "INGESTA_BIND", "DOCKER-USER", "Test-NetConnection", "ufw", "sin TLS", "<ip-interna>", "<ip-interfaz>", "iptables-persistent"]) expect(op).toContain(t);
     expect(leer("docs/asistencia/contrato-ingesta-marcas.md")).toContain("http://<ip-interna-del-servidor>:4010");
   });
 

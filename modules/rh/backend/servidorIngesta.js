@@ -33,12 +33,30 @@ function leerConfigIngesta(env = process.env, puertoPrincipal = Number(env.PORT)
   if (puerto === Number(puertoPrincipal)) {
     throw new Error(`INGESTA_PORT (${puerto}) no puede ser el puerto principal del backend`);
   }
-  const bruto = env.INGESTA_SOLO_PUERTO_DEDICADO === undefined ? "" : String(env.INGESTA_SOLO_PUERTO_DEDICADO).trim().toLowerCase();
-  let soloDedicado = true;
-  let aviso;
-  if (FALSOS.has(bruto)) soloDedicado = false;
-  else if (bruto !== "" && !VERDADEROS.has(bruto)) aviso = `INGESTA_SOLO_PUERTO_DEDICADO="${bruto}" no se reconoce: se usa true`;
+  const { soloDedicado, aviso } = leerSoloDedicado(env);
   return { puerto, soloDedicado, ...(aviso ? { aviso } : {}) };
+}
+
+/** INGESTA_SOLO_PUERTO_DEDICADO: true por omisión (seguro por defecto); solo false/0/no lo desactiva. */
+function leerSoloDedicado(env = process.env) {
+  const bruto = env.INGESTA_SOLO_PUERTO_DEDICADO === undefined ? "" : String(env.INGESTA_SOLO_PUERTO_DEDICADO).trim().toLowerCase();
+  if (FALSOS.has(bruto)) return { soloDedicado: false };
+  if (bruto !== "" && !VERDADEROS.has(bruto)) return { soloDedicado: true, aviso: `INGESTA_SOLO_PUERTO_DEDICADO="${bruto}" no se reconoce: se usa true` };
+  return { soloDedicado: true };
+}
+
+/**
+ * Como leerConfigIngesta pero NUNCA lanza (modo degradado): ante una configuración inválida devuelve
+ * { puerto: null, deshabilitada: true, error, soloDedicado } para que el portal arranque sin ingesta. La ingesta del
+ * puerto principal queda cerrada (404) salvo que INGESTA_SOLO_PUERTO_DEDICADO sea false explícito.
+ */
+function resolverConfigIngesta(env = process.env, puertoPrincipal = Number(env.PORT) || 4000) {
+  try {
+    return leerConfigIngesta(env, puertoPrincipal);
+  } catch (error) {
+    const { soloDedicado } = leerSoloDedicado(env);
+    return { puerto: null, soloDedicado, deshabilitada: true, error: error.message };
+  }
 }
 
 /** Respuesta de "ruta inexistente" (idéntica a la del manejador global de app.js). */
@@ -64,7 +82,7 @@ function crearAppIngesta(router = require("./routes/ingesta.routes")) {
  * de 100 kb, que cortaría los envíos grandes).
  */
 function montarIngestaEnPrincipal(app, config, router = require("./routes/ingesta.routes")) {
-  if (config.puerto && config.soloDedicado) app.use(RUTA_INGESTA, rutaNoEncontrada);
+  if ((config.puerto || config.deshabilitada) && config.soloDedicado) app.use(RUTA_INGESTA, rutaNoEncontrada);
   else app.use(RUTA_INGESTA, router);
 }
 
@@ -81,7 +99,8 @@ function abrirServidorIngesta({ puerto, app = crearAppIngesta() }) {
 }
 
 /** Cierra ordenadamente (deja terminar las peticiones en curso y cierra las conexiones ociosas). */
-function cerrarServidor(servidor, esperaMs = 10000) {
+// 8 s: menos que el stop_grace_period por omisión de Docker (10 s), para que el cierre forzado llegue a ejecutarse
+function cerrarServidor(servidor, esperaMs = 8000) {
   return new Promise((resolver) => {
     if (!servidor || !servidor.listening) return resolver();
     const temporizador = setTimeout(() => {
@@ -103,6 +122,89 @@ function cerrarServidor(servidor, esperaMs = 10000) {
   });
 }
 
+/**
+ * Arranca la puerta dedicada en MODO DEGRADADO ante fallos: un puerto ocupado o una configuración inválida NO tumban el
+ * portal (con `restart: always` sería un bucle de reinicios que lo dejaría caído por una función opcional). Registra
+ * "INGESTA NO DISPONIBLE: ..." al arrancar y cada 5 minutos, y reintenta abrir el puerto UNA vez tras unos segundos
+ * por si se libera. Devuelve { servidor() , estado(), detener() }.
+ */
+function iniciarPuertaDedicada({
+  config,
+  abrir = abrirServidorIngesta,
+  registrar = console.error,
+  informar = console.log,
+  reintentoMs = 5000,
+  recordatorioMs = 5 * 60 * 1000,
+  programar = setTimeout,
+  repetir = setInterval,
+  cancelar = clearTimeout,
+  cancelarRepeticion = clearInterval,
+} = {}) {
+  let servidor = null;
+  let motivo = null;
+  let recordatorio = null;
+  let reintento = null;
+  const aviso = () =>
+    registrar(
+      `\n==================== INGESTA NO DISPONIBLE ====================\n` +
+        `INGESTA NO DISPONIBLE: ${motivo}. El portal sigue funcionando, pero NO se reciben marcas de asistencia ` +
+        (config.soloDedicado
+          ? `(el puerto principal sigue cerrado a la ingesta: responde 404). `
+          : `(INGESTA_SOLO_PUERTO_DEDICADO=false: la ingesta sigue disponible en el puerto principal). `) +
+        `Corrige INGESTA_PORT / el puerto ocupado y reinicia el backend.\n` +
+        `================================================================`,
+    );
+  const sinUnref = (t) => {
+    if (t && typeof t.unref === "function") t.unref();
+    return t;
+  };
+  const degradar = (texto) => {
+    motivo = texto;
+    aviso();
+    recordatorio = sinUnref(repetir(() => aviso(), recordatorioMs));
+  };
+  const intentar = async () => {
+    try {
+      servidor = await abrir({ puerto: config.puerto });
+      informar(
+        `Puerta de ingesta dedicada escuchando en el puerto ${config.puerto} (solo rutas de ingesta; sin trust proxy)` +
+          (config.soloDedicado ? "; el puerto principal ya no sirve la ingesta" : "; la ingesta también sigue en el principal"),
+      );
+      return true;
+    } catch (error) {
+      motivo = `no se pudo abrir la puerta de ingesta en el puerto ${config.puerto} (${error.code || error.message})`;
+      return false;
+    }
+  };
+
+  const listo = (async () => {
+    if (config.deshabilitada) return degradar(`configuración inválida: ${config.error}`);
+    if (!config.puerto) return undefined;
+    if (await intentar()) return undefined;
+    // un solo reintento por si el puerto se libera; mientras tanto se avisa
+    aviso();
+    await new Promise((resolver) => {
+      reintento = sinUnref(programar(resolver, reintentoMs));
+    });
+    reintento = null;
+    if (await intentar()) {
+      informar("INGESTA DISPONIBLE: la puerta dedicada se abrió en el reintento");
+      return undefined;
+    }
+    return degradar(motivo);
+  })();
+
+  return {
+    listo,
+    servidor: () => servidor,
+    estado: () => (servidor ? "activa" : config.puerto || config.deshabilitada ? "no disponible" : "sin puerta dedicada"),
+    detener() {
+      if (recordatorio) cancelarRepeticion(recordatorio);
+      if (reintento) cancelar(reintento);
+    },
+  };
+}
+
 /** Cierra varios servidores a la vez (los nulos se ignoran); resuelve cuando todos terminaron. */
 const cerrarTodos = (servidores, esperaMs) => Promise.all(servidores.map((s) => cerrarServidor(s, esperaMs)));
 
@@ -110,6 +212,9 @@ module.exports = {
   RUTA_INGESTA,
   cerrarTodos,
   leerConfigIngesta,
+  leerSoloDedicado,
+  resolverConfigIngesta,
+  iniciarPuertaDedicada,
   crearAppIngesta,
   montarIngestaEnPrincipal,
   abrirServidorIngesta,

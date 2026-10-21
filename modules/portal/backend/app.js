@@ -5,23 +5,18 @@ const Storage = require("./services/storage.service");
 const { manejadorErrores } = require("./middleware/errores.middleware");
 const { leerTrustProxy } = require("../../rh/backend/utils/trustProxy");
 const {
-  leerConfigIngesta,
+  resolverConfigIngesta,
   montarIngestaEnPrincipal,
-  abrirServidorIngesta,
+  iniciarPuertaDedicada,
   cerrarTodos,
 } = require("../../rh/backend/servidorIngesta");
 
 const app = express();
 const PUERTO = process.env.PORT || 4000;
 
-// Puerta de ingesta dedicada (INGESTA_PORT). Una configuración inválida es un error de arranque (falla rápida).
-let configIngesta;
-try {
-  configIngesta = leerConfigIngesta(process.env, PUERTO);
-} catch (error) {
-  console.error(`[Ingesta] Configuración inválida: ${error.message}`);
-  process.exit(1);
-}
+// Puerta de ingesta dedicada (INGESTA_PORT). Una configuración inválida NO tumba el portal: modo degradado
+// (el portal arranca sin ingesta y se avisa con "INGESTA NO DISPONIBLE"; ver iniciar()).
+const configIngesta = resolverConfigIngesta(process.env, PUERTO);
 if (configIngesta.aviso) console.warn(`[Ingesta] ${configIngesta.aviso}`);
 
 // Probar conexión a la base de datos al iniciar
@@ -164,19 +159,7 @@ app.use(manejadorErrores);
 
 // Iniciar servidores (solo al ejecutar el archivo: importarlo en pruebas no abre puertos).
 async function iniciar() {
-  let dedicado = null;
-  if (configIngesta.puerto) {
-    try {
-      dedicado = await abrirServidorIngesta({ puerto: configIngesta.puerto });
-    } catch (error) {
-      console.error(`[Ingesta] No se pudo abrir la puerta de ingesta en el puerto ${configIngesta.puerto}: ${error.code || error.message}`);
-      process.exit(1);
-    }
-    console.log(
-      `Puerta de ingesta dedicada escuchando en el puerto ${configIngesta.puerto} (solo rutas de ingesta; sin trust proxy)` +
-        (configIngesta.soloDedicado ? "; el puerto principal ya no sirve la ingesta" : "; la ingesta también sigue en el principal"),
-    );
-  }
+  // El portal se abre PRIMERO: la puerta dedicada es opcional y su fallo no debe dejarlo caído
   const principal = app.listen(PUERTO, () => {
     console.log(`Servidor backend escuchando en el puerto ${PUERTO}`);
     console.log(`Entorno: ${process.env.NODE_ENV || "desarrollo"}`);
@@ -185,6 +168,12 @@ async function iniciar() {
     console.error(`No se pudo abrir el puerto ${PUERTO}: ${error.code || error.message}`);
     process.exit(1);
   });
+  // INGESTA_REINTENTO_MS / INGESTA_RECORDATORIO_MS: ajustes solo para pruebas (por omisión 5 s y 5 min)
+  const puerta = iniciarPuertaDedicada({
+    config: configIngesta,
+    reintentoMs: Number(process.env.INGESTA_REINTENTO_MS) || 5000,
+    recordatorioMs: Number(process.env.INGESTA_RECORDATORIO_MS) || 5 * 60 * 1000,
+  });
 
   // Cierre ordenado de ambos servidores
   let cerrando = false;
@@ -192,7 +181,8 @@ async function iniciar() {
     if (cerrando) return;
     cerrando = true;
     console.log(`${senal} recibida: cerrando servidores`);
-    await cerrarTodos([principal, dedicado]);
+    puerta.detener();
+    await cerrarTodos([principal, puerta.servidor()]);
     process.exit(0);
   };
   process.on("SIGTERM", () => apagar("SIGTERM"));

@@ -2863,3 +2863,80 @@ Hallazgos abiertos:
 **Fix sugerido:** ninguno hasta tener más de una réplica; anotar en la Fase 4.
 
 **Pendientes sin verificar:** nginx/Traefik reales con TRUST_PROXY (el coder lo marcó como no verificado); la IP real de la interfaz; el valor "Staging = 2 saltos" de la documentación.
+
+### [2026-10-21] [revisor] — Puerta de ingesta dedicada
+**Alcance:** commit `1f301ed` (HEAD de `feat/asistencia-rh`): `modules/rh/backend/servidorIngesta.js`, `modules/portal/backend/app.js`, compose dev/staging/prod, `.env.supabase.example`, `docs/supabase.md`, `docs/asistencia/operacion-ingesta.md` sección 5, tests `servidorIngesta*.test.js`. Leídos antes del diff: INDEX, decisions (2026-10-21 revisión de red, decisión del humano, OK de despliegue), code-notes "Puerta de ingesta dedicada".
+
+**Verificado (sin hallazgos):**
+- Puerto 4000 con `INGESTA_SOLO_PUERTO_DEDICADO` por defecto: `/api/asistencia/ingesta/*` responde 404 antes de la llave y de la BD (levantado `app.js` real: estado, marcas, mayúsculas, doble barra, `..`, `%2e%2e`, `%69ngesta`, `%2f`, HEAD, OPTIONS, slash final). Ningún alias llega al router de ingesta en el puerto principal.
+- Puerto dedicado: solo `GET /estado` y `POST /marcas` (resto 404 tras la llave). `app.set("trust proxy", false)` en `servidorIngesta.js:55`; `req.ip` = socket; X-Forwarded-For, CF-Connecting-IP falsos no cambian nada (cubierto en `servidorIngesta.test.js`).
+- `app.js` no escucha al importarse (`:201` `if (require.main === module) iniciar();`). Dockerfile.backend (`node modules/portal/backend/app.js`), `npm run dev` (`nodemon app.js`), `start` y los tests (supertest) siguen funcionando; no hay scripts que dependan de `app.listen` en import.
+- Sin IPs reales en el commit (solo `127.0.0.1` y rangos de documentación 192.0.2.x / 198.51.100.x / 203.0.113.x en tests y ejemplos). Dev, staging y prod tienen el mismo bloque `ports`/`INGESTA_*` (paridad correcta). Staging y prod no publican el 4000 al host.
+- Health checks: el backend no tiene `healthcheck` ni depende del 4000; nada de Docker/compose depende del puerto nuevo. Traefik solo tiene labels en el frontend.
+- Pruebas: `npx jest` completo 3/3 OK (56 suites, 1792 tests). Seis instancias paralelas de `servidorIngesta.proceso.test.js`: 6/6 OK (9/9 cada una). El fallo intermitente del coder NO se reprodujo.
+
+**Problema (hallazgos):**
+
+**F1. Puerto dedicado ocupado o config inválida tumba el portal entero (restart en bucle).**
+**Archivo/línea:** modules/portal/backend/app.js:173 (exit si falla la puerta dedicada, antes de abrir el principal), :23 (config inválida), docker-compose.staging.yml:68-72 y prod:53-57 (`restart: always`).
+**Problema:** un EADDRINUSE en 4010 o `INGESTA_PORT=4000` (el compose lo acepta: lo comprobé con `docker compose config`, publica `127.0.0.1:4000:4000`) hace que el proceso salga con código 1 antes de abrir el 4000, y `restart: always` lo relanza en bucle. El portal completo (no solo la ingesta) queda caído por una puerta opcional.
+**Severidad:** medio
+**Fix sugerido:** decidir explícitamente (es un trade-off, no un bug): (a) abrir primero el principal y, si falla la dedicada, registrar error y seguir en modo degradado (con `/api/salud` que lo indique), o (b) validar en compose `INGESTA_PORT` numérico y distinto de 4000 con `${INGESTA_PORT:?...}` o una regla de validación; anotar el riesgo en la doc. Mínimo: documentar en la sección 5 que un conflicto de puerto baja el portal.
+
+**F2. Test de proceso intermitente: colisión de puertos (TOCTOU) y churn de `listen(0)` de supertest.**
+**Archivo/línea:** modules/rh/backend/tests/servidorIngesta.proceso.test.js:10-17 (`puertoLibre`), :59, :87, :100, :116, :133 (puertos elegidos antes del spawn), :82-83 y :123 (ECONNREFUSED tras el exit).
+**Problema:** `puertoLibre()` libera el puerto y el hijo lo abre 0.5-2 s después; mientras tanto, otra suite del mismo jest (supertest hace `app.listen(0)` en cada petición, `node_modules/supertest/lib/test.js:48`) puede tomarlo y el hijo sale con EADDRINUSE (o el `esperar` de 15 s agota). Además `puertoLibre` enlaza en 127.0.0.1 y el hijo en todas las interfaces, así que la comprobación no es la misma que la del hijo. Las aserciones ECONNREFUSED posteriores pueden chocar con la reutilización del mismo puerto. Hipótesis por mecanismo: no reproducida en 6 paralelas ni 3 suites completas.
+**Severidad:** medio (CI intermitente; no afecta al producto)
+**Fix sugerido:** (1) elegir puertos fuera del rango efímero de Linux (p. ej. `20000 + random(0..9999)`, por debajo de 32768) y comprobar con `listen(puerto)` sin host, igual que el hijo; (2) si el hijo sale con código 1 y la salida contiene `EADDRINUSE` en un puerto que no es el del test de EADDRINUSE, reintentar el lanzamiento con puertos nuevos (máx. 3); (3) sustituir las dos aserciones ECONNREFUSED posteriores al exit por la comprobación del código de salida (ya verificado en la línea 80/96/109), o aceptar también que haya otra respuesta; (4) mantener la espera por la línea de log (`esperar`), que es correcta.
+
+**F3. `INGESTA_PORT` vacío no desactiva la puerta: se convierte en 4010.**
+**Archivo/línea:** docker-compose.dev.yml:43 y :48, docker-compose.staging.yml:68 y :72, docker-compose.prod.yml:53 y :57; .env.supabase.example:62 (dice "vacío = sin puerta dedicada").
+**Problema:** `${INGESTA_PORT:-4010}` trata el vacío como ausente. Comprobado con `docker compose config`: `INGESTA_PORT=` da `INGESTA_PORT=4010` y publica `127.0.0.1:4010`. La doc y el comentario prometen lo contrario; el código de `leerConfigIngesta` (vacío = sin puerta) solo aplica cuando se ejecuta `app.js` sin compose.
+**Severidad:** bajo
+**Fix sugerido:** corregir la doc y el comentario del `.env.supabase.example` ("en compose no se puede desactivar con vacío; para apagarla, quitar el servicio o dejar INGESTA_PORT=4010 y no usar la ruta"), o si se quiere poder desactivarla, usar `${INGESTA_PORT-}` y un bloque de publicación condicional.
+
+**F4. La regla DOCKER-USER documentada no es exacta y no usa conntrack.**
+**Archivo/línea:** docs/asistencia/operacion-ingesta.md:104-107.
+**Problema:** el comentario dice que `--dport 4010` es "el puerto del contenedor, antes del DNAT". Es al revés: DOCKER-USER (cadena FORWARD) ve la tupla ya traducida por DNAT, así que `--dport` es el puerto del contenedor. Funciona solo porque el puerto del host y el del contenedor son iguales. El texto no incluye `-m conntrack --ctorigdstport <puerto> --ctdir ORIGINAL`, que es la forma que coincide con el puerto publicado antes del DNAT. No hay `! -s` (el DROP también afecta a la fuente de la interfaz si se pone después del ACCEPT; el orden actual es correcto).
+**Severidad:** bajo
+**Fix sugerido:** corregir el comentario, o cambiar a `-m conntrack --ctorigdstport 4010 --ctdir ORIGINAL` para que la regla sea independiente de la igualdad de puertos. Añadir una prueba: `iptables -L DOCKER-USER -n -v` tras una petición desde la interfaz (contadores del ACCEPT).
+
+**F5. La regla DOCKER-USER también bloquea el tráfico del propio host y de otros contenedores hacia 4010 (no documentado).**
+**Archivo/línea:** docs/asistencia/operacion-ingesta.md:101-110.
+**Problema:** el tráfico del host hacia `<ip-interna>:4010` pasa por DNAT y por FORWARD con fuente = IP del host o del bridge; el DROP lo corta. Lo mismo para contenedores que lleguen al puerto publicado. La doc solo pide probar "desde otro equipo" (que debe fallar) y no avisa de que el propio servidor tampoco podrá probar con curl. Razonamiento de la traza de netfilter; no verificado con iptables real (no hay acceso al host).
+**Severidad:** bajo
+**Fix sugerido:** añadir a la sección 5 una línea "el servidor no puede probar `<ip-interna>:4010` tras la regla; las pruebas se hacen desde la interfaz" y, si hace falta probar desde el host, un ACCEPT adicional con la IP del host (decisión del administrador).
+
+**F6. Nada impide `INGESTA_BIND=0.0.0.0` (o la IP pública) en el `.env`.**
+**Archivo/línea:** docker-compose.staging.yml:72, prod:57, dev:48 (`${INGESTA_BIND:-127.0.0.1}`); docs/asistencia/operacion-ingesta.md (sección "Configurar la publicación").
+**Problema:** si alguien pone `0.0.0.0`, el 4010 queda publicado en la interfaz pública sin pasar por Cloudflare, con HTTP sin TLS y solo la llave y el límite de fallos como barrera. La doc dice "no escribas la IP", pero no prohíbe comodines.
+**Severidad:** bajo
+**Fix sugerido:** en la doc, prohibir `0.0.0.0` y `::` explícitamente; opcionalmente validar en el compose con `${INGESTA_BIND:?...}` y un patrón, o un aviso en el arranque si la IP no es privada.
+
+**F7. `process.exit(1)` al cargar el módulo (config inválida) mata al proceso que solo lo importa.**
+**Archivo/línea:** modules/portal/backend/app.js:18-24.
+**Problema:** la validación se hace en la carga del módulo; cualquier `require` de app.js con `INGESTA_PORT` inválido (tests, REPL, un script) termina el proceso, incluido un worker de jest. Solo es relevante en desarrollo, pero el resto del módulo sí evita efectos al importar.
+**Severidad:** bajo
+**Fix sugerido:** que `leerConfigIngesta` lance el error y que `iniciar()` (solo con `require.main === module`) haga el log y `process.exit(1)`.
+
+**F8. El periodo de gracia de SIGTERM (10 s) coincide con el `stop` por defecto de Docker (10 s).**
+**Archivo/línea:** modules/rh/backend/servidorIngesta.js:84 (`esperaMs = 10000`), app.js:195-196.
+**Problema:** Docker envía SIGKILL a los 10 s; el `closeAllConnections` de la línea 88 se programa a los 10 s y puede no llegar a ejecutarse. Una petición de ingesta larga en curso se corta sin cierre ordenado.
+**Severidad:** bajo
+**Fix sugerido:** `esperaMs` de 7-8 s, o `stop_grace_period: 20s` en los compose de staging y prod.
+
+**F9. Dev publica el 4000 en todas las interfaces y ahí la ingesta sigue activa.**
+**Archivo/línea:** docker-compose.dev.yml:46 (`"${BACKEND_PORT:-4000}:4000"`), :44 (`INGESTA_SOLO_PUERTO_DEDICADO: ${...:-false}`).
+**Problema:** en dev la ingesta responde en `0.0.0.0:4000` (cualquiera de la LAN con la llave). Es preexistente, pero el cambio de defecto a `false` lo mantiene a propósito. Riesgo bajo en dev.
+**Severidad:** bajo
+**Fix sugerido:** publicar `127.0.0.1:${BACKEND_PORT:-4000}:4000` en dev, o dejar anotado que dev no es entorno de ingesta real.
+
+**F10. La decisión del 2026-10-21 nombra `INGESTA_PUBLISH` y el código usa `INGESTA_BIND`.**
+**Archivo/línea:** memory/decisions.md (entrada "Revisión (solo lectura) de la ruta de red de staging", recomendación b) vs. docker-compose.staging.yml:72.
+**Problema:** el nombre de la variable de la decisión no coincide con el implementado. No se sobrescribe (regla 3); debe añadirse una nota de aclaración.
+**Severidad:** bajo
+**Fix sugerido:** el orquestador añade una nota en decisions.md que indique que la variable implementada es `INGESTA_BIND` (sin editar la entrada original).
+
+**Veredicto:** CON OBSERVACIONES. Sin hallazgos críticos ni altos; no bloquea la fusión ni el despliegue a staging. Recomendado antes de fusionar: F2 (el test intermitente pasa a ser CI roto). Recomendado antes de producción: decidir F1 y corregir F3 y F4 (doc y compose).
+
+**Pendientes sin verificar:** iptables/DOCKER-USER reales (F4, F5), `docker compose up` completo, el mensaje exacto de la interpolación de `INGESTA_PORT=abc` (el compose falla con `invalid containerPort: abc`), Traefik con un servicio en la red `proxy` que tenga la ingesta.
