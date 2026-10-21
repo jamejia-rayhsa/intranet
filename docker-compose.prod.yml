@@ -49,6 +49,12 @@ services:
       MSSQL_DB: ${MSSQL_DB}
       # Proxies de confianza para req.ip (lista de IP de las llaves de ingesta): vacío = ninguno
       TRUST_PROXY: ${TRUST_PROXY:-}
+      # Puerta de ingesta dedicada (segundo puerto, solo rutas de ingesta, sin trust proxy). Ver docs/asistencia/operacion-ingesta.md
+      INGESTA_PORT: ${INGESTA_PORT:-4010}
+      INGESTA_SOLO_PUERTO_DEDICADO: ${INGESTA_SOLO_PUERTO_DEDICADO:-true}
+    ports:
+      # Puerta de ingesta: por omisión SOLO loopback; en el servidor INGESTA_BIND = <ip-interna> en el .env.<entorno>
+      - "${INGESTA_BIND:-127.0.0.1}:${INGESTA_PORT:-4010}:${INGESTA_PORT:-4010}"
     restart: always
     depends_on:
       supabase-db-init:

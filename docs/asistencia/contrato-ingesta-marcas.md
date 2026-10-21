@@ -8,7 +8,7 @@ Para: equipo de la interfaz con BioTime. De: equipo de la intranet (módulo RH, 
 
 | Dato | Valor |
 |---|---|
-| URL base | `https://<DOMINIO-DE-LA-INTRANET>` (se confirma al desplegar; dev, staging y producción tendrán cada uno su URL y su llave) |
+| URL base | **`http://<ip-interna-del-servidor>:4010`** (red interna, puerta de ingesta dedicada; la IP y el puerto se confirman al desplegar; dev, staging y producción tendrán cada uno su URL y su llave). Las rutas y el comportamiento descritos abajo no cambian; en el puerto público de la intranet (el dominio que pasa por Cloudflare/Traefik) las rutas de ingesta **ya no existen** (404) |
 | Enviar marcas | `POST /api/asistencia/ingesta/marcas` |
 | Consultar estado y cursor | `GET /api/asistencia/ingesta/estado` |
 | Formato | JSON UTF-8, cabecera `Content-Type: application/json` |

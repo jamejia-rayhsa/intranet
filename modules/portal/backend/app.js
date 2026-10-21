@@ -4,9 +4,25 @@ const { probarConexion } = require("./config/database");
 const Storage = require("./services/storage.service");
 const { manejadorErrores } = require("./middleware/errores.middleware");
 const { leerTrustProxy } = require("../../rh/backend/utils/trustProxy");
+const {
+  leerConfigIngesta,
+  montarIngestaEnPrincipal,
+  abrirServidorIngesta,
+  cerrarTodos,
+} = require("../../rh/backend/servidorIngesta");
 
 const app = express();
 const PUERTO = process.env.PORT || 4000;
+
+// Puerta de ingesta dedicada (INGESTA_PORT). Una configuración inválida es un error de arranque (falla rápida).
+let configIngesta;
+try {
+  configIngesta = leerConfigIngesta(process.env, PUERTO);
+} catch (error) {
+  console.error(`[Ingesta] Configuración inválida: ${error.message}`);
+  process.exit(1);
+}
+if (configIngesta.aviso) console.warn(`[Ingesta] ${configIngesta.aviso}`);
 
 // Probar conexión a la base de datos al iniciar
 probarConexion();
@@ -30,7 +46,9 @@ app.use(cors());
 
 // Ingesta de marcas de asistencia: autenticación por llave X-Api-Key y parser JSON propio de 1 MB.
 // DEBE ir antes del parser global (100 kb), que cortaría los envíos de hasta 500 marcas con 413.
-app.use("/api/asistencia/ingesta", require("../../rh/backend/routes/ingesta.routes"));
+// Con INGESTA_PORT definido (y INGESTA_SOLO_PUERTO_DEDICADO != false) aquí responde 404: la ingesta solo vive en
+// la puerta dedicada (ver rh/backend/servidorIngesta.js y docs/asistencia/operacion-ingesta.md).
+montarIngestaEnPrincipal(app, configIngesta);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -144,10 +162,42 @@ app.use((error, req, res, next) => {
 // Manejo de errores global (JSON inválido -> 400, cuerpo grande -> 413, resto -> 500 genérico)
 app.use(manejadorErrores);
 
-// Iniciar servidor
-app.listen(PUERTO, () => {
-  console.log(`Servidor backend escuchando en el puerto ${PUERTO}`);
-  console.log(`Entorno: ${process.env.NODE_ENV || "desarrollo"}`);
-});
+// Iniciar servidores (solo al ejecutar el archivo: importarlo en pruebas no abre puertos).
+async function iniciar() {
+  let dedicado = null;
+  if (configIngesta.puerto) {
+    try {
+      dedicado = await abrirServidorIngesta({ puerto: configIngesta.puerto });
+    } catch (error) {
+      console.error(`[Ingesta] No se pudo abrir la puerta de ingesta en el puerto ${configIngesta.puerto}: ${error.code || error.message}`);
+      process.exit(1);
+    }
+    console.log(
+      `Puerta de ingesta dedicada escuchando en el puerto ${configIngesta.puerto} (solo rutas de ingesta; sin trust proxy)` +
+        (configIngesta.soloDedicado ? "; el puerto principal ya no sirve la ingesta" : "; la ingesta también sigue en el principal"),
+    );
+  }
+  const principal = app.listen(PUERTO, () => {
+    console.log(`Servidor backend escuchando en el puerto ${PUERTO}`);
+    console.log(`Entorno: ${process.env.NODE_ENV || "desarrollo"}`);
+  });
+  principal.once("error", (error) => {
+    console.error(`No se pudo abrir el puerto ${PUERTO}: ${error.code || error.message}`);
+    process.exit(1);
+  });
+
+  // Cierre ordenado de ambos servidores
+  let cerrando = false;
+  const apagar = async (senal) => {
+    if (cerrando) return;
+    cerrando = true;
+    console.log(`${senal} recibida: cerrando servidores`);
+    await cerrarTodos([principal, dedicado]);
+    process.exit(0);
+  };
+  process.on("SIGTERM", () => apagar("SIGTERM"));
+  process.on("SIGINT", () => apagar("SIGINT"));
+}
+if (require.main === module) iniciar();
 
 module.exports = app;

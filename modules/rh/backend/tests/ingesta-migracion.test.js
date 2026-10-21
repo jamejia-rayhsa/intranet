@@ -129,14 +129,16 @@ describe("Migración 013 - réplica y cableado", () => {
 
 describe("app.js - montaje de la ingesta", () => {
   it("la ingesta se monta ANTES del parser JSON global (100 kb) y antes de /api/asistencia (authenticateJWT)", () => {
-    const iIngesta = APP.indexOf('app.use("/api/asistencia/ingesta"');
+    const iIngesta = APP.indexOf("montarIngestaEnPrincipal(app, configIngesta);");
     const iJson = APP.indexOf("app.use(express.json())");
     const iAsistencia = APP.indexOf('app.use("/api/asistencia", require(');
     expect(iIngesta).toBeGreaterThan(-1);
     expect(iJson).toBeGreaterThan(-1);
     expect(iIngesta).toBeLessThan(iJson);
     expect(iIngesta).toBeLessThan(iAsistencia);
-    expect(APP).toMatch(/app\.use\("\/api\/asistencia\/ingesta", require\("\.\.\/\.\.\/rh\/backend\/routes\/ingesta\.routes"\)\)/);
+    // y montarIngestaEnPrincipal monta el router de ingesta (o el 404) en esa ruta
+    const servidor = leer("modules/rh/backend/servidorIngesta.js");
+    expect(servidor).toMatch(/app\.use\(RUTA_INGESTA, router\)/);
   });
 
   it("el parser global sigue sin límite explícito (100 kb) y la ingesta fija el suyo de 1 MB", () => {
@@ -148,6 +150,33 @@ describe("app.js - montaje de la ingesta", () => {
     expect(APP).toMatch(/leerTrustProxy\(process\.env\.TRUST_PROXY\)/);
     expect(APP).toMatch(/if \(trustProxy !== false\) app\.set\("trust proxy", trustProxy\)/);
     expect(APP).not.toMatch(/app\.set\("trust proxy", true\)/);
+  });
+
+  it("los compose publican la puerta de ingesta: INGESTA_BIND (por omisión loopback), INGESTA_PORT y modo solo-dedicado", () => {
+    for (const [f, solo] of [["docker-compose.dev.yml", "false"], ["docker-compose.staging.yml", "true"], ["docker-compose.prod.yml", "true"]]) {
+      const texto = leer(f);
+      expect(texto).toContain("INGESTA_PORT: ${INGESTA_PORT:-4010}");
+      expect(texto).toContain(`INGESTA_SOLO_PUERTO_DEDICADO: \${INGESTA_SOLO_PUERTO_DEDICADO:-${solo}}`);
+      expect(texto).toContain('"${INGESTA_BIND:-127.0.0.1}:${INGESTA_PORT:-4010}:${INGESTA_PORT:-4010}"');
+    }
+    for (const f of [".env.supabase.example", "docs/supabase.md"]) {
+      for (const v of ["INGESTA_PORT", "INGESTA_SOLO_PUERTO_DEDICADO", "INGESTA_BIND"]) expect(leer(f)).toContain(v);
+    }
+  });
+
+  it("app.js: la puerta dedicada falla rápido (exit 1), cierra con SIGTERM/SIGINT y no escucha al importarse", () => {
+    expect(APP).toMatch(/abrirServidorIngesta\(\{ puerto: configIngesta\.puerto \}\)/);
+    expect(APP).toMatch(/process\.exit\(1\)/);
+    expect(APP).toMatch(/await cerrarTodos\(\[principal, dedicado\]\)/);
+    expect(APP).toMatch(/process\.on\("SIGTERM"/);
+    expect(APP).toMatch(/process\.on\("SIGINT"/);
+    expect(APP).toMatch(/if \(require\.main === module\) iniciar\(\);/);
+  });
+
+  it("la documentación describe la puerta dedicada, DOCKER-USER, PowerShell y el riesgo de HTTP sin TLS", () => {
+    const op = leer("docs/asistencia/operacion-ingesta.md");
+    for (const t of ["INGESTA_BIND", "DOCKER-USER", "Test-NetConnection", "ufw", "sin TLS", "<ip-interna>", "<ip-interfaz>", "iptables-persistent"]) expect(op).toContain(t);
+    expect(leer("docs/asistencia/contrato-ingesta-marcas.md")).toContain("http://<ip-interna-del-servidor>:4010");
   });
 
   it("los compose de dev, staging y prod pasan TRUST_PROXY al backend (vacío = ninguno)", () => {
@@ -164,6 +193,7 @@ describe("Archivos de la Fase 3 - sin datos reales de la red de BioTime ni llave
     "modules/rh/backend/utils/marcaValidacion.js",
     "modules/rh/backend/utils/ipPermitida.js",
     "modules/rh/backend/utils/trustProxy.js",
+    "modules/rh/backend/servidorIngesta.js",
     "modules/rh/backend/utils/llaveIngesta.js",
     "modules/rh/backend/utils/limiteTasa.js",
     "modules/rh/backend/models/llaveIngesta.model.js",

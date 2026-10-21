@@ -13,6 +13,9 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-21] orquestador → decisions.md — OK del humano para desplegar a staging la ingesta de asistencia
+- [2026-10-21] orquestador → decisions.md — Decisión del humano: puerta de ingesta dedicada por la red interna (opción 1)
+- [2026-10-21] orquestador → decisions.md — Revisión de la ruta de red de staging (Cloudflare Tunnel → Traefik → nginx) y recomendación de puerta de ingesta dedicada interna
 - [2026-10-21] orquestador → decisions.md — Fase 3 de asistencia (ingesta con llave) lista para GO/NO-GO
 - [2026-10-21] orquestador → decisions.md — Fase 3 de asistencia: síntesis de revisión y pruebas y ronda de correcciones
 - [2026-10-21] [revisor] → reviews.md#asistencia-fase-3 — Asistencia Fase 3 (commit 3599349): sin críticos; test intermitente de la llave (causa raíz: split("_") en base64url) y 413/EPIPE; falta límite de tasa previo a la BD
