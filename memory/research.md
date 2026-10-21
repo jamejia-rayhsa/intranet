@@ -1636,3 +1636,273 @@ async actualizar(req, res) {
 - Auditoría: `registrarAccion` no lanza; si el bloqueo debe quedar trazado, verificar la escritura o registrarlo de forma explícita.
 - Sin conflictos con decisiones previas. `blockers.md` vacío.
 - Pendiente de la línea de índice: `memory/INDEX.md` no se escribió desde este agente (solo `research.md`). Se pide al orquestador añadir la línea que apunte a esta entrada.
+
+### [2026-10-21] [investigador] — Módulo de asistencia: repo, cruces, BioTime y diseño
+
+**Alcance aplicado:** decisiones de 2026-10-21 "Módulo de asistencia en RH: respuestas del humano y alcance" y "Contrato de integración con BioTime: endpoint HTTP con llave (sustituye al rol de BD)". Ajuste del coordinador: la interfaz entrega marcas por **endpoint HTTP con API key**; se descarta el rol de BD `asistencia_interfaz` y RLS de escritura. Solo lectura de código y web. Sin cambios en el repo.
+
+---
+
+#### 1. REPO — convenciones para un módulo nuevo en RH
+
+**Pregunta:** cómo se estructura, monta, migra, siembra, protege y prueba un módulo nuevo dentro de `modules/rh`.
+
+**Hallazgo:**
+- **Estructura:** `modules/rh/backend/{controllers,models,routes,middleware,migrations,seeds,services,utils,tests}` y `modules/rh/frontend/{pages,components,services,routes,utils,styles,constants}` (listado de archivos). Config de permisos en `modules/rh/config/rh.permisos.js` (solo catálogos y reglas; `reglas` usa nombres `rh.admin`, `rh.view`... que no coinciden con las opciones reales de BD: deuda de documentación, no fuente de verdad).
+- **Montaje:** todas las rutas se registran en `modules/portal/backend/app.js:36-87`. Patrón RH: `app.use("/api/vacaciones", require("../../rh/backend/routes/vacaciones.routes"))` (app.js:49), `calendario-laboral` (app.js:50). Un módulo nuevo sería p. ej. `app.use("/api/asistencia", ...)` junto a esas líneas.
+- **Auth por ruta, no global:** `app.js:23-25` solo pone `cors`, `express.json()` (límite por defecto de 100 kb, sin `limit` explícito) y `urlencoded`. La autenticación es por router: `vacaciones.routes.js:12` `router.use(authenticateJWT)`. Por tanto un router de ingesta sin `authenticateJWT` es posible, pero el `express.json()` global de `app.js:24` corre antes de cualquier ruta (ver §4 límites).
+- **Migraciones:** en `modules/rh/backend/migrations/` la última es `011-calendario-actividad.sql`; **siguiente número libre: `012`** (no hay 003). Cada migración es idempotente (`IF NOT EXISTS`, bloques `DO $$`), replicada también en `config/database/init.sql` (p. ej. `calendario_laboral` en init.sql:677 y la 009 en su cabecera, "Replicado en config/database/init.sql"). Cableado: `docker-compose.supabase.yml:62-113` (servicio `supabase-db-init`): monta cada `.sql` en `/sql/` y ejecuta `psql -v ON_ERROR_STOP=1 -f` en orden fijo: init.sql (solo si no existe `public.usuarios`, con `--single-transaction`), 004, 005, 007, 008, 003, 006, 009, 010, 011. **Una migración nueva debe añadirse a ese bloque (volumen + línea psql) y a `init.sql`.** Mismo patrón en `docker-compose.supabase.dev.yml`/staging, no revisado línea a línea.
+- **Siembra de permisos:** tablas `modulos`, `modulo_opciones(modulo_id,nombre,descripcion,orden)` con `UNIQUE(modulo_id,nombre)` (init.sql:363-370) y `rol_opcion_permisos(rol_id,opcion_id,tipo CHECK IN('consulta','edicion'))` (init.sql:372-377). Las opciones RH están sembradas en init.sql (~l.392-400): Empleados, Expedientes, Permisos, Recibos, Vacaciones, Ubicaciones. **Calendario y Departamentos se sembraron en migraciones posteriores** (009 y otras). Una opción nueva "Asistencia" se siembra con `INSERT ... ON CONFLICT DO NOTHING` como en init.sql y se concede a roles con `INSERT ... SELECT` (patrón de init.sql:404-420; super_admin recibe todo y portal_admin solo módulo portal).
+- **Permisos en runtime:** `verificarPermiso(modulo, opcion, tipo)` (`modules/portal/backend/middleware/permisos.middleware.js`); `tienePermiso` (mismo archivo, líneas 1-30) acepta `super_admin` siempre, y `consulta` acepta también `edicion`. RH usa `Empleados:edicion` como "RH" para vacaciones/permisos (`vacaciones.routes.js:15`).
+- **Patrón propietario / jefe / RH:**
+  - `modules/rh/backend/middleware/acceso-empleado.middleware.js`: `accesoEmpleado({...})` (l.62), `empleadoPropioEnPeticion({...})` (l.117), `validarId` (l.35), `validarPeriodo` (l.41), `MENSAJE_DENEGADO` uniforme (l.7), exports en l.153.
+  - Jefe **vigente**: el JOIN `e.jefe_inmediato_id AS jefe_vigente_id` (`solicitudVacaciones.model.js:255-258`, `:267`); `esJefeDeLaSolicitud` en `vacaciones.routes.js` (comparación con `String(...)`, excluye el propio empleado); la regla de autoridad se revalida dentro de la transacción (`vacaciones.controller.js:86-98`, `:637`).
+  - Listado con `puede_responder` calculado en controlador: `vacaciones.controller.js:543`.
+  - RH ve todo: filtros `ver_todo` / `empleado_o_jefe_id` en el modelo (decisión 2026-04-28).
+- **Auditoría:** `AuditoriaService.registrarAccion(req, modulo, tabla, registroId, accion, valoresPrevios, valoresNuevos)` en `modules/auditoria/backend/services/auditoria.service.js:4`. Toma `usuario_id` de `req.user` y la IP de `req.headers['x-forwarded-for']` **sin parsear ni confiar en proxy** (l.7). `app.js` no tiene `trust proxy` (búsqueda sin resultados). Para una llave de máquina no hay `req.user`: el `usuario_id` quedaría `null` y la IP sería spoofable → ver §4.
+- **RLS deny-all:** `modules/portal/backend/migrations/004-rls-deny-all.sql` activa RLS en **todas** las tablas de `public` que existan en ese momento y revoca `anon`/`authenticated` (también `ALTER DEFAULT PRIVILEGES`). Ver riesgo de orden en §2 (se ejecuta antes de 009/010/011 en db-init). **No existe en el repo ningún rol de BD acotado** (`grep CREATE ROLE/CREATE USER` sin resultados fuera de `config/supabase/db/roles.sql`, que son roles internos de Supabase). Un rol para la interfaz requeriría `CREATE ROLE` + `GRANT` en una migración nueva; decisión descartada por el humano (ver ajuste).
+- **Frontend:** rutas en `modules/portal/frontend/main.jsx` (imports l.36-45; `<Route>` RH en l.167-172; títulos de breadcrumb l.66-69). Sidebar: `modules/portal/frontend/components/MenuDinamico.jsx` `SUB_RUTAS.rh` (l.16-27), con `opcion` de permiso por ruta. Páginas en `modules/rh/frontend/pages/`; servicios `modules/rh/frontend/services/*.service.js` (usan `solicitar()`); utilidades puras en `modules/rh/frontend/utils/` (p. ej. `calendarioLaboral.js`). **Nota:** `modules/rh/frontend/routes/rh.routes.js` lista rutas antiguas (`/empleados`, `/mi-perfil`) que no parecen montadas: no copiar ese archivo como referencia.
+- **Pruebas:** Jest 29 + Supertest; `modules/rh/backend/package.json` (`"jest": {"testEnvironment":"node"}`). Patrón: `jest.mock` del middleware de auth y permisos (`modules/rh/backend/tests/vacaciones.autoridad.test.js:8,14`), mock de servicios de notificación (l.18), y pruebas de utilidades puras (`diasHabiles.test.js`, `calendarioLaboral.util.test.js`). Hay 25+ suites RH. Pruebas con Postgres real no están automatizadas en el repo: se hicieron con Postgres desechable en fases anteriores (tests.md, entradas 2026-10-15/16: `supabase/postgres 17.6` + `db-init` real ×2). **Mocks de `config/database`**: los tests de RH usan `jest.mock` del pool; no hay helper compartido documentado.
+
+**Hallazgo — tareas programadas:**
+- Búsqueda en todo el repo (`*.js`, `*.sql`, `*.json`, `*.yml`) de `node-cron`, `setInterval`, `pg_cron`, `cron.schedule`: **sin resultados**.
+- `docker-compose.prod.n8n.yml` existe (n8n en producción) pero sin `schedule`/`cron` en el archivo.
+- `docs/supabase.md` solo describe cron/systemd para **respaldos** (no implementados en el repo; decisión 2026-10-08 "No está programado").
+- `notificador.service.js:34` envía `X-Intranet-Secret` **hacia** n8n (salida). No existe el patrón inverso (entrada de máquina con secreto).
+
+**Opciones para el recálculo periódico** (propuesta, sin decidir):
+
+| Opción | Ventajas | Costos / riesgos |
+|---|---|---|
+| A. Dentro del backend (`setInterval` 15 min en `app.js` o módulo) | Sin piezas nuevas; usa pool y auditoría; fácil de probar con Jest | Corre en cada réplica (no hay réplicas hoy, pero no se garantiza); un proceso bloqueado detiene el proceso web; sin reintentos/observabilidad propia; necesita lock (`pg_try_advisory_lock`) |
+| B. Proceso aparte (contenedor/script con `node-cron`) | Aísla carga del API; se reinicia sin tumbar el portal | Nueva imagen/servicio en compose de dev/staging/prod; más superficie; mismo problema de lock si se escala |
+| C. Disparo tras insertar marcas (al final del `POST` de ingesta, después del COMMIT) | Recalcula solo lo tocado (día y empleado); latencia mínima; no requiere cron | Acopla la ingesta al cálculo (la respuesta HTTP debe ser rápida: encolar o hacerlo tras responder); marcas tardías requieren recálculo de días ya calculados, por eso no basta solo con esto |
+| D. `pg_cron` en Postgres | Ejecuta en la base; sin proceso de app | **No instalado**: la imagen `supabase/postgres` lo incluye pero no hay ningún uso en el repo; requiere `shared_preload_libraries` y superuser; el backend no tiene visibilidad; difícil de probar en CI |
+| E. n8n (ya en el stack) | Programación visible y reintentos | Otro punto de fallo; el backend ya tiene que aceptar la llave de la interfaz; no hay flujos n8n de asistencia |
+
+**Implicación:**
+- El repo no tiene scheduler: cualquiera de A/B/D es nueva infraestructura. Recomiendo que el humano elija **C + barrido nocturno/ cada 15 min (A con advisory lock)** o **B** para el barrido; la decisión es del orquestador.
+- Hay que decidir si el backend corre en una sola réplica (hoy sí: un contenedor por entorno en compose). Si no, el lock es obligatorio.
+- Los puntos de integración con el repo son: `modules/portal/backend/app.js` (montaje), `docker-compose.supabase.yml` (si B), `pool` de `modules/portal/backend/config/database.js:27-29` (`PG_POOL_MAX` por defecto 10).
+
+---
+
+#### 2. CRUCES — datos de los que depende el análisis
+
+**Pregunta:** qué columnas, valores y riesgos tienen las tablas de vacaciones, permisos, calendario, empleados, ubicaciones y departamentos.
+
+**Hallazgo:**
+
+**a) `solicitudes_vacaciones`** (`config/database/init.sql:618-653`, con 009 añadiendo `departamento_id`):
+- Estatus: `CHECK (estatus IN ('pendiente','aprobado','rechazado'))` (init.sql:637-638). Default `pendiente`.
+- Fechas: `fecha_inicial DATE NOT NULL`, `fecha_final DATE NOT NULL`, `fecha_regreso DATE` (nullable).
+- Días: `dias_a_disfrutar INT NOT NULL` (días que descuenta). **Histórico: días naturales.** Desde la decisión 2026-10-15 (regla 4 y 5) los días son hábiles lun-vie excluyendo oficiales/otorgados, pero **las solicitudes existentes se mantienen sin recalcular**. Hay que discriminar por fecha de creación (`fecha_creacion`) o por una marca de versión; hoy no hay columna de versión de cálculo.
+- Empleado: `empleado_id INT REFERENCES empleados(id)` nullable (init.sql:621), `numero_nomina VARCHAR(50)` **desnormalizado** (copia al crear), `departamento` texto desnormalizado y `departamento_id` añadido por 009 (rellenado con el actual del empleado; las filas nuevas toman el del empleado al crear). `ubicacion VARCHAR(100)` texto. Por tanto **el departamento histórico puede no coincidir con el actual** si el empleado cambió de área: para el cruce usar el de la solicitud, no el del empleado, o documentar la regla.
+- Jefe: `jefe_inmediato_id` guardado al crear (puede quedar obsoleto); la autoridad usa el vigente (`solicitudVacaciones.model.js:255-258`).
+- Aprobación: `autoriza_id`, `autoriza_nombre`, `fecha_autoriza`.
+- Cruce con asistencia: el "día de vacaciones" = `fecha_inicial..fecha_final` con `estatus='aprobado'`. Un día del rango que sea sábado/domingo o festivo no cuenta como día de vacaciones (regla de hábiles en `modules/rh/backend/utils/diasHabiles.js`).
+- Índices existentes: `idx_sol_vac_empleado`, `idx_sol_vac_estatus`, `idx_sol_vac_periodo`, `idx_sol_vac_jefe` (init.sql:655-658). **Falta índice por `(empleado_id, fecha_inicial, fecha_final)` para el cruce por rango.**
+- Regla de bloqueo de solapes vigente: solo `aprobado` bloquea el cupo (decisión 2026-10-15 punto 1).
+
+**b) `permisos_ausencia`** (`init.sql:264-275`):
+- Columnas: `id, empleado_id (nullable), tipo VARCHAR(30) NOT NULL, fecha_inicio DATE NOT NULL, fecha_fin DATE NOT NULL, motivo TEXT, estatus VARCHAR(20) DEFAULT 'pendiente', fecha_solicitud, fecha_respuesta, respondedor_id INT → usuarios(id)`.
+- **Sin CHECK** de `tipo` ni de `estatus` en la BD. Los valores válidos están solo en `modules/rh/config/rh.permisos.js` (`tiposPermiso`: vacaciones, incapacidad, asunto_personal, otro; `estatusPermiso`: pendiente, aprobado, rechazado). **Riesgo:** un `tipo` libre puede llegar desde la API; el backend no valida en el INSERT (`modules/rh/backend/models/permisoAusencia.model.js:5-13`).
+- **Sin horas**: solo fechas de día completo. **No permite horas parciales** (confirmado; no hay columnas `hora_inicio/hora_fin`).
+- **Quién aprueba:** `respondedor_id` referencia `usuarios(id)`, no `empleados`. Las reglas de aprobación están en `rh.permisos.js` (`aprobarPermiso: ["rh.admin","rh.gestionar-permisos","super_admin"]`), nombres que no coinciden con los permisos reales (`Permisos:edicion` / `Empleados:edicion`). **Confirmar la regla real en `permisos.routes.js:40-46` antes de usarla.**
+- **UI y endpoint:** existen. Rutas `modules/rh/backend/routes/permisos.routes.js`: `GET` listado (l.21, l.27), `POST` (l.40), `PUT` respuesta (l.46). Frontend: `modules/rh/frontend/components/PermisosForm.jsx`, `PermisosList.jsx`, `services/permisos.service.js` (`/permisos-rh`), página `RHAdminPage.jsx` (`/rh/admin`, sidebar `Permisos y ausencias`). Usado en producción según el ADR del 2026-04-29 y la auditoría de RHAdminPage. **Uso real en datos: no verificable desde el repo** (sin datos).
+- Dos validaciones de fechas: el modelo no comprueba `fecha_fin >= fecha_inicio` (revisar `permisoAusencia.model.js`; no leído línea a línea).
+
+**c) `calendario_laboral`** (`init.sql:677`; migración `009-calendario-laboral.sql` y `011-calendario-actividad.sql`):
+- Columnas: `id, fecha DATE NOT NULL, tipo VARCHAR(20) CHECK IN ('oficial','otorgado','evento','actividad') (tras 011), nombre VARCHAR(150) NOT NULL, descripcion, activo BOOLEAN DEFAULT true, creado_por, fecha_creacion, fecha_actualizacion, UNIQUE(fecha, tipo)`.
+- Efecto en vacaciones (decisiones 2026-10-15/16 y 2026-10-21):
+  - `oficial` y `otorgado`: no laborable; no se descuentan del saldo.
+  - `evento`: informativo; laborable normal.
+  - `actividad`: bloquea vacaciones de todos si cae en día hábil (lun-vie) y está activa (`activo=true`).
+- Efecto en asistencia (decisión 2026-10-21, punto 8): `oficial`/`otorgado` = no laborable; `actividad`/`evento` = laborable normal. **Cuidado:** el `UNIQUE(fecha,tipo)` permite un `oficial` y un `evento` el mismo día; para la lógica de no laborable hay que filtrar `activo = true` y tipo.
+- Sin alcance por sede ni departamento (decisión 2026-10-15 punto 3: aplica a toda la empresa). **Un festivo que no aplique a una sede no se puede representar.**
+
+**d) `empleados`** (`init.sql:242-262`, con columnas añadidas `init.sql:480-517`):
+- `numero_nomina VARCHAR(50)` (init.sql:496): **nullable, sin UNIQUE, sin CHECK de formato.** Solo índice no único `idx_empleados_nomina` (migraciones 001:140 y 004:98). El código de BioTime = `numero_nomina` (decisión 3). **Riesgos:** nulos, duplicados, espacios/ceros a la izquierda ("0123" vs "123"), y cambio de número de nómina sin historial.
+- `estatus VARCHAR(20) DEFAULT 'activo'` (init.sql:250). Valores en `rh.permisos.js`: `activo`, `baja`, `suspendido`. **Sin CHECK en BD.** `fecha_baja DATE` y `motivo_baja TEXT` existen (init.sql:256-257).
+- `fecha_ingreso DATE` (init.sql:252; puede ser NULL). Antigüedad para vacaciones depende de ella.
+- `jefe_inmediato_id INT REFERENCES empleados(id)` (init.sql:253): el vigente es el actual; sin historial de jefes.
+- `ubicacion_id INT REFERENCES ubicaciones(id)` y `departamento_id INT REFERENCES departamentos(id)` (init.sql:258-259). Además existen **columnas legadas de texto** `departamento VARCHAR(100)` (init.sql:247) y `puesto VARCHAR(100)`. Usar siempre `departamento_id`.
+- `usuario_id` UNIQUE desde la migración 010 (si no hay duplicados; si los hay, no se crea y solo avisa: `010-empleados-usuario-unico.sql` cabecera).
+- **Historial de cambios de estatus/ubicación/departamento:** no existe. Un cambio de turno o de departamento a mitad de periodo no puede reconstruirse desde la BD actual (riesgo para el análisis histórico; ver §4).
+
+**e) `ubicaciones`** (`init.sql:218-230`): `id, nombre, direccion, ciudad, estado, codigo_postal, telefono, prefijo, ultimo_folio, activo, fecha_creacion`. No tiene zona horaria; **la decisión 2026-10-21 (punto 12) fija America/Mexico_City para todas las sedes**: no hace falta columna, pero conviene dejar constante en backend.
+
+**f) `departamentos`** (`init.sql:208-216` + 009): `nombre UNIQUE, area_id, activo, cupo_vacaciones INT >= 1 DEFAULT 1` (009). Sin horario por departamento.
+
+**Riesgos para el análisis (resumen):**
+1. `numero_nomina` nulo o duplicado: marcas de un código sin empleado único (ver §4 "marca sin empleado").
+2. Bajas: `estatus='baja'` con `fecha_baja`; las marcas posteriores a `fecha_baja` deben marcarse como "fuera de vigencia" y no generar faltas.
+3. Ingresos a mitad de periodo: `fecha_ingreso` posterior al día analizado → no contar faltas antes del ingreso.
+4. Cambio de jefe / departamento / ubicación sin historial.
+5. Solicitudes `pendientes` no bloquean; su día no debe justificar la falta.
+6. Días históricos de vacaciones en naturales (ver a).
+
+**Implicación:** el análisis puede leer las tablas existentes sin cambios, pero necesita (i) regla de versión para `dias_a_disfrutar` (o usar solo rangos), (ii) índice de rango de vacaciones, (iii) validación de unicidad y formato de `numero_nomina` (migración con dry-run, similar a 010), (iv) decisión sobre historial de jefe/departamento/estatus si se quiere recalcular el pasado con precisión.
+
+---
+
+#### 3. BIOTIME — fuentes públicas (oficiales vs terceros)
+
+**Pregunta:** qué modelo de turnos, marcas y API expone BioTime en versiones 8.x/9.x/ZKBio Time, y qué sabemos con evidencia.
+
+**Hallazgo (confirmado con fuentes; ninguna es documentación oficial ZKTeco abierta):**
+- **Endpoint de transacciones:** Paquete PHP de terceros `tanemrahman/zkteco-biotime` documenta: `GET {base}/iclock/api/transactions/?page=&start_time=&end_time=` (https://packagist.org/packages/tanemrahman/zkteco-biotime). Foro Frappe documenta `GET /iclock/api/transactions/?page=3000&page_size=3000&start_time=...` (sin `end_time`) (búsqueda web; foro https://discuss.frappe.io/t/latest-ztkeco-machines-series-v5l-has-integration-issues/114994, citado por resultado de búsqueda). **`end_time` y `upload_time` como filtro: no confirmado.**
+- **Autenticación:** dos esquemas en fuentes distintas:
+  - Token: `POST {base}/api-token-auth/` devuelve `{token}`; cabecera `Authorization: Token <token>` (paquete tanemrahman). Algunas builds requieren `JWT <token>` (mismo paquete, variable `ZKTECO_BIOTIME_TOKEN_SCHEME`).
+  - JWT: manual "BioTime 8.5 API User Manual" (copia en studocu, no oficial en el acceso): `POST /jwt-api-token-auth/` con usuario y contraseña, cabecera `Authorization: JWT <token>`. **No confirmado para 9.x.**
+- **Paginación:** `page`, `page_size` (foro y paquete). Respuesta paginada de DRF (`count`, `next`, `previous`, `results`): **inferido** por el uso de `page`; no confirmado.
+- **Campos de una transacción** (paquete tanemrahman, mapeo a su tabla propia): `emp_code` (PIN = código de empleado), `punch_time`, `punch_state`, `verify_type`, `terminal_sn`. Entradas en su tabla `zkteco_transactions`: `user_id`←emp_code, `timestamp`←punch_time, `status`←punch_state, `verify`←verify_type. **Es mapeo de un tercero, no esquema BioTime.**
+- **Zona horaria:** Odoo (https://www.odoo.com/documentation/master/applications/hr/attendances/biotime_integration.html) indica que el "Punch Time" se "records on the BioTime server, converted to the user's time zone". **Formato de la marca (ISO con offset o sin zona): no confirmado.** Hay que pedir una muestra real.
+- **Punch state:** Odoo documenta `Check-In = 0`, `Check-Out = 1`; cualquier otro valor "unsupported". Odoo indica que la integración es "built for Biotime Cloud only" (no para instalación local) — **relevante: el cliente tiene BioTime local o en la nube; no sabemos**. Códigos adicionales (break/overtime) **no confirmados** en las fuentes consultadas.
+- **verify_type:** no hay valores confirmados en las fuentes (búsqueda sin resultado oficial; las listas de métodos de los terminales confirman huella, tarjeta y contraseña, pero no los números). **No confirmado.**
+- **Tablas de BD de BioTime:** **no se pudo confirmar** `att_timeinterval`, `att_attshift`, `att_shiftdetail`, `att_attschedule`, `iclock_transaction`. La búsqueda no devolvió documentación de esquema. BioTime 8.0 soporta PostgreSQL, MSSQL, MySQL y Oracle como base (datasheet ZKTeco; fuente no abierta a detalle). **Las tablas de turnos (Timetable/Time Interval, Shift, Schedule) existen en el producto según su menú, pero sus nombres y campos no se confirmaron.**
+- **Turnos nocturnos y rotativos:** no confirmado en fuentes públicas. El producto documenta "timetable, shift and schedule" (datasheet ZKTeco BioTime 8.0). Las reglas de cruce de medianoche (cross-day) y tolerancia **no se pudieron verificar** en documentación pública; se conocen como conceptos del producto por la búsqueda de tutoriales (norden.adact.me "Transactions and Timetable Check In Out Settings"), sin campos.
+- **Versión:** la búsqueda muestra BioTime 8.0, 8.5, 9.0.6, 9.5 y ZKBio Time (9.x). **Versión del cliente: desconocida** (pedirla).
+
+**Clasificación de fuentes:**
+- Oficial ZKTeco: solo datasheet de BioTime 8.0 (rassecurity.com PDF) y menciones genéricas. **No hay documentación API oficial abierta consultada.**
+- Terceros: paquete Packagist (tanemrahman), paquete tes/biotime-sdk (solo listado), Odoo (documentación oficial de Odoo, pero de integración de terceros), foro Frappe, manual 8.5 en studocu (no oficial).
+
+**Tabla de correspondencia propuesta (campo BioTime → campo de nuestro modelo; "por confirmar" donde no hay evidencia):**
+
+| Campo BioTime (fuente) | Campo propuesto en nuestro contrato/tabla | Nota |
+|---|---|---|
+| `emp_code` (Packagist/Odoo) | `asistencia_marcas.codigo_empleado` (texto) → resuelve `empleados.numero_nomina` en backend | Confirmar que el PIN del dispositivo = `numero_nomina` |
+| `id` de transacción (**por confirmar**) | `asistencia_marcas.id_externo` (clave de idempotencia junto con `origen`) | Sin `id` confirmado, la deduplicación sería por (codigo, punch_time, terminal_sn): **riesgo** |
+| `punch_time` (Packagist, Odoo) | `asistencia_marcas.marcada_en` TIMESTAMPTZ (convertido a America/Mexico_City en backend) | Formato y zona del servidor: por confirmar |
+| `punch_state` (Packagist) | `asistencia_marcas.tipo_marca` (entrada/salida/otro) | Odoo: 0 entrada, 1 salida; otros valores → "desconocido" |
+| `verify_type` (Packagist) | `asistencia_marcas.metodo_verificacion` (texto/código crudo) | Valores: por confirmar; no afecta el cálculo, solo auditoría |
+| `terminal_sn` (Packagist) | `asistencia_marcas.terminal_sn` | Útil para auditar dispositivo |
+| `area_alias` / `terminal_alias` (**por confirmar**) | `asistencia_marcas.terminal_alias` (opcional) | No confirmado |
+| `upload_time` (**por confirmar**) | `asistencia_marcas.recibida_en` (llegada a intranet, `now()` del backend) | Necesario para reprocesar días ya calculados |
+| Turnos BioTime (Timetable / Shift / Schedule; nombres **no confirmados**) | `asistencia_turnos` + `asistencia_turno_dias` + `asistencia_asignaciones` | Cruce pendiente de la estructura real del cliente |
+| Tolerancia de entrada/salida (**campo no confirmado**) | `asistencia_turnos.tolerancia_retardo_min` (default 10) | Ya decidido: retardo después de 10 min |
+| Ventana de cuadre / cross-day (**no confirmado**) | `asistencia_turnos.cruza_medianoche` | Ver §4 |
+
+**Lo que hay que pedir al humano (exacto) para alinear turnos:**
+1. Versión exacta de BioTime (8.x, 9.x o ZKBio Time) y si es **local o Cloud** (Odoo indica soporte solo Cloud).
+2. Exportación o captura de **un registro de transacción** real (JSON de `GET /iclock/api/transactions/` con datos anonimizados): campos, formato y zona de `punch_time`, presencia de `id`, `upload_time`, `verify_type`, `punch_state` y valores que aparecen.
+3. Captura de la **pantalla de turnos** (Timetable / Shift / Schedule) con: nombre, días, hora de entrada y salida, tolerancia de entrada y salida ("allow late/early leave"), ventana de check-in/out, si el turno cruza medianoche, "work day"/flexible, descanso/comida.
+4. Estructura de las tablas de turnos de su BD (si tienen acceso directo a la base de BioTime): nombres y campos reales (la lista propuesta no está confirmada).
+5. Si usan turnos rotativos o nocturnos: cómo los asignan (por empleado, por departamento o por "schedule" de fecha).
+6. Método de autenticación que usa la interfaz (Token o JWT) y su configuración de `api-token-auth` / `jwt-api-token-auth`.
+7. Cómo se relacionan los códigos de empleado de BioTime con `numero_nomina` (¿es el mismo PIN en todos los dispositivos?).
+8. Si existen marcas de corrección manual en BioTime (estatus de "reporte" o ajuste) que la interfaz deba traer o ignorar.
+
+**Implicación:** ninguna fuente pública confirma el esquema de turnos de BioTime ni los códigos de `verify_type`. El diseño de turnos debe **ser propio** (nuestro modelo) y la interfaz (otro desarrollo) traduce desde BioTime. La tabla de correspondencia es un borrador para validar con la estructura del cliente. El contrato HTTP (§4) debe aceptar campos crudos opcionales para no acoplar la BD a BioTime.
+
+---
+
+#### 4. DISEÑO (propuesta, no decisión) — con el endpoint HTTP y API key
+
+**Pregunta:** cómo encajar una credencial de máquina, las tablas y las reglas de borde.
+
+**Hallazgo — (a) encaje de la API key en el backend actual:**
+- `authenticateJWT` (`modules/portal/backend/middleware/auth.middleware.js:91-150`) solo acepta `Authorization: Bearer <token>` y verifica HS256 de Supabase (`aud=authenticated`); **cualquier otro token → 401 "Token inválido o expirado"** (l.~146). Si la llave viajara como `Bearer`, fallaría. **Recomendación: cabecera `X-Api-Key`** (no `Authorization`), y un middleware nuevo `apiKeyIngesta` montado **solo en el router de ingesta**, sin `authenticateJWT`.
+- No hay **ruta pública o excepción** de auth en `app.js`: la autenticación es por router (`vacaciones.routes.js:12`). Por tanto, una ruta nueva sin `router.use(authenticateJWT)` es pública por defecto: el middleware de llave es obligatorio y debe ser el primero del router.
+- **Patrón inverso `X-Intranet-Secret`:** solo existe como salida hacia n8n (`notificador.service.js:34`, `docs/notificaciones.md:6,13`). No hay precedente de entrada de máquina. El secreto se guarda en `.env` por entorno (`N8N_NOTIFICAR_SECRETO`), no en el repo: **mismo criterio aplicable** a la llave.
+- **Montaje y orden:** `app.use(express.json())` global (`app.js:24`) corre antes de cualquier ruta; su límite por defecto de 100 kb responde **413 antes** de llegar al router de ingesta. Para ingesta por lotes hay que: (1) montar el router de ingesta con su propio `express.json({ limit })` **antes** de la línea 24, o (2) condicionar el parser global por ruta. **Ojo: body-parser omite parseo si ya hay `req.body`, pero el global lo parsea primero.**
+- **nginx:** `config/nginx/nginx.conf:32-36` `location /api/` con `client_max_body_size 50m` (l.35); el staging (`nginx.staging.conf:24`) igual. 50 MB es suficiente; el límite real debe fijarse en la aplicación (p. ej. 1 MB o N marcas) y el de nginx debe quedar **mayor o igual**.
+- **Tasa de peticiones:** no hay `express-rate-limit`, `helmet` ni `limit_req` en el repo (búsqueda sin resultados). Propuesta: `limit_req` en nginx para `/api/asistencia/` (zona separada) **o** un contador en memoria (no escala con varias réplicas); con una réplica el de nginx es el más simple.
+- **Lista blanca de IP:** no hay `trust proxy`, por eso `req.ip`/`req.socket.remoteAddress` sería la IP de nginx. Para lista blanca real: `app.set('trust proxy', <IP de nginx>)` y leer `req.ip`, o restringir en nginx (`allow`/`deny`) para `/api/asistencia/`. **No usar `x-forwarded-for` sin confiar en el proxy** (lo hace hoy `auditoria.service.js:7`).
+
+**(b) almacenamiento de la llave y ciclo de vida:**
+- Generar en el servidor con `crypto.randomBytes(32)` (ya se usa `crypto` en el repo: `storage.service.js:3`, `contrasenaTemporal.js:1`). Mostrar **una sola vez**, como la contraseña temporal (`contrasenaTemporal.js`, decisión Fase 6).
+- Guardar **hash** (SHA-256 o HMAC-SHA256 con pepper de entorno). Como la llave tiene 256 bits de entropía, no hace falta bcrypt; comparar con `crypto.timingSafeEqual`. Prefijo visible (p. ej. primeros 8 caracteres) para identificar la llave en listados, sin el secreto.
+- Tabla `asistencia_llaves`: `id`, `nombre` (p. ej. "BioTime interfaz planta X"), `prefijo`, `hash`, `creada_por`, `fecha_creacion`, `ultimo_uso`, `activa`, `revocada_en`, `revocada_por`, `expira_en` (nullable). Índice único en `hash` o `prefijo`.
+- **Rotación:** la llave nueva se crea activa antes de revocar la anterior (ventana de solape); el middleware acepta N llaves activas.
+- **Revocación:** `activa=false` + `revocada_en`; efecto inmediato (sin caché).
+- **Quién puede administrar:** RH-admin o `super_admin` (permiso sobre la opción nueva "Asistencia", `edicion`); alta, rotación y revocación se auditan con `registrarAccion` (valores previos/nuevos sin el hash ni el valor en claro).
+- **Auditoría de la ingesta:** `registrarAccion` requiere `req.user`; la ingesta no tiene usuario. **Propuesta:** registrar un evento por lote en `asistencia_sync_lotes` (id llave, IP, recibidas, insertadas, duplicadas, rechazadas, hash del cuerpo) y un evento de auditoría por llave usada en errores de autenticación. Ajustar `registrarAccion` para aceptar `usuario_id` nulo con `llave_id` (ver riesgo: el servicio devuelve `usuario_id = null` sin error, `auditoria.service.js:4-9`).
+
+**(c) forma del contrato:**
+- `POST /api/asistencia/ingesta/marcas` con `X-Api-Key`, `Content-Type: application/json`, cuerpo `{ "origen": "biotime-<sede>", "lote_id": "<uuid de la interfaz>", "marcas": [ {"id_externo","codigo_empleado","marcada_en","tipo_marca","metodo_verificacion","terminal_sn"}, ... ] }`.
+  - Límite: 500 marcas o 1 MB por lote (propuesta; el lote lo fija la interfaz).
+  - Respuesta 200 (o 207 si hay parciales): `{ exito, datos: { lote_id, recibidas, insertadas, duplicadas, rechazadas: [{indice, id_externo, codigo: "EMPLEADO_NO_EXISTE"|"FECHA_INVALIDA"|...}] } }`.
+  - **Idempotencia:** `INSERT ... ON CONFLICT (origen, id_externo) DO NOTHING RETURNING id`; las no devueltas = duplicadas. Si `id_externo` no existe en BioTime (no confirmado), la clave debe ser `(origen, codigo_empleado, marcada_en, terminal_sn)` — riesgo de colisiones legítimas (dos marcas idénticas al segundo).
+  - Duplicado con **contenido distinto** (mismo `id_externo`, otra hora): rechazar como conflicto y auditar; no sobrescribir la marca original.
+- `GET /api/asistencia/ingesta/estado?origen=...` → `{ ultima_marca_recibida, ultimo_lote, cursor }`. Cursor = `marcada_en` máximo recibido o `recibida_en` máximo; la interfaz usa `start_time`/`end_time` con solape (lookback de N minutos) para no perder marcas tardías.
+- Errores: 401 `{ exito:false, mensaje:"Llave inválida" }` sin distinguir llave inexistente/revocada; 413 cuerpo grande; 422 o 400 formato; 429 tasa; 500 sin detalles (`manejadorErrores` de `app.js:133`). **Mensajes sin detalles internos**, como ya exige el patrón `{exito,mensaje}`.
+- **Zona horaria:** aceptar ISO 8601 **con offset** obligatorio; si llega sin offset, rechazar (`FECHA_SIN_ZONA`) en lugar de asumir. Guardar `TIMESTAMPTZ` y calcular el día local con `America/Mexico_City` en el backend (decisión 2026-10-21 punto 12).
+- **Resolución de `empleado_id`:** en el backend, en el mismo lote, `SELECT id, numero_nomina FROM empleados WHERE numero_nomina = ANY($1)` (normalizar `trim`; no hacer `UPPER`/ceros). Marcas sin empleado → se guardan con `empleado_id NULL` y `codigo_empleado` para reprocesar cuando se dé de alta el empleado (en vez de descartarlas). Duplicados de `numero_nomina` → rechazar (no adivinar; ver riesgo de UNIQUE en §2d).
+
+**(d) tablas candidatas (propuesta):**
+- `asistencia_turnos`: `id SERIAL PK`, `nombre VARCHAR(100) NOT NULL UNIQUE`, `hora_entrada TIME NOT NULL`, `hora_salida TIME NOT NULL`, `cruza_medianoche BOOLEAN NOT NULL DEFAULT false` (nocturno = `hora_salida <= hora_entrada` válido), `tolerancia_retardo_min INT NOT NULL DEFAULT 10 CHECK (>= 0)`, `umbral_falta_min INT NOT NULL DEFAULT 30 CHECK (>= tolerancia)`, `activo BOOLEAN DEFAULT true`, `creado_por`, `fecha_creacion`, `fecha_actualizacion`. Índice por `activo`.
+- `asistencia_turno_dias`: `turno_id INT REFERENCES asistencia_turnos ON DELETE CASCADE`, `dia_semana SMALLINT CHECK (1..7)` (ISO: 1=lunes), `laborable BOOLEAN NOT NULL`, `hora_entrada`/`hora_salida` opcionales (para turnos con horario distinto por día), `PRIMARY KEY (turno_id, dia_semana)`.
+- `asistencia_asignaciones`: `id SERIAL PK`, `empleado_id INT NOT NULL REFERENCES empleados(id)`, `turno_id INT NOT NULL REFERENCES asistencia_turnos(id)`, `vigente_desde DATE NOT NULL`, `vigente_hasta DATE` (NULL = abierta), `creado_por`, `fecha_creacion`. **Sin traslape por empleado:** `EXCLUDE USING gist (empleado_id WITH =, daterange(vigente_desde, COALESCE(vigente_hasta,'infinity'::date), '[]') WITH &&)` (requiere extensión `btree_gist`, que **no** está en el repo: riesgo de instalación en la imagen Supabase; alternativa: trigger o `SELECT ... FOR UPDATE` sobre el empleado). Historial = filas cerradas; no se borran.
+- `asistencia_marcas`: `id BIGSERIAL PK`, `origen VARCHAR(50) NOT NULL`, `id_externo VARCHAR(100) NOT NULL`, `codigo_empleado VARCHAR(50) NOT NULL`, `empleado_id INT NULL REFERENCES empleados(id)`, `marcada_en TIMESTAMPTZ NOT NULL`, `fecha_local DATE NOT NULL` (calculada en backend con America/Mexico_City), `tipo_marca VARCHAR(10) CHECK (IN ('entrada','salida','desconocido'))`, `metodo_verificacion VARCHAR(30)`, `terminal_sn VARCHAR(50)`, `payload JSONB` (crudo, opcional), `lote_id BIGINT REFERENCES asistencia_sync_lotes(id)`, `recibida_en TIMESTAMPTZ DEFAULT now()`, `anulada BOOLEAN DEFAULT false`, `anulada_por`, `motivo_anulacion`. `UNIQUE (origen, id_externo)`. Índices: `(empleado_id, fecha_local)`, `(fecha_local)`, `(recibida_en)` para reprocesos, `(codigo_empleado) WHERE empleado_id IS NULL`.
+  - **Corrección de marca:** RH no edita la marca; la anula (`anulada=true`) y puede registrar otra manual con `origen='manual-rh'` y `id_externo` propio. Conserva la original (decisión 9).
+- `asistencia_sync_estado`: `origen VARCHAR(50) PK`, `ultima_marca_recibida TIMESTAMPTZ`, `ultimo_lote_id`, `ultima_sincronizacion TIMESTAMPTZ`, `ultimo_error TEXT`. Una fila por origen.
+- `asistencia_sync_lotes`: `id BIGSERIAL PK`, `origen`, `lote_externo VARCHAR(100)`, `llave_id INT REFERENCES asistencia_llaves(id)`, `ip VARCHAR(45)`, `recibidas INT`, `insertadas INT`, `duplicadas INT`, `rechazadas INT`, `hash_cuerpo CHAR(64)`, `fecha_recepcion TIMESTAMPTZ DEFAULT now()`. `UNIQUE (origen, lote_externo)` para reenvíos idénticos.
+- `asistencia_diaria` (calculada, reconstruible): `empleado_id`, `fecha DATE`, `turno_id`, `primera_entrada TIMESTAMPTZ`, `ultima_salida TIMESTAMPTZ`, `minutos_retardo INT`, `minutos_salida_anticipada INT`, `estatus VARCHAR(30)` (`puntual`, `retardo`, `falta`, `salida_anticipada`, `incompleta`, `vacaciones`, `permiso`, `descanso`, `festivo`, `justificada`, `no_laborable_actividad`?), `referencia_tipo VARCHAR(20)` (`vacaciones`,`permiso`,`incidencia`,`calendario`), `referencia_id INT` (sin FK polimórfica; validar en app), `version_calculo SMALLINT`, `calculada_en TIMESTAMPTZ`, `PRIMARY KEY (empleado_id, fecha)`.
+  - Nota: `actividad` y `evento` no aparecen como estatus de falta; son laborables normales (decisión 8). Se puede tener "laborable normal" = `puntual`/`retardo`/`falta` sin estatus propio.
+- `asistencia_incidencias` (justificaciones RH): `id`, `empleado_id`, `fecha`, `tipo` (`justificar_falta`, `corregir_marca`, `excepcion_turno`...), `motivo TEXT NOT NULL`, `marca_id BIGINT NULL REFERENCES asistencia_marcas(id)` (la original se conserva), `creada_por INT REFERENCES usuarios(id)`, `fecha_creacion`, `anulada` + `anulada_por`. Auditoría obligatoria con `registrarAccion`.
+
+**Reglas de borde (propuesta con ejemplos):**
+1. **Turno nocturno que cruza medianoche:** turno 22:00–06:00 (`cruza_medianoche=true`). Una entrada el lunes a las 21:50 y salida el martes 06:05 → **pertenece al día lunes** (fecha de la entrada). La salida del martes no genera un día nuevo. Regla: el día del turno = fecha local de la marca de entrada; las salidas se buscan hasta `hora_salida + ventana` del día siguiente. Una marca de salida sin entrada previa en la ventana → `incompleta` del día anterior o `desconocido`.
+2. **Varias marcas por día:** primera entrada = mínima `marcada_en` de tipo entrada/desconocido dentro de la ventana; última salida = máxima de tipo salida. Marcas dobles a segundos (mismo `codigo`, `tipo`, diferencia < 60 s) → se cuentan como una (regla de deduplicación lógica, sin borrar la fila).
+3. **Marcas tardías (`recibida_en` > fecha del día):** al insertar, marcar `asistencia_diaria` de `fecha_local` (y el día siguiente si es nocturno) como `version_calculo` obsoleta. Recalcular por lotes (cola o barrido cada 15 min). Ver §1 opciones C/A.
+4. **Cambio de turno a mitad de periodo:** la asignación vigente en `fecha_local` decide el turno. No recalcular días anteriores al cambio con el turno nuevo.
+5. **Vacaciones aprobadas después:** al aprobar una solicitud, recalcular los días de su rango (`referencia_tipo='vacaciones'`). Las faltas ya guardadas se reemplazan por `vacaciones`. Auditar el recálculo.
+6. **Empleado dado de baja:** días > `fecha_baja` → no se generan faltas. Marcas posteriores → se guardan con aviso, sin incidencia.
+7. **Marca sin `numero_nomina` conocido:** se guarda con `empleado_id NULL`; no se cuenta. Alerta al RH por `codigo_empleado` sin match.
+8. **Día no hábil trabajado** (sábado/domingo o descanso del turno): `estatus` = `descanso` con horas trabajadas; no es falta, no es retardo (decisión 8).
+9. **DST:** México no tiene horario de verano desde 2022 (conocimiento general; decreto DOF de 2022 **no verificado en esta sesión**). Mitigación: guardar `TIMESTAMPTZ`, calcular día local con `America/Mexico_City` (tzdata de la imagen Node; verificar que la imagen del backend tenga ICU/tzdata completo). Probar con 2 zonas en tests.
+10. **Rendimiento:** volumen: N empleados × marcas diarias (~2–4 por empleado por día). Ejemplo: 300 empleados × 4 marcas × 365 = ~438 mil filas/año. Índices de §4(d). Recalcular solo `empleado × día` tocados, no el histórico completo. Lotes de inserción: `INSERT ... VALUES` multi-fila (≤500) en una transacción; pool `PG_POOL_MAX=10` (`config/database.js:27`).
+
+**Implicación:**
+- La ingesta por API **quita la necesidad de rol de BD y RLS de escritura**: la app sigue como único acceso a datos. Las tablas nuevas deben tener RLS en su propia migración (ver riesgo abajo).
+- **Riesgo de orden de RLS (confirmado en repo):** `docker-compose.supabase.yml` aplica `004-rls-deny-all.sql` **antes** de 009, 010 y 011; esta última sí crea/altera tablas (`calendario_laboral` está en init.sql:677 pero en una base ya existente, creada por 009 tras el paso 004, quedaría **sin RLS** si no la activa). `init.sql` no contiene `ENABLE ROW LEVEL SECURITY` (grep sin resultados fuera de 004). Las tablas de asistencia **deben** incluir `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` y `REVOKE ALL ... FROM anon, authenticated` en su migración, y añadirse al bloque db-init. Contradice la decisión 2026-10-08 (deny-all en todas las tablas): escalar como CONFLICTO (ver §5).
+
+---
+
+#### 5. PREGUNTAS ABIERTAS PARA EL HUMANO (con recomendación) y RIESGOS
+
+**Preguntas:**
+1. **Versión y tipo de BioTime (local o Cloud) y versión exacta.** Recomendación: pedirla; Odoo solo soporta Cloud y la interfaz depende de ello.
+2. **Muestra de una transacción real (anonimizada)** de `GET /iclock/api/transactions/`: confirmar `id`, `upload_time`, formato y zona de `punch_time`, valores de `punch_state` y `verify_type`. Recomendación: obligatoria antes de la Fase 3.
+3. **Pantalla/estructura de turnos** (Timetable / Shift / Schedule) de su BioTime: nombres, tolerancias, cruce de medianoche, días, descansos. Recomendación: pedir captura y, si es posible, listado de tablas `att_*` de su BD.
+4. **¿`numero_nomina` es único y está lleno para todos los empleados activos?** Recomendación: consulta de solo lectura (`SELECT count(*) FILTER (WHERE numero_nomina IS NULL), count(*) - count(DISTINCT numero_nomina) FROM empleados WHERE estatus='activo'`) en staging; si hay nulos/duplicados, decidir corrección antes de la ingesta.
+5. **Confirmar el contrato HTTP ajustado:** `X-Api-Key` (no `Authorization: Bearer`), límite de 500 marcas / 1 MB por lote, clave de idempotencia `(origen, id_externo)` vs. `(origen, codigo, marcada_en, terminal_sn)` si BioTime no da `id`. Recomendación: `X-Api-Key` + `(origen,id_externo)` si la muestra trae `id`; si no, la compuesta.
+6. **Ubicación de la API de ingesta (red):** ¿la interfaz corre en el mismo servidor/red que el backend, o desde otra red? Recomendación: allowlist de IP en nginx para `/api/asistencia/`, con `trust proxy` si se usa `req.ip`.
+7. **Turnos rotativos y nocturnos:** ¿la asignación es por empleado, por departamento o por calendario? Recomendación: asignación por empleado con vigencia (ya decidido) + plantilla por departamento solo como atajo de UI.
+8. **Eventos de corrección:** ¿la interfaz debe traer las anulaciones de BioTime (si existen) o solo altas? Recomendación: solo altas; anulaciones por RH en la intranet.
+9. **Retención de marcas crudas:** ¿cuántos años? Recomendación: conservar todo (volumen bajo, ~500 mil filas/año) y revisar tamaño tras 6 meses.
+10. **Confirmar `DST`/zona:** ya fijada en America/Mexico_City (decisión 12). Recomendación: solo verificar tzdata en la imagen del backend.
+
+**Riesgos (resumen):**
+- **R1 (alto):** `numero_nomina` sin UNIQUE ni NOT NULL (init.sql:496); duplicados harían ambiguo el match de marcas. Mitigación: validar en staging antes de la fase de ingesta; migración con dry-run como la 010.
+- **R2 (alto):** RLS no se activa en tablas creadas por migraciones posteriores a 004 en bases ya existentes (ver §4). Afecta a `calendario_laboral` hoy y a las tablas nuevas si no se cuidan. **Conflicto con la decisión 2026-10-08 (deny-all en todas las tablas).**
+- **R3 (alto):** `authenticateJWT` y `express.json` global: la ingesta por lotes puede recibir 413 antes de la lógica; y `Bearer` sería rechazado. Mitigación: montaje previo al parser global y cabecera `X-Api-Key`.
+- **R4 (medio):** sin `trust proxy` y con `x-forwarded-for` crudo en auditoría: la IP registrada puede ser falsa; la lista blanca no es fiable sin configurar proxy.
+- **R5 (medio):** sin `end_time`/`upload_time` confirmados, el cursor de sincronización puede perder marcas tardías; mitigación: solape de ventana y deduplicación por clave.
+- **R6 (medio):** el historial de jefe, departamento y estatus no existe; las vacaciones antiguas usan días naturales: el análisis histórico puede no ser exacto para periodos previos al 2026-10-15.
+- **R7 (medio):** `permisos_ausencia` sin CHECK de `tipo`/`estatus` y sin horas: los permisos parciales no se pueden representar.
+- **R8 (bajo):** `btree_gist` no está en la imagen (para EXCLUDE de traslape); usar alternativa o verificar.
+- **R9 (bajo):** no hay scheduler ni rate limit en el repo.
+- **R10 (riesgo de dato):** `solicitudes_vacaciones.departamento` y `ubicacion` son texto desnormalizado; usar `departamento_id` al cruzar.
+
+**Conflictos con decisiones previas:**
+- **CONFLICTO (para escalar al orquestador, no escrito en decisions.md por restricción de escritura):** la decisión de 2026-10-08 (deny-all en todas las tablas de `public`) no se cumple para tablas creadas por migraciones posteriores a 004 en bases existentes (ej. `calendario_laboral` por 009). Ver `docker-compose.supabase.yml:62-113` y `modules/portal/backend/migrations/004-rls-deny-all.sql:1-8`. Pedir al orquestador que añada `CONFLICTO:` en decisions.md y decida si la 004 se re-ejecuta al final del db-init.
+
+**No propongo fases nuevas.** Las fases ya definidas por el orquestador (2026-10-21) se mantienen.
+
+**Lo no verificado:** GoTrue real, BioTime real, zona horaria de la imagen Node, `btree_gist` en Supabase, versión exacta de la API de BioTime del cliente, RLS en una base real de staging (solo análisis de scripts).
+
+---
+
+**Anclas de referencia en el repo (para el orquestador):** `modules/portal/backend/app.js:23-25,36-50`; `modules/portal/backend/middleware/auth.middleware.js:91-150`; `modules/auditoria/backend/services/auditoria.service.js:4-9`; `modules/portal/backend/config/database.js:27-29`; `config/nginx/nginx.conf:32-36`; `docker-compose.supabase.yml:62-113`; `config/database/init.sql:242-275,363-377,618-658,677`; `modules/rh/backend/migrations/009-calendario-laboral.sql`, `010-empleados-usuario-unico.sql`, `011-calendario-actividad.sql`; `modules/rh/backend/middleware/acceso-empleado.middleware.js:62,117,153`; `modules/rh/backend/controllers/vacaciones.controller.js:86-98,543,637`; `modules/rh/backend/models/solicitudVacaciones.model.js:255-258`; `modules/rh/backend/models/permisoAusencia.model.js:5-13`; `modules/rh/config/rh.permisos.js`; `modules/portal/frontend/main.jsx:36-45,167-172`; `modules/portal/frontend/components/MenuDinamico.jsx:16-27`.
+
+**Fuentes web (no oficiales salvo indicación):**
+- https://packagist.org/packages/tanemrahman/zkteco-biotime (tercero)
+- https://www.odoo.com/documentation/master/applications/hr/attendances/biotime_integration.html (Odoo, integración de tercero)
+- https://discuss.frappe.io/t/latest-ztkeco-machines-series-v5l-has-integration-issues/114994 (foro)
+- https://www.rassecurity.com/eCommerce/Pdf/ZKT-BIOTIME8_E_DS.pdf (datasheet BioTime 8.0, distribuidor)
+- https://www.studocu.com/... "BioTime 8.5 API User Manual" (copia de terceros del manual; no oficial)
+
+**Sin fuente pública confirmada:** nombres de tablas `att_*` y `iclock_transaction`, códigos de `verify_type`, códigos de `punch_state` distintos de 0/1, `end_time`, `upload_time`, formato de `punch_time`, turnos nocturnos/rotativos en BioTime.
