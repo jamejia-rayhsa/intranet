@@ -13,6 +13,8 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-22] orquestador → decisions.md — Validación de la primera carga de marcas en staging: cifras cuadran, 63 de 63 empleados con nómina tienen marcas, 15 códigos sin vincular
+- [2026-10-22] orquestador → decisions.md — Publicación y despliegue a staging de la corrección del importador de empleados (PR #15)
 - [2026-10-22] [coder] → code-notes.md — Correcciones de la revisión del importador (resultado oculto en EmpleadoPage, años sueltos, sin_catalogo, fallo a mitad de lotes, auditoría IMPORTAR_EMPLEADOS, foco)
 - [2026-10-22] orquestador → decisions.md — OK del humano para desplegar a staging la corrección del importador
 - [2026-10-22] [revisor] → reviews.md#importador-de-empleados — Importador de empleados (aff5f03): NO APROBADO; CRÍTICO: EmpleadoPage desmonta el resultado (cargando=true); ALTO: años sueltos como serial (1905)
@@ -213,3 +215,5 @@
 - [2026-10-21] [coder] → code-notes.md — Correcciones de la Fase 2 de asistencia (turno inactivo, NUL a 400, DELETE departamento 409, lotes, incidencias, descanso, índices, contrato ficticio)
 - [2026-10-21] [tester] → tests.md — Asistencia Fase 3: prueba integrada (db-init REAL x2 en supabase/postgres 17.6 limpia/desde main/desde Fase 2, llaves por API 170/170, contrato v1 + lote de la interfaz + carga de 134 mil marcas exacta, nginx real con TRUST_PROXY 48/48, concurrencia/rotación/revocación/caída de BD, vinculación, jest x10 y eslint 0 errores); 2 FAIL menores (test intermitente por `split("_")[2]` 1/64; valores reales/IP 10.x versionados), sin bloqueados
 - [2026-10-21] [tester] → decisions.md — PARA RESOLVER F-AS3-1 (test intermitente), F-AS3-2 (valores del doc local e IP 10.x en versionados), F-AS3-3 (charset utf-16, rotar dos veces, 500 x 2 KB > 1 MB)
+- [2026-10-22] [tester] → tests.md — Importador de empleados (HEAD 4ea1b22): pantalla REAL de Empleados/Puestos/Departamentos con resultado abierto tras recargar (Chromium+Firefox, Postgres supabase 17.6 y backend real), fechas x 3 zonas, 1500 filas, fallo de red, doble clic, auditoría, permisos; jest 1902 x4 zonas, eslint 0 errores, build OK; 4 FAIL menores/medios (NUL en puesto, concurrencia sin UNIQUE, fecha-hora 23:58, UX de columnas/CSV), sin críticos
+- [2026-10-22] [tester] → decisions.md — PARA RESOLVER F-IMP-1 (NUL en puesto/departamento = 500), F-IMP-2 (concurrencia duplica por CURP/nómina), F-IMP-3 (fecha-hora 23:58-23:59 +1 día en MX), F-IMP-4 (columnas ignoradas/CSV sin BOM)
