@@ -56,9 +56,11 @@ const TurnoAsignacion = {
    * departamento/empleado: comprueba que existan, que el turno exista y esté activo y que no se
    * traslape con otra vigencia (409). La restricción EXCLUDE de la BD es la última barrera.
    */
-  async asignar(tipo, datos) {
+  // `clienteExterno`: si se pasa, la operación corre DENTRO de la transacción de quien llama (p. ej. la importación de
+  // departamentos, que termina la vigente y asigna la nueva en una sola transacción); si no, abre la suya.
+  async asignar(tipo, datos, clienteExterno = null) {
     const { tabla, columna, padre, nombrePadre } = TIPOS[tipo];
-    return Turno.enTransaccion(async (cliente) => {
+    const operacion = async (cliente) => {
       await cliente.query("SELECT pg_advisory_xact_lock($1::int, $2::int)", [
         ESPACIO_ASIGNACION[tipo],
         datos[columna],
@@ -94,16 +96,17 @@ const TurnoAsignacion = {
         [datos[columna], datos.turno_id, datos.vigente_desde, datos.vigente_hasta, datos.creado_por || null],
       );
       return TurnoAsignacion.obtenerPorId(tipo, insertado.rows[0].id, cliente);
-    });
+    };
+    return clienteExterno ? operacion(clienteExterno) : Turno.enTransaccion(operacion);
   },
 
   /**
    * Termina una asignación fijando vigente_hasta. Solo acorta (la abierta o una con fecha final
    * posterior): alargar podría traslapar. Devuelve {previo, actual} o null si no existe.
    */
-  async terminar(tipo, id, vigenteHasta) {
+  async terminar(tipo, id, vigenteHasta, clienteExterno = null) {
     const { tabla } = TIPOS[tipo];
-    return Turno.enTransaccion(async (cliente) => {
+    const operacion = async (cliente) => {
       const bloqueada = await cliente.query(`SELECT id FROM ${tabla} WHERE id = $1 FOR UPDATE`, [id]);
       if (!bloqueada.rows[0]) return null;
       const previo = await TurnoAsignacion.obtenerPorId(tipo, id, cliente);
@@ -119,7 +122,8 @@ const TurnoAsignacion = {
       await cliente.query(`UPDATE ${tabla} SET vigente_hasta = $2::date WHERE id = $1`, [id, vigenteHasta]);
       const actual = await TurnoAsignacion.obtenerPorId(tipo, id, cliente);
       return { previo, actual };
-    });
+    };
+    return clienteExterno ? operacion(clienteExterno) : Turno.enTransaccion(operacion);
   },
 
   // Datos mínimos para decidir el acceso (jefe vigente) y el departamento actual; null si no existe

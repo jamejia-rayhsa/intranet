@@ -113,9 +113,12 @@ export default function CrudPage({
           columnas={importadorConfig.columnas}
           filasEjemplo={importadorConfig.filasEjemplo}
           nombreArchivo={importadorConfig.nombreArchivo}
-          onImportar={(filas) => solicitar(importadorConfig.rutaImportar, {
+          permiteActualizar={importadorConfig.permiteActualizar}
+          textosModo={importadorConfig.textosModo}
+          accionesDescarga={importadorConfig.accionesDescarga}
+          onImportar={(filas, opciones) => solicitar(importadorConfig.rutaImportar, {
             method: 'POST',
-            body: JSON.stringify({ filas }),
+            body: JSON.stringify({ filas, modo: opciones && opciones.modo }),
           })}
           onExito={() => { cargar(); }}
           onCancelar={() => setMostrarImportador(false)}

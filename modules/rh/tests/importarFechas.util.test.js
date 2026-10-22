@@ -297,8 +297,10 @@ describe("lotes y resultados", () => {
     acc = U.sumarResultados(acc, { insertados: 10 });
     acc = U.sumarResultados(acc, undefined);
     expect(acc).toEqual({
-      insertados: 100, duplicados: 5, errores: [{ fila: 3, error: "a" }], duplicados_detalle: [{ fila: 4, motivo: "m" }],
-      sin_catalogo: { puestos: [], departamentos: [] },
+      insertados: 100, actualizados: 0, sin_cambios: 0, duplicados: 5, errores: [{ fila: 3, error: "a" }],
+      duplicados_detalle: [{ fila: 4, motivo: "m" }], actualizados_detalle: [], advertencias: [], advertencias_omitidas: 0,
+      jefes_pendientes: [], turnos_asignados: 0, turnos_cambiados: 0, turnos_sin_cambio: 0,
+      sin_catalogo: { puestos: [], departamentos: [], ubicaciones: [] },
     });
   });
 
@@ -309,6 +311,7 @@ describe("lotes y resultados", () => {
     expect(acc.sin_catalogo).toEqual({
       departamentos: [{ nombre: "Logística", filas: 5 }, { nombre: "Otro", filas: 1 }],
       puestos: [{ nombre: "Chofer", filas: 1 }],
+      ubicaciones: [],
     });
     const muchos = Array.from({ length: 150 }, (_, i) => ({ nombre: "P" + i, filas: 1 }));
     expect(U.sumarResultados(U.resultadoVacio(), { sin_catalogo: { puestos: muchos } }).sin_catalogo.puestos).toHaveLength(100);
@@ -317,10 +320,10 @@ describe("lotes y resultados", () => {
   it("los avisos de catálogo salen en la vista y en el CSV como 'Aviso'", () => {
     const sc = { departamentos: [{ nombre: "Logística", filas: 2 }], puestos: [{ nombre: "Chofer", filas: 1 }] };
     const av = U.avisosSinCatalogo(sc);
-    expect(av[0].motivo).toBe('El departamento "Logística" no existe en el catálogo: 2 empleados quedaron sin departamento');
-    expect(av[1].motivo).toBe('El puesto "Chofer" no existe en el catálogo: 1 empleado quedó sin puesto');
+    expect(av[0].motivo).toBe('El departamento "Logística" no existe en el catálogo: 2 filas no pudieron asignarlo');
+    expect(av[1].motivo).toBe('El puesto "Chofer" no existe en el catálogo: 1 fila no pudo asignarlo');
     const csv = U.construirCsvResultado([], [], sc).slice(1).trim().split("\r\n");
-    expect(csv[1]).toBe('"Aviso","","Logística","El departamento ""Logística"" no existe en el catálogo: 2 empleados quedaron sin departamento"');
+    expect(csv[1]).toBe('"Aviso","","Logística","","","El departamento ""Logística"" no existe en el catálogo: 2 filas no pudieron asignarlo"');
     expect(csv).toHaveLength(3);
   });
 
@@ -338,10 +341,10 @@ describe("lotes y resultados", () => {
     );
     expect(csv.charCodeAt(0)).toBe(0xfeff);
     const lineas = csv.slice(1).trim().split("\r\n");
-    expect(lineas[0]).toBe('"Tipo","Fila","Nombre","Motivo"');
-    expect(lineas[1]).toBe('"Error","3","\'=CMD(""x"")","Dice ""hola"", adiós"');
-    expect(lineas[2]).toBe('"Error","5","José Ñandú","Falta Nombre"');
-    expect(lineas[3]).toBe('"Duplicado","8","Ana","CURP ya existe"');
+    expect(lineas[0]).toBe('"Tipo","Fila","Nombre","Campo","Valor recibido","Motivo"');
+    expect(lineas[1]).toBe('"Error","3","\'=CMD(""x"")","","","Dice ""hola"", adiós"');
+    expect(lineas[2]).toBe('"Error","5","José Ñandú","","","Falta Nombre"');
+    expect(lineas[3]).toBe('"Duplicado","8","Ana","","","CURP ya existe"');
   });
 });
 
@@ -373,8 +376,8 @@ describe("flujo completo con un .xlsx real hasta el cuerpo enviado", () => {
     const { enviar, omitidas } = U.separarFilas(leer(buf), COLUMNAS);
     expect(enviar).toEqual([
       { _fila: 2, nombre: "Ana", apellido_paterno: "Prueba", nss: "12345678901", celular_personal: "5512345678", numero_nomina: "1001", fecha_nacimiento: "1990-01-01", fecha_ingreso: "2024-01-14" },
-      { _fila: 3, nombre: "Beto", apellido_paterno: "Ficticio", nss: "", celular_personal: "5598765432", numero_nomina: "", fecha_nacimiento: "1970-01-01", fecha_ingreso: "2024-01-14" },
-      { _fila: 4, nombre: "Carla", apellido_paterno: "Muestra", nss: "", celular_personal: "", numero_nomina: "", fecha_nacimiento: "1985-01-15", fecha_ingreso: "2024-02-01" },
+      { _fila: 3, nombre: "Beto", apellido_paterno: "Ficticio", celular_personal: "5598765432", fecha_nacimiento: "1970-01-01", fecha_ingreso: "2024-01-14" },
+      { _fila: 4, nombre: "Carla", apellido_paterno: "Muestra", fecha_nacimiento: "1985-01-15", fecha_ingreso: "2024-02-01" },
     ]);
     expect(omitidas).toEqual([{ fila: 5, nombre: "Dino Falso", error: "Fecha Nacimiento inválida: La fecha no existe en el calendario (31/02/1990)" }]);
     // El cuerpo que se enviaría al backend:

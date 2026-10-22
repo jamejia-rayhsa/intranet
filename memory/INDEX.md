@@ -13,6 +13,12 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-22] [coder] → code-notes.md — Plantilla de carga completa del expediente (40 columnas, modo actualizar, jefes en segunda pasada, advertencias por campo, CSV robusto, plantilla .xlsx) y carga de departamentos con turno y cupo (jest 2022, 36/38 mutantes, Postgres 16 y Chromium reales)
+- [2026-10-22] orquestador → decisions.md — Petición: plantilla de carga de departamentos con turno y cupo de vacaciones
+- [2026-10-22] orquestador → decisions.md — Carga de relleno 2026 de la interfaz validada contra la base de staging (39,906 marcas)
+- [2026-10-22] orquestador → decisions.md — Decisiones del humano: análisis desde 1-sep-2026 y histórico solo de 2026; criterios del motor
+- [2026-10-22] orquestador → decisions.md — Turno 'Rayhsa' asignado a los 15 departamentos de staging (ejecutado por el humano)
+- [2026-10-22] orquestador → decisions.md — Instrucciones: turno Rayhsa a todos los departamentos (bloqueado), plantilla de carga completa y Fase 4 después
 - [2026-10-22] [coder] → code-notes.md — Correcciones de la revisión del importador (resultado oculto en EmpleadoPage, años sueltos, sin_catalogo, fallo a mitad de lotes, auditoría IMPORTAR_EMPLEADOS, foco)
 - [2026-10-22] orquestador → decisions.md — OK del humano para desplegar a staging la corrección del importador
 - [2026-10-22] [revisor] → reviews.md#importador-de-empleados — Importador de empleados (aff5f03): NO APROBADO; CRÍTICO: EmpleadoPage desmonta el resultado (cargando=true); ALTO: años sueltos como serial (1905)

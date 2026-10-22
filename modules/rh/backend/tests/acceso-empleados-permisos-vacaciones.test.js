@@ -18,7 +18,7 @@ jest.mock("../models/solicitudVacaciones.model", () => ({ obtenerPorId: jest.fn(
 const ok = (req, res) => res.json({ exito: true, query: req.query, body: req.body });
 jest.mock("../controllers/empleado.controller", () => {
   const f = (req, res) => res.json({ exito: true });
-  return { listar: f, importar: f, obtenerPorUsuario: f, listarSubordinados: f, obtener: f, crear: f, actualizar: f, marcarBaja: f };
+  return { listar: f, importar: f, importarJefes: f, obtenerPorUsuario: f, listarSubordinados: f, obtener: f, crear: f, actualizar: f, marcarBaja: f };
 });
 jest.mock("../controllers/empleadoHijo.controller", () => {
   const f = (req, res) => res.json({ exito: true });

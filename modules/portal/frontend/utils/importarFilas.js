@@ -44,28 +44,52 @@ function textoCrudo(valor) {
   return String(valor);
 }
 
+// Encabezado -> clave de comparación: sin acentos, mayúsculas, espacios ni puntuación ("No. Nómina" -> "nonomina").
+export function normalizarEncabezado(texto) {
+  return String(texto === null || texto === undefined ? '' : texto)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
 // matriz: arreglo de filas (arreglos de celdas crudas, la primera es el encabezado) tal como las da
 // XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true, blankrows: true }).
 // filaEncabezado: número de fila del archivo del encabezado (1 por omisión). La primera fila de datos es la
-// siguiente (fila 2). Devuelve filas con { ...columnas, _fila, __errores:[mensajes] } y omite las filas en blanco.
-export function filasDesdeMatriz(matriz, columnas, filaEncabezado) {
+// siguiente (fila 2). Las columnas se reconocen por etiqueta, clave o alias ({ alias: [...] }) sin importar acentos,
+// mayúsculas, espacios ni puntuación.
+// Devuelve { filas, encabezados: { reconocidas:[{indice, clave, etiqueta, encabezado}], ignoradas:[texto],
+// faltantes:[etiqueta de columnas requeridas ausentes] } }; las filas llevan { ...columnas, _fila, __errores:[mensajes] } y se
+// omiten las filas en blanco.
+export function leerMatriz(matriz, columnas, filaEncabezado) {
   const base = filaEncabezado || 1;
-  if (!matriz || matriz.length < 2) return [];
-
   const mapaClaves = {};
-  columnas.forEach(function (c) {
-    mapaClaves[String(c.etiqueta).toLowerCase()] = c;
-    mapaClaves[String(c.clave).toLowerCase()] = c;
-  });
+  const registrar = function (nombre, c) {
+    const k = normalizarEncabezado(nombre);
+    if (k && !mapaClaves[k]) mapaClaves[k] = c;
+  };
+  columnas.forEach(function (c) { registrar(c.etiqueta, c); registrar(c.clave, c); });
+  columnas.forEach(function (c) { (c.alias || []).forEach(function (a) { registrar(a, c); }); });
 
-  const encabezado = matriz[0].map(function (h) { return textoCrudo(h).toLowerCase(); });
+  const encabezados = { reconocidas: [], ignoradas: [], faltantes: [] };
+  const encabezado = ((matriz && matriz[0]) || []).map(function (h) { return textoCrudo(h); });
+  const usadas = {};
   const indices = []; // [{ indice, columna }]
   encabezado.forEach(function (h, i) {
-    const col = mapaClaves[h];
-    if (col) indices.push({ indice: i, columna: col });
+    if (!h) return;
+    const col = mapaClaves[normalizarEncabezado(h)];
+    if (col && !usadas[col.clave]) {
+      usadas[col.clave] = true;
+      indices.push({ indice: i, columna: col });
+      encabezados.reconocidas.push({ indice: i, clave: col.clave, etiqueta: col.etiqueta, encabezado: h });
+    } else {
+      encabezados.ignoradas.push(col ? h + ' (repetida)' : h);
+    }
   });
+  columnas.forEach(function (c) { if (c.requerido && !usadas[c.clave]) encabezados.faltantes.push(c.etiqueta); });
 
   const resultado = [];
+  if (!matriz || matriz.length < 2) return { filas: resultado, encabezados: encabezados };
   for (let r = 1; r < matriz.length; r++) {
     const celdas = matriz[r] || [];
     const vacia = celdas.every(function (v) { return v === null || v === undefined || String(v).trim() === ''; });
@@ -92,7 +116,26 @@ export function filasDesdeMatriz(matriz, columnas, filaEncabezado) {
     fila.__errores = problemas;
     resultado.push(fila);
   }
-  return resultado;
+  return { filas: resultado, encabezados: encabezados };
+}
+
+export function filasDesdeMatriz(matriz, columnas, filaEncabezado) {
+  return leerMatriz(matriz, columnas, filaEncabezado).filas;
+}
+
+// Bytes de un CSV -> texto. UTF-8 (con o sin BOM) si es válido; si no, Windows-1252 (acentos de Excel en español).
+export function decodificarTextoCsv(bytes) {
+  const datos = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let texto;
+  let codificacion = 'utf-8';
+  try {
+    texto = new TextDecoder('utf-8', { fatal: true }).decode(datos);
+  } catch (e) {
+    texto = new TextDecoder('windows-1252').decode(datos);
+    codificacion = 'windows-1252';
+  }
+  if (texto.charCodeAt(0) === 0xFEFF) texto = texto.slice(1);
+  return { texto: texto, codificacion: codificacion };
 }
 
 // Añade a __errores los campos requeridos vacíos (sin duplicar) y devuelve filas nuevas.
@@ -123,26 +166,56 @@ export function separarFilas(filas, columnas) {
       omitidas.push({ fila: f._fila, nombre: nombreDeFila(f), error: f.__errores.join('; ') });
     } else {
       const limpia = {};
-      Object.keys(f).forEach(function (k) { if (k.indexOf('__') !== 0) limpia[k] = f[k]; });
+      // Las celdas vacías no se envían (una fila de 40+ columnas con claves vacías pesa el doble y el lote de 100 filas
+      // llegaría a rozar el límite de 100 kb del cuerpo); el backend trata la clave ausente como vacía.
+      Object.keys(f).forEach(function (k) { if (k.indexOf('__') !== 0 && (k === '_fila' || f[k] !== '')) limpia[k] = f[k]; });
       enviar.push(limpia);
     }
   });
   return { enviar: enviar, omitidas: omitidas };
 }
 
-export function dividirEnLotes(filas, tamano) {
+// Tope de bytes del JSON de un lote (el parser global del backend admite 100 kb por petición).
+export const MAX_BYTES_LOTE = 80000;
+
+function bytesDe(fila) {
+  const texto = JSON.stringify(fila);
+  return typeof TextEncoder === 'function' ? new TextEncoder().encode(texto).length : texto.length * 3;
+}
+
+// Lotes de hasta `tamano` filas (100 por omisión) y de no más de `maxBytes` de JSON cada uno: un archivo completo
+// con 40+ columnas largas se parte en más lotes en vez de recibir un 413.
+export function dividirEnLotes(filas, tamano, maxBytes) {
   const n = tamano || TAMANO_LOTE;
+  const tope = maxBytes || MAX_BYTES_LOTE;
   const lotes = [];
-  for (let i = 0; i < filas.length; i += n) lotes.push(filas.slice(i, i + n));
+  let actual = [];
+  let bytes = 0;
+  filas.forEach(function (f) {
+    const b = bytesDe(f) + 1;
+    if (actual.length && (actual.length >= n || bytes + b > tope)) {
+      lotes.push(actual);
+      actual = [];
+      bytes = 0;
+    }
+    actual.push(f);
+    bytes += b;
+  });
+  if (actual.length) lotes.push(actual);
   return lotes;
 }
 
 export const MAX_SIN_CATALOGO = 100;
+export const MAX_ADVERTENCIAS = 2000;
+export const MAX_DETALLE = 500;
+export const MAX_PARES_JEFES = 500;
 
 export function resultadoVacio() {
   return {
-    insertados: 0, duplicados: 0, errores: [], duplicados_detalle: [],
-    sin_catalogo: { puestos: [], departamentos: [] },
+    insertados: 0, actualizados: 0, sin_cambios: 0, duplicados: 0, errores: [], duplicados_detalle: [],
+    actualizados_detalle: [], advertencias: [], advertencias_omitidas: 0, jefes_pendientes: [],
+    turnos_asignados: 0, turnos_cambiados: 0, turnos_sin_cambio: 0,
+    sin_catalogo: { puestos: [], departamentos: [], ubicaciones: [] },
   };
 }
 
@@ -163,32 +236,67 @@ function sumarSinCatalogo(a, b) {
   return orden.map(function (k) { return mapa[k]; });
 }
 
+function lista(x) { return Array.isArray(x) ? x : []; }
+
 // Suma el resultado de un lote al acumulado (devuelve uno nuevo).
 export function sumarResultados(acumulado, parcial) {
   const p = parcial || {};
   const sc = p.sin_catalogo || {};
-  const prev = acumulado.sin_catalogo || { puestos: [], departamentos: [] };
+  const prev = acumulado.sin_catalogo || { puestos: [], departamentos: [], ubicaciones: [] };
+  const todasAdv = (acumulado.advertencias || []).concat(lista(p.advertencias));
+  const sobran = Math.max(0, todasAdv.length - MAX_ADVERTENCIAS);
   return {
     insertados: acumulado.insertados + (Number(p.insertados) || 0),
+    actualizados: (acumulado.actualizados || 0) + (Number(p.actualizados) || 0),
+    sin_cambios: (acumulado.sin_cambios || 0) + (Number(p.sin_cambios) || 0),
     duplicados: acumulado.duplicados + (Number(p.duplicados) || 0),
-    errores: acumulado.errores.concat(Array.isArray(p.errores) ? p.errores : []),
-    duplicados_detalle: acumulado.duplicados_detalle.concat(Array.isArray(p.duplicados_detalle) ? p.duplicados_detalle : []),
+    turnos_asignados: (acumulado.turnos_asignados || 0) + (Number(p.turnos_asignados) || 0),
+    turnos_cambiados: (acumulado.turnos_cambiados || 0) + (Number(p.turnos_cambiados) || 0),
+    turnos_sin_cambio: (acumulado.turnos_sin_cambio || 0) + (Number(p.turnos_sin_cambio) || 0),
+    errores: acumulado.errores.concat(lista(p.errores)),
+    duplicados_detalle: acumulado.duplicados_detalle.concat(lista(p.duplicados_detalle)),
+    actualizados_detalle: (acumulado.actualizados_detalle || []).concat(lista(p.actualizados_detalle)).slice(0, MAX_DETALLE),
+    advertencias: todasAdv.slice(0, MAX_ADVERTENCIAS),
+    advertencias_omitidas: (acumulado.advertencias_omitidas || 0) + (Number(p.advertencias_omitidas) || 0) + sobran,
+    jefes_pendientes: (acumulado.jefes_pendientes || []).concat(lista(p.jefes_pendientes)),
     sin_catalogo: {
       puestos: sumarSinCatalogo(prev.puestos, sc.puestos),
       departamentos: sumarSinCatalogo(prev.departamentos, sc.departamentos),
+      ubicaciones: sumarSinCatalogo(prev.ubicaciones, sc.ubicaciones),
     },
   };
 }
 
-// Avisos de catálogo como filas { tipo, nombre, motivo } (para la vista y el CSV).
+// Suma el resultado de la segunda pasada de jefes: jefes = { asignados, sin_cambios, pendientes, no_encontrados, ciclos, conflictos }.
+export function sumarJefes(jefes, parcial) {
+  const p = parcial || {};
+  const j = jefes || {};
+  return {
+    asignados: (j.asignados || 0) + (Number(p.asignados) || 0),
+    sin_cambios: (j.sin_cambios || 0) + (Number(p.sin_cambios) || 0),
+    pendientes: j.pendientes || 0,
+    no_encontrados: (j.no_encontrados || 0) + (Number(p.no_encontrados) || 0),
+    ciclos: (j.ciclos || 0) + (Number(p.ciclos) || 0),
+    conflictos: (j.conflictos || 0) + (Number(p.conflictos) || 0),
+  };
+}
+
+// Avisos de catálogo como filas { nombre, filas, motivo } (para la vista y el CSV).
 export function avisosSinCatalogo(sinCatalogo) {
   const sc = sinCatalogo || {};
   const avisos = [];
-  (sc.departamentos || []).forEach(function (d) {
-    avisos.push({ nombre: d.nombre, filas: d.filas, motivo: 'El departamento "' + d.nombre + '" no existe en el catálogo: ' + d.filas + (d.filas === 1 ? ' empleado quedó sin departamento' : ' empleados quedaron sin departamento') });
-  });
-  (sc.puestos || []).forEach(function (d) {
-    avisos.push({ nombre: d.nombre, filas: d.filas, motivo: 'El puesto "' + d.nombre + '" no existe en el catálogo: ' + d.filas + (d.filas === 1 ? ' empleado quedó sin puesto' : ' empleados quedaron sin puesto') });
+  const tipos = [
+    ['departamentos', 'departamento', 'El departamento'],
+    ['puestos', 'puesto', 'El puesto'],
+    ['ubicaciones', 'ubicacion', 'La ubicación'],
+  ];
+  tipos.forEach(function (t) {
+    (sc[t[0]] || []).forEach(function (d) {
+      avisos.push({
+        nombre: d.nombre, filas: d.filas,
+        motivo: t[2] + ' "' + d.nombre + '" no existe en el catálogo: ' + d.filas + (d.filas === 1 ? ' fila no pudo asignarlo' : ' filas no pudieron asignarlo'),
+      });
+    });
   });
   return avisos;
 }
@@ -213,17 +321,23 @@ function celdaCsv(valor) {
   return '"' + s.replace(/"/g, '""') + '"';
 }
 
-// CSV (con BOM UTF-8) de omitidas + errores + duplicados + avisos de catálogo: Tipo, Fila, Nombre, Motivo.
-export function construirCsvResultado(errores, duplicadosDetalle, sinCatalogo) {
-  const lineas = [['Tipo', 'Fila', 'Nombre', 'Motivo'].map(celdaCsv).join(',')];
-  (errores || []).forEach(function (e) {
-    lineas.push([celdaCsv('Error'), celdaCsv(numeroFilaDeError(e)), celdaCsv(nombreDeError(e)), celdaCsv(e.error)].join(','));
+// CSV (con BOM UTF-8) de omitidas + errores + duplicados + advertencias + actualizados + avisos de catálogo:
+// Tipo, Fila, Nombre, Campo, Valor recibido, Motivo. extras: { advertencias, actualizados_detalle, etiquetas: { clave: etiqueta } }.
+export function construirCsvResultado(errores, duplicadosDetalle, sinCatalogo, extras) {
+  const ex = extras || {};
+  const etiquetas = ex.etiquetas || {};
+  const lineas = [['Tipo', 'Fila', 'Nombre', 'Campo', 'Valor recibido', 'Motivo'].map(celdaCsv).join(',')];
+  const linea = function (tipo, fila, nombre, campo, valor, motivo) {
+    lineas.push([tipo, fila, nombre, campo, valor, motivo].map(celdaCsv).join(','));
+  };
+  (errores || []).forEach(function (e) { linea('Error', numeroFilaDeError(e), nombreDeError(e), '', '', e.error); });
+  (duplicadosDetalle || []).forEach(function (d) { linea('Duplicado', numeroFilaDeError(d), nombreDeError(d), '', '', d.motivo); });
+  (ex.advertencias || []).forEach(function (a) {
+    linea('Advertencia', numeroFilaDeError(a), nombreDeError(a), etiquetas[a.campo] || a.campo || '', a.valor_recibido === null || a.valor_recibido === undefined ? '' : a.valor_recibido, a.motivo);
   });
-  (duplicadosDetalle || []).forEach(function (d) {
-    lineas.push([celdaCsv('Duplicado'), celdaCsv(numeroFilaDeError(d)), celdaCsv(nombreDeError(d)), celdaCsv(d.motivo)].join(','));
+  (ex.actualizados_detalle || []).forEach(function (a) {
+    linea('Actualizado', numeroFilaDeError(a), nombreDeError(a), '', '', a.campos + (a.campos === 1 ? ' campo modificado' : ' campos modificados'));
   });
-  avisosSinCatalogo(sinCatalogo).forEach(function (a) {
-    lineas.push([celdaCsv('Aviso'), celdaCsv(''), celdaCsv(a.nombre), celdaCsv(a.motivo)].join(','));
-  });
-  return '﻿' + lineas.join('\r\n') + '\r\n';
+  avisosSinCatalogo(sinCatalogo).forEach(function (a) { linea('Aviso', '', a.nombre, '', '', a.motivo); });
+  return '\uFEFF' + lineas.join('\r\n') + '\r\n';
 }

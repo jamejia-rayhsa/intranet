@@ -9,9 +9,10 @@ jest.mock("../../../portal/backend/middleware/auth.middleware", () => ({
 }));
 jest.mock("../../../portal/backend/middleware/permisos.middleware", () => ({
   verificarPermiso: () => (_req, _res, next) => next(),
+  tienePermiso: jest.fn().mockResolvedValue(true),
 }));
 jest.mock("../../../portal/backend/config/database", () => ({
-  grupo: { query: jest.fn() },
+  grupo: { query: jest.fn(), connect: jest.fn() },
 }));
 
 const { grupo } = require("../../../portal/backend/config/database");
@@ -88,14 +89,22 @@ describe("Departamentos - errores genéricos (sin error.message)", () => {
   });
 
   it("importar: el error por fila tampoco filtra el mensaje de Postgres", async () => {
-    grupo.query
-      .mockResolvedValueOnce({ rows: [] })
-      .mockRejectedValueOnce(new Error(SECRETO));
+    // BD que falla en el INSERT del departamento: el lote sigue (SAVEPOINT) y la fila sale con error genérico
+    const cliente = {
+      release: jest.fn(),
+      query: jest.fn(async (sql) => {
+        if (/^INSERT INTO departamentos/.test(sql)) throw new Error(SECRETO);
+        return { rows: [] };
+      }),
+    };
+    grupo.connect.mockResolvedValue(cliente);
+    grupo.query.mockResolvedValue({ rows: [{ hoy: "2026-10-22" }] });
     const res = await request(app).post("/api/departamentos/importar").send({ filas: [{ nombre: "X" }] });
     expect(res.status).toBe(200);
-    expect(res.body.datos.errores).toHaveLength(1);
+    expect(res.body.datos.errores).toEqual([{ fila: null, nombre: "X", error: "No se pudo guardar la fila" }]);
     expect(JSON.stringify(res.body)).not.toContain("duplicate key");
-  });
+    expect(cliente.query).toHaveBeenCalledWith("COMMIT");
+});
 });
 
 describe("Departamentos - eliminar con restricciones", () => {

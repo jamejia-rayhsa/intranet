@@ -1,4 +1,7 @@
-const { validarCuerpoImportacion, nombresUnicos } = require("../utils/importarEmpleados");
+const { validarCuerpoImportacion, normalizarClave } = require("../utils/importarEmpleados");
+const { auditarImportacion } = require("../utils/auditoriaImportacion");
+const { tienePermiso } = require("../../../portal/backend/middleware/permisos.middleware");
+const Turno = require("../models/turno.model");
 const Departamento = require("../models/departamento.model");
 const { grupo } = require("../config/database");
 
@@ -102,21 +105,46 @@ const ControladorDepartamento = {
 
   async importar(req, res) {
     try {
-      const { filas } = req.body;
+      const { filas, modo } = req.body || {};
       const problema = validarCuerpoImportacion(filas);
       if (problema) return res.status(400).json({ exito: false, mensaje: problema });
-
-      const nombresArea = nombresUnicos(filas, 'area');
-      const mapaAreas = {};
-      if (nombresArea.length > 0) {
-        const res2 = await grupo.query(
-          "SELECT id, LOWER(nombre) AS nombre FROM areas WHERE LOWER(nombre) = ANY($1)",
-          [nombresArea]
-        );
-        res2.rows.forEach(r => { mapaAreas[r.nombre] = r.id; });
+      if (modo !== undefined && modo !== "omitir" && modo !== "actualizar") {
+        return res.status(400).json({ exito: false, mensaje: "Modo de importación no válido (usa 'omitir' o 'actualizar')" });
       }
 
-      const resultado = await Departamento.importarLote(filas, mapaAreas);
+      // Catálogos completos (tablas pequeñas): la comparación sin acentos ni mayúsculas se hace en JS.
+      const [resAreas, resTurnos, puedeTurnos, hoy] = await Promise.all([
+        grupo.query("SELECT id, nombre FROM areas ORDER BY id"),
+        grupo.query("SELECT id, nombre, activo FROM turnos ORDER BY id"),
+        tienePermiso(req.user, "rh", "Turnos", "edicion"),
+        Turno.hoyMexico(),
+      ]);
+      const mapaAreas = {};
+      resAreas.rows.forEach((r) => { const k = normalizarClave(r.nombre); if (k && mapaAreas[k] === undefined) mapaAreas[k] = r.id; });
+      const mapaTurnos = {};
+      resTurnos.rows.forEach((r) => { const k = normalizarClave(r.nombre); if (k && mapaTurnos[k] === undefined) mapaTurnos[k] = r; });
+
+      const resultado = await Departamento.importarLote(
+        filas,
+        { mapaAreas, mapaTurnos, puedeTurnos: !!puedeTurnos, hoy, usuarioId: req.user && req.user.usuario_id },
+        { modo: modo || "omitir" }
+      );
+
+      // La acción de auditoría admite 20 caracteres: IMPORTAR_DEPARTAMENTOS (22) no cabe
+      await auditarImportacion(req, "departamentos", "IMPORTAR_DEPTOS", {
+        filas_recibidas: filas.length,
+        modo: modo || "omitir",
+        creados: resultado.creados,
+        actualizados: resultado.actualizados,
+        sin_cambios: resultado.sin_cambios,
+        duplicados: resultado.duplicados,
+        turnos_asignados: resultado.turnos_asignados,
+        turnos_cambiados: resultado.turnos_cambiados,
+        turnos_sin_cambio: resultado.turnos_sin_cambio,
+        errores: resultado.errores.length,
+        advertencias: resultado.advertencias.length + resultado.advertencias_omitidas,
+      });
+
       res.json({ exito: true, datos: resultado });
     } catch (error) {
       console.error("[departamentos]", error);
