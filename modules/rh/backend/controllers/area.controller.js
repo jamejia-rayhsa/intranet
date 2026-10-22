@@ -1,3 +1,4 @@
+const { validarCuerpoImportacion } = require("../utils/importarEmpleados");
 const Area = require("../models/area.model");
 
 const ControladorArea = {
@@ -41,12 +42,13 @@ const ControladorArea = {
   async importar(req, res) {
     try {
       const { filas } = req.body;
-      if (!Array.isArray(filas) || filas.length === 0)
-        return res.status(400).json({ exito: false, mensaje: "No se recibieron filas para importar" });
+      const problema = validarCuerpoImportacion(filas);
+      if (problema) return res.status(400).json({ exito: false, mensaje: problema });
       const resultado = await Area.importarLote(filas);
       res.json({ exito: true, datos: resultado });
     } catch (e) {
-      res.status(500).json({ exito: false, mensaje: "Error al importar áreas", error: e.message });
+      console.error("[areas] importar", e);
+      res.status(500).json({ exito: false, mensaje: "Error al importar áreas" });
     }
   },
 };

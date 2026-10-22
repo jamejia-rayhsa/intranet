@@ -1,4 +1,7 @@
 const { grupo } = require("../config/database");
+const {
+  MAX_DUPLICADOS_DETALLE, numeroFila, nombreCompleto, prepararFilaEmpleado,
+} = require("../utils/importarEmpleados");
 
 const CAMPOS_PERMITIDOS = [
   "nombre",
@@ -275,37 +278,53 @@ const Empleado = {
     return resultado.rows;
   },
 
-  async importarLote(filas, mapaPuestos, mapaDepartamentos) {
-    // Clave duplicado: curp o numero_nomina (los que estén presentes)
+  // Importación por lotes. Cada fila se valida (fechas AAAA-MM-DD reales y longitudes) ANTES del INSERT.
+  // Respuesta: { insertados, duplicados, duplicados_detalle:[{fila,nombre,motivo}] (máx. 200), errores:[{fila,nombre,error}] }.
+  // `fila` es el número de fila del archivo (_fila). Nunca se devuelve texto de PostgreSQL.
+  async importarLote(filas, mapaPuestos = {}, mapaDepartamentos = {}) {
     const curpsExistentes = new Set(
       (await grupo.query("SELECT LOWER(curp) AS curp FROM empleados WHERE curp IS NOT NULL AND curp != ''")).rows.map(r => r.curp)
     );
     const nominasExistentes = new Set(
       (await grupo.query("SELECT LOWER(numero_nomina) AS n FROM empleados WHERE numero_nomina IS NOT NULL AND numero_nomina != ''")).rows.map(r => r.n)
     );
+    // Claves insertadas por ESTE lote: distinguen "repetida en el archivo" de "ya existe".
+    const curpsArchivo = new Set();
+    const nominasArchivo = new Set();
 
     let insertados = 0;
     let duplicados = 0;
+    const duplicadosDetalle = [];
     const errores = [];
 
-    for (const fila of filas) {
-      if (!fila.nombre || !fila.apellido_paterno) {
-        errores.push({ fila, error: 'Nombre y apellido paterno son requeridos' });
+    const registrarDuplicado = (cruda, fila, motivo) => {
+      duplicados++;
+      if (duplicadosDetalle.length < MAX_DUPLICADOS_DETALLE) {
+        duplicadosDetalle.push({ fila: numeroFila(cruda), nombre: nombreCompleto(fila || cruda), motivo });
+      }
+    };
+
+    for (const cruda of filas) {
+      const { fila, error } = prepararFilaEmpleado(cruda);
+      if (error) {
+        errores.push({ fila: numeroFila(cruda), nombre: nombreCompleto(cruda), error });
         continue;
       }
 
       const curpLower = fila.curp ? fila.curp.toLowerCase() : null;
       const nominaLower = fila.numero_nomina ? fila.numero_nomina.toLowerCase() : null;
 
-      if ((curpLower && curpsExistentes.has(curpLower)) || (nominaLower && nominasExistentes.has(nominaLower))) {
-        duplicados++;
+      if (curpLower && curpsExistentes.has(curpLower)) {
+        registrarDuplicado(cruda, fila, curpsArchivo.has(curpLower) ? 'repetida en el archivo' : 'CURP ya existe');
+        continue;
+      }
+      if (nominaLower && nominasExistentes.has(nominaLower)) {
+        registrarDuplicado(cruda, fila, nominasArchivo.has(nominaLower) ? 'repetida en el archivo' : 'Número de nómina ya existe');
         continue;
       }
 
       const puestoId = fila.puesto ? (mapaPuestos[fila.puesto.toLowerCase()] || null) : null;
       const deptId = fila.departamento ? (mapaDepartamentos[fila.departamento.toLowerCase()] || null) : null;
-
-      const fecha = (f) => (f && f.trim() !== '' ? f : null);
 
       try {
         await grupo.query(`
@@ -321,20 +340,21 @@ const Empleado = {
             fila.nombre, fila.apellido_paterno, fila.apellido_materno || null,
             fila.curp || null, fila.rfc || null, fila.nss || null, fila.numero_nomina || null,
             fila.genero || null, fila.estado_civil || null, fila.escolaridad || null, fila.tipo_contrato || null,
-            fecha(fila.fecha_nacimiento), fecha(fila.fecha_ingreso),
+            fila.fecha_nacimiento || null, fila.fecha_ingreso || null,
             fila.correo_personal || null, fila.celular_personal || null,
             puestoId, deptId,
           ]
         );
         insertados++;
-        if (curpLower) curpsExistentes.add(curpLower);
-        if (nominaLower) nominasExistentes.add(nominaLower);
+        if (curpLower) { curpsExistentes.add(curpLower); curpsArchivo.add(curpLower); }
+        if (nominaLower) { nominasExistentes.add(nominaLower); nominasArchivo.add(nominaLower); }
       } catch (e) {
-        errores.push({ fila, error: e.message });
+        console.error('[empleados] importar fila', numeroFila(cruda), e);
+        errores.push({ fila: numeroFila(cruda), nombre: nombreCompleto(fila), error: 'No se pudo insertar la fila' });
       }
     }
 
-    return { insertados, duplicados, errores };
+    return { insertados, duplicados, duplicados_detalle: duplicadosDetalle, errores };
   },
 };
 

@@ -312,8 +312,8 @@ export default function EmpleadoPage() {
             { clave: 'estado_civil',    etiqueta: 'Estado Civil',    requerido: false },
             { clave: 'escolaridad',     etiqueta: 'Escolaridad',     requerido: false },
             { clave: 'tipo_contrato',   etiqueta: 'Tipo Contrato',   requerido: false },
-            { clave: 'fecha_nacimiento', etiqueta: 'Fecha Nacimiento', requerido: false },
-            { clave: 'fecha_ingreso',   etiqueta: 'Fecha Ingreso',   requerido: false },
+            { clave: 'fecha_nacimiento', etiqueta: 'Fecha Nacimiento', requerido: false, tipo: 'fecha' },
+            { clave: 'fecha_ingreso',   etiqueta: 'Fecha Ingreso',   requerido: false, tipo: 'fecha' },
             { clave: 'puesto',          etiqueta: 'Puesto',          requerido: false },
             { clave: 'departamento',    etiqueta: 'Departamento',    requerido: false },
             { clave: 'correo_personal', etiqueta: 'Correo Personal', requerido: false },
@@ -328,7 +328,7 @@ export default function EmpleadoPage() {
             method: 'POST',
             body: JSON.stringify({ filas }),
           })}
-          onExito={() => { cargarEmpleados(); setMostrarImportador(false); }}
+          onExito={() => { cargarEmpleados(); }}
           onCancelar={() => setMostrarImportador(false)}
         />
       )}

@@ -1,5 +1,9 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
+import {
+  filasDesdeMatriz, separarFilas, dividirEnLotes, resultadoVacio, sumarResultados,
+  construirCsvResultado, numeroFilaDeError, nombreDeError, TAMANO_LOTE,
+} from '../utils/importarFilas';
 
 const estilos = {
   overlay: {
@@ -9,7 +13,7 @@ const estilos = {
   },
   modal: {
     background: 'var(--color-superficie)', borderRadius: '10px',
-    width: '100%', maxWidth: '760px', maxHeight: '90vh',
+    width: '100%', maxWidth: '760px', maxHeight: '90vh', minWidth: 0,
     display: 'flex', flexDirection: 'column',
     boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
   },
@@ -22,10 +26,13 @@ const estilos = {
     background: 'none', border: 'none', fontSize: '1.4rem',
     cursor: 'pointer', color: 'var(--color-texto-claro)', lineHeight: 1, padding: '0.25rem',
   },
-  cuerpo: { padding: '1.5rem', overflowY: 'auto', flex: 1 },
+  cuerpo: { padding: '1.5rem', overflowY: 'auto', flex: 1, minWidth: 0 },
+  listaScroll: {
+    maxHeight: '40vh', overflow: 'auto', borderRadius: '6px', border: '1px solid var(--color-borde)',
+  },
   pie: {
     padding: '1rem 1.5rem', borderTop: '1px solid var(--color-borde)',
-    display: 'flex', gap: '0.75rem', justifyContent: 'flex-end',
+    display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', flexWrap: 'wrap',
   },
   botonPrimario: {
     padding: '0.55rem 1.25rem', background: 'var(--color-primario)', color: '#fff',
@@ -50,20 +57,22 @@ const estilos = {
     textAlign: 'left', whiteSpace: 'nowrap',
   },
   celda: { padding: '0.5rem 0.75rem', borderBottom: '1px solid var(--color-borde)', fontSize: '0.875rem' },
-  celdaVacia: { padding: '0.5rem 0.75rem', borderBottom: '1px solid var(--color-borde)', fontSize: '0.875rem', color: '#c0392b', fontStyle: 'italic' },
+  celdaVacia: { padding: '0.5rem 0.75rem', borderBottom: '1px solid var(--color-borde)', fontSize: '0.875rem', color: 'var(--color-error)', fontStyle: 'italic' },
   chip: (tipo) => ({
     display: 'inline-block', padding: '0.15rem 0.55rem', borderRadius: '12px',
     fontSize: '0.75rem', fontWeight: 600,
-    background: tipo === 'ok' ? '#d1f2eb' : tipo === 'warn' ? '#fff3cd' : '#fde8e8',
-    color: tipo === 'ok' ? '#1a7a5e' : tipo === 'warn' ? '#856404' : '#c0392b',
+    background: tipo === 'ok' ? 'var(--color-exito-suave)' : tipo === 'warn' ? 'var(--color-advertencia-suave)' : 'var(--color-error-suave)',
+    color: 'var(--color-texto)',
+    border: `1px solid ${tipo === 'ok' ? 'var(--color-exito)' : tipo === 'warn' ? 'var(--color-advertencia)' : 'var(--color-error)'}`,
+    overflowWrap: 'anywhere',
   }),
   resumen: {
     display: 'flex', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap',
   },
   tarjetaResumen: (tipo) => ({
-    flex: 1, minWidth: '120px', padding: '1rem', borderRadius: '8px', textAlign: 'center',
-    background: tipo === 'ok' ? '#d1f2eb' : tipo === 'warn' ? '#fff3cd' : tipo === 'err' ? '#fde8e8' : 'var(--color-fondo)',
-    border: `1px solid ${tipo === 'ok' ? '#a8e6cf' : tipo === 'warn' ? '#ffc107' : tipo === 'err' ? '#f5c6c6' : 'var(--color-borde)'}`,
+    flex: '1 1 100px', minWidth: 0, padding: '1rem', borderRadius: '8px', textAlign: 'center',
+    background: tipo === 'ok' ? 'var(--color-exito-suave)' : tipo === 'warn' ? 'var(--color-advertencia-suave)' : tipo === 'err' ? 'var(--color-error-suave)' : 'var(--color-fondo)',
+    border: `1px solid ${tipo === 'ok' ? 'var(--color-exito)' : tipo === 'warn' ? 'var(--color-advertencia)' : tipo === 'err' ? 'var(--color-error)' : 'var(--color-borde)'}`,
   }),
 };
 
@@ -72,27 +81,13 @@ function parsearArchivo(archivo, columnas) {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const wb = XLSX.read(e.target.result, { type: 'array' });
+        // cellDates: las fechas llegan como Date (no como serial); raw: los CSV no se reinterpretan (mes/día de EE. UU.)
+        const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true, raw: true });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const filasCrudas = XLSX.utils.sheet_to_json(ws, { defval: '' });
-        if (!filasCrudas.length) { resolve([]); return; }
-
-        // Mapa flexible: etiqueta o clave (case-insensitive) → clave interna
-        const mapaClaves = {};
-        columnas.forEach(c => {
-          mapaClaves[c.etiqueta.toLowerCase()] = c.clave;
-          mapaClaves[c.clave.toLowerCase()] = c.clave;
-        });
-
-        const filasNormalizadas = filasCrudas.map(fila => {
-          const nueva = {};
-          Object.keys(fila).forEach(k => {
-            const clave = mapaClaves[k.toLowerCase().trim()];
-            if (clave) nueva[clave] = String(fila[k]).trim();
-          });
-          return nueva;
-        });
-        resolve(filasNormalizadas);
+        if (!ws || !ws['!ref']) { resolve([]); return; }
+        const matriz = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true, blankrows: true });
+        const filaEncabezado = XLSX.utils.decode_range(ws['!ref']).s.r + 1;
+        resolve(filasDesdeMatriz(matriz, columnas, filaEncabezado));
       } catch (err) {
         reject(err);
       }
@@ -120,14 +115,6 @@ function descargarEjemplo(columnas, filasEjemplo, nombreArchivo) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-}
-
-function validarFilas(filas, columnas) {
-  const requeridas = columnas.filter(c => c.requerido).map(c => c.clave);
-  return filas.map(fila => {
-    const faltantes = requeridas.filter(c => !fila[c]);
-    return { ...fila, __errores: faltantes };
-  });
 }
 
 // ─── Vistas ──────────────────────────────────────────────────────────────────
@@ -158,6 +145,8 @@ function VistaSeleccion({ columnas, filasEjemplo, nombreArchivo, onArchivo, onCa
       <div style={estilos.cuerpo}>
         <div
           style={estilos.zona(arrastrandoSobre)}
+          role="button" tabIndex={0} aria-label="Seleccionar archivo para importar"
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputRef.current.click(); } }}
           onClick={() => inputRef.current.click()}
           onDragOver={(e) => { e.preventDefault(); setArrastrandoSobre(true); }}
           onDragLeave={() => setArrastrandoSobre(false)}
@@ -213,10 +202,14 @@ function VistaSeleccion({ columnas, filasEjemplo, nombreArchivo, onArchivo, onCa
   );
 }
 
-function VistaPreview({ columnas, filas, procesando, onConfirmar, onVolver }) {
-  const filasValidadas = validarFilas(filas, columnas);
-  const conError = filasValidadas.filter(f => f.__errores.length > 0).length;
-  const filasMostrar = filasValidadas.slice(0, 8);
+function VistaPreview({ columnas, filas, procesando, progreso, onConfirmar, onVolver }) {
+  const { enviar, omitidas } = useMemo(() => separarFilas(filas, columnas), [filas, columnas]);
+  const porFila = useMemo(() => {
+    const mapa = {};
+    omitidas.forEach(o => { mapa[o.fila] = o.error; });
+    return mapa;
+  }, [omitidas]);
+  const filasMostrar = filas.slice(0, 8);
   const restantes = filas.length - filasMostrar.length;
 
   return (
@@ -224,14 +217,16 @@ function VistaPreview({ columnas, filas, procesando, onConfirmar, onVolver }) {
       <div style={estilos.cuerpo}>
         <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
           <span style={estilos.chip('ok')}>{filas.length} filas detectadas</span>
-          {conError > 0 && <span style={estilos.chip('err')}>{conError} filas con campos requeridos vacíos</span>}
-          {conError === 0 && <span style={estilos.chip('ok')}>Sin errores de validación</span>}
+          {omitidas.length > 0
+            ? <span style={estilos.chip('err')}>{omitidas.length} filas con errores (no se importarán)</span>
+            : <span style={estilos.chip('ok')}>Sin errores de validación</span>}
         </div>
 
-        <div style={{ overflowX: 'auto', borderRadius: '6px', border: '1px solid var(--color-borde)' }}>
+        <div tabIndex={0} role="region" aria-label="Vista previa de las primeras filas" style={{ overflowX: 'auto', borderRadius: '6px', border: '1px solid var(--color-borde)' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
             <thead>
               <tr>
+                <th style={estilos.etiquetaCol}>Fila</th>
                 {columnas.map(c => (
                   <th key={c.clave} style={estilos.etiquetaCol}>
                     {c.etiqueta}{c.requerido ? ' *' : ''}
@@ -241,16 +236,17 @@ function VistaPreview({ columnas, filas, procesando, onConfirmar, onVolver }) {
               </tr>
             </thead>
             <tbody>
-              {filasMostrar.map((fila, i) => (
-                <tr key={i} style={{ background: fila.__errores.length ? '#fff8f8' : 'transparent' }}>
+              {filasMostrar.map((fila) => (
+                <tr key={fila._fila}>
+                  <td style={estilos.celda}>{fila._fila}</td>
                   {columnas.map(c => (
                     <td key={c.clave} style={c.requerido && !fila[c.clave] ? estilos.celdaVacia : estilos.celda}>
                       {fila[c.clave] || (c.requerido ? '(vacío)' : '—')}
                     </td>
                   ))}
-                  <td style={estilos.celda}>
-                    <span style={estilos.chip(fila.__errores.length ? 'err' : 'ok')}>
-                      {fila.__errores.length ? `Falta: ${fila.__errores.join(', ')}` : 'OK'}
+                  <td style={{ ...estilos.celda, minWidth: '12rem' }}>
+                    <span style={estilos.chip(porFila[fila._fila] ? 'err' : 'ok')}>
+                      {porFila[fila._fila] || 'OK'}
                     </span>
                   </td>
                 </tr>
@@ -260,14 +256,42 @@ function VistaPreview({ columnas, filas, procesando, onConfirmar, onVolver }) {
         </div>
 
         {restantes > 0 && (
-          <p style={{ fontSize: '0.8rem', color: 'var(--color-texto-claro)', marginTop: '0.5rem' }}>
+          <p style={{ fontSize: '0.8rem', color: 'var(--color-texto-medio)', marginTop: '0.5rem' }}>
             … y {restantes} filas más (no mostradas en la vista previa)
           </p>
         )}
 
-        {conError > 0 && (
-          <p style={{ fontSize: '0.85rem', color: 'var(--color-error)', marginTop: '0.75rem' }}>
-            Las filas con errores de validación no serán importadas.
+        {omitidas.length > 0 && (
+          <div role="alert" style={{ marginTop: '0.75rem' }}>
+            <p style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-error)', margin: '0 0 0.5rem' }}>
+              {omitidas.length} {omitidas.length === 1 ? 'fila se omitirá' : 'filas se omitirán'} y no se importarán. Corrige el archivo y vuelve a cargarlo si las necesitas:
+            </p>
+            <div tabIndex={0} role="region" aria-label="Filas que se omitirán" style={estilos.listaScroll}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                <thead>
+                  <tr>
+                    <th style={estilos.etiquetaCol}>Fila</th>
+                    <th style={estilos.etiquetaCol}>Nombre</th>
+                    <th style={estilos.etiquetaCol}>Motivo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {omitidas.map(o => (
+                    <tr key={o.fila}>
+                      <td style={estilos.celda}>{o.fila}</td>
+                      <td style={{ ...estilos.celda, overflowWrap: 'anywhere' }}>{o.nombre || '—'}</td>
+                      <td style={{ ...estilos.celda, color: 'var(--color-error)', overflowWrap: 'anywhere', minWidth: '10rem' }}>{o.error}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {procesando && progreso && (
+          <p role="status" style={{ fontSize: '0.85rem', color: 'var(--color-texto-medio)', marginTop: '0.75rem' }}>
+            Importando… lote {progreso.actual} de {progreso.total}
           </p>
         )}
       </div>
@@ -277,57 +301,77 @@ function VistaPreview({ columnas, filas, procesando, onConfirmar, onVolver }) {
           ← Seleccionar otro
         </button>
         <button
-          style={{ ...estilos.botonPrimario, opacity: procesando ? 0.7 : 1 }}
+          style={{ ...estilos.botonPrimario, opacity: procesando || enviar.length === 0 ? 0.7 : 1 }}
           onClick={onConfirmar}
-          disabled={procesando}
+          disabled={procesando || enviar.length === 0}
         >
-          {procesando ? 'Importando…' : `Importar ${filas.length - conError} registros`}
+          {procesando ? 'Importando…' : `Importar ${enviar.length} registros`}
         </button>
       </div>
     </>
   );
 }
 
+function descargarCsv(resultado) {
+  const csv = construirCsvResultado(resultado.errores, resultado.duplicados_detalle);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'errores_importacion.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function TarjetaResumen({ tipo, valor, etiqueta }) {
+  return (
+    <div style={estilos.tarjetaResumen(tipo)}>
+      <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--color-texto)' }}>{valor}</div>
+      <div style={{ fontSize: '0.8rem', color: 'var(--color-texto)', fontWeight: 600 }}>{etiqueta}</div>
+    </div>
+  );
+}
+
 function VistaResultado({ resultado, onNuevo, onCerrar }) {
-  const { insertados = 0, duplicados = 0, errores = [] } = resultado;
+  const { insertados = 0, duplicados = 0, errores = [], duplicados_detalle: detalleDup = [] } = resultado;
+  const encabezadoRef = useRef(null);
+  // El foco pasa al resumen para que el lector de pantalla anuncie el resultado y no se pierda al cambiar de vista.
+  useEffect(() => { if (encabezadoRef.current) encabezadoRef.current.focus(); }, []);
+
   return (
     <>
       <div style={estilos.cuerpo}>
-        <div style={estilos.resumen}>
-          <div style={estilos.tarjetaResumen('ok')}>
-            <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#1a7a5e' }}>{insertados}</div>
-            <div style={{ fontSize: '0.8rem', color: '#1a7a5e', fontWeight: 600 }}>Insertados</div>
-          </div>
-          <div style={estilos.tarjetaResumen('warn')}>
-            <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#856404' }}>{duplicados}</div>
-            <div style={{ fontSize: '0.8rem', color: '#856404', fontWeight: 600 }}>Duplicados (omitidos)</div>
-          </div>
-          <div style={estilos.tarjetaResumen(errores.length ? 'err' : '')}>
-            <div style={{ fontSize: '1.75rem', fontWeight: 800, color: errores.length ? '#c0392b' : 'var(--color-texto-claro)' }}>
-              {errores.length}
-            </div>
-            <div style={{ fontSize: '0.8rem', color: errores.length ? '#c0392b' : 'var(--color-texto-claro)', fontWeight: 600 }}>Errores</div>
+        <div ref={encabezadoRef} tabIndex={-1} role="status" style={{ outline: 'none' }}>
+          <h3 style={{ margin: '0 0 0.75rem', fontSize: '1rem', color: 'var(--color-texto)' }}>Resultado de la importación</h3>
+          <div style={estilos.resumen}>
+            <TarjetaResumen tipo="ok" valor={insertados} etiqueta="Insertados" />
+            <TarjetaResumen tipo={duplicados ? 'warn' : ''} valor={duplicados} etiqueta="Duplicados (omitidos)" />
+            <TarjetaResumen tipo={errores.length ? 'err' : ''} valor={errores.length} etiqueta="Errores" />
           </div>
         </div>
 
         {errores.length > 0 && (
-          <div>
-            <p style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-error)', marginBottom: '0.5rem' }}>
-              Filas con error:
+          <div role="alert" style={{ marginBottom: '1rem' }}>
+            <p style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-error)', margin: '0 0 0.5rem' }}>
+              Filas con error ({errores.length}). El número de fila es el del archivo (la fila 1 es el encabezado):
             </p>
-            <div style={{ overflowX: 'auto', borderRadius: '6px', border: '1px solid var(--color-borde)' }}>
+            <div tabIndex={0} role="region" aria-label="Filas con error" style={estilos.listaScroll}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                 <thead>
                   <tr>
                     <th style={estilos.etiquetaCol}>Fila</th>
-                    <th style={estilos.etiquetaCol}>Error</th>
+                    <th style={estilos.etiquetaCol}>Nombre</th>
+                    <th style={estilos.etiquetaCol}>Motivo</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {errores.slice(0, 20).map((e, i) => (
+                  {errores.map((e, i) => (
                     <tr key={i}>
-                      <td style={estilos.celda}>{JSON.stringify(e.fila)}</td>
-                      <td style={{ ...estilos.celda, color: 'var(--color-error)' }}>{e.error}</td>
+                      <td style={estilos.celda}>{numeroFilaDeError(e) || '—'}</td>
+                      <td style={{ ...estilos.celda, overflowWrap: 'anywhere' }}>{nombreDeError(e) || '—'}</td>
+                      <td style={{ ...estilos.celda, color: 'var(--color-error)', overflowWrap: 'anywhere', minWidth: '10rem' }}>{e.error}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -336,14 +380,54 @@ function VistaResultado({ resultado, onNuevo, onCerrar }) {
           </div>
         )}
 
+        {duplicados > 0 && (
+          <div style={{ marginBottom: '1rem' }}>
+            <p style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-texto)', margin: '0 0 0.5rem' }}>
+              Duplicados omitidos ({duplicados}){detalleDup.length < duplicados ? `; se detallan los primeros ${detalleDup.length}` : ''}:
+            </p>
+            {detalleDup.length > 0 && (
+              <div tabIndex={0} role="region" aria-label="Filas duplicadas" style={estilos.listaScroll}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr>
+                      <th style={estilos.etiquetaCol}>Fila</th>
+                      <th style={estilos.etiquetaCol}>Nombre</th>
+                      <th style={estilos.etiquetaCol}>Motivo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detalleDup.map((d, i) => (
+                      <tr key={i}>
+                        <td style={estilos.celda}>{numeroFilaDeError(d) || '—'}</td>
+                        <td style={{ ...estilos.celda, overflowWrap: 'anywhere' }}>{nombreDeError(d) || '—'}</td>
+                        <td style={{ ...estilos.celda, overflowWrap: 'anywhere', minWidth: '10rem' }}>{d.motivo}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
         {insertados > 0 && errores.length === 0 && (
-          <p style={{ color: '#1a7a5e', fontWeight: 600, marginTop: '0.5rem' }}>
+          <p style={{ color: 'var(--color-texto)', fontWeight: 600, marginTop: '0.5rem' }}>
             Importación completada sin errores.
+          </p>
+        )}
+        {insertados === 0 && (
+          <p style={{ color: 'var(--color-texto)', fontWeight: 600, marginTop: '0.5rem' }}>
+            No se insertó ningún registro.
           </p>
         )}
       </div>
 
       <div style={estilos.pie}>
+        {(errores.length > 0 || detalleDup.length > 0) && (
+          <button style={{ ...estilos.botonSecundario, color: 'var(--color-primario)', fontWeight: 600 }} onClick={() => descargarCsv(resultado)}>
+            ⬇ Descargar errores (CSV)
+          </button>
+        )}
         <button style={estilos.botonSecundario} onClick={onNuevo}>Importar otro archivo</button>
         <button style={estilos.botonPrimario} onClick={onCerrar}>Cerrar</button>
       </div>
@@ -358,39 +442,66 @@ function VistaResultado({ resultado, onNuevo, onCerrar }) {
  *
  * Props:
  *   titulo       — string
- *   columnas     — [{ clave, etiqueta, requerido }]
+ *   columnas     — [{ clave, etiqueta, requerido, tipo }]  (tipo:'fecha' normaliza a AAAA-MM-DD)
  *   filasEjemplo — [{ clave: valor, ... }]  — datos de la plantilla descargable
  *   nombreArchivo — nombre del CSV de ejemplo a descargar (ej: 'plantilla_puestos.csv')
- *   onImportar   — async (filas) => { exito, datos: { insertados, duplicados, errores } }
- *   onExito      — (resultado) => void  — se llama tras importación exitosa
+ *   onImportar   — async (filas) => { exito, datos: { insertados, duplicados, errores, duplicados_detalle } }
+ *                  Se llama por lotes de TAMANO_LOTE filas (cada fila lleva `_fila`, su número en el archivo) y
+ *                  el componente suma los resultados (el cuerpo global del backend admite 100 kb).
+ *   onExito      — (resultado) => void  — SOLO recarga la lista: NO debe cerrar el modal, la vista de
+ *                  resultados se queda abierta hasta que el usuario pulse Cerrar (onCancelar).
  *   onCancelar   — () => void
  */
 export default function ImportadorArchivo({ titulo, columnas, filasEjemplo, nombreArchivo, onImportar, onExito, onCancelar }) {
   const [vista, setVista] = useState('seleccion');
   const [filas, setFilas] = useState([]);
   const [procesando, setProcesando] = useState(false);
+  const [progreso, setProgreso] = useState(null);
   const [errorApi, setErrorApi] = useState('');
   const [resultado, setResultado] = useState(null);
+  const modalRef = useRef(null);
+
+  useEffect(() => { if (modalRef.current) modalRef.current.focus(); }, []);
 
   async function confirmarImportacion() {
-    const filasValidas = validarFilas(filas, columnas).filter(f => f.__errores.length === 0);
-    const filasLimpias = filasValidas.map(({ __errores, ...resto }) => resto);
+    const { enviar, omitidas } = separarFilas(filas, columnas);
+    const lotes = dividirEnLotes(enviar, TAMANO_LOTE);
     setProcesando(true);
     setErrorApi('');
+    let acumulado = resultadoVacio();
+    let fallo = '';
+    let enviadas = 0;
     try {
-      const resp = await onImportar(filasLimpias);
-      if (resp.exito) {
-        setResultado(resp.datos);
-        setVista('resultado');
-        onExito(resp.datos);
-      } else {
-        setErrorApi(resp.mensaje || 'Error al importar');
+      for (let i = 0; i < lotes.length; i++) {
+        setProgreso({ actual: i + 1, total: lotes.length });
+        const resp = await onImportar(lotes[i]);
+        if (!resp || !resp.exito) { fallo = (resp && resp.mensaje) || 'Error al importar'; break; }
+        acumulado = sumarResultados(acumulado, resp.datos);
+        enviadas += lotes[i].length;
       }
     } catch (err) {
-      setErrorApi(err.message || 'Error de conexión');
-    } finally {
-      setProcesando(false);
+      fallo = err && err.message ? err.message : 'Error de conexión';
     }
+    setProgreso(null);
+    setProcesando(false);
+
+    if (fallo) {
+      // Lo que no se llegó a enviar se reporta como error para que el CSV incluya todas las filas con problema.
+      enviar.slice(enviadas).forEach(f => acumulado.errores.push({
+        fila: f._fila, nombre: [f.nombre, f.apellido_paterno, f.apellido_materno].filter(Boolean).join(' '),
+        error: 'No se envió: ' + fallo,
+      }));
+    }
+    acumulado.errores = omitidas.concat(acumulado.errores);
+
+    if (fallo && enviadas === 0) {
+      setErrorApi(fallo);
+      return;
+    }
+    if (fallo) setErrorApi(`La importación se interrumpió: ${fallo}`);
+    setResultado(acumulado);
+    setVista('resultado');
+    onExito(acumulado);
   }
 
   function reiniciar() {
@@ -400,16 +511,20 @@ export default function ImportadorArchivo({ titulo, columnas, filasEjemplo, nomb
     setResultado(null);
   }
 
+  function manejarTecla(e) {
+    if (e.key === 'Escape' && !procesando) onCancelar();
+  }
+
   return (
-    <div style={estilos.overlay} onClick={(e) => e.target === e.currentTarget && onCancelar()}>
-      <div style={estilos.modal}>
+    <div style={estilos.overlay} onClick={(e) => e.target === e.currentTarget && !procesando && onCancelar()} onKeyDown={manejarTecla}>
+      <div style={estilos.modal} role="dialog" aria-modal="true" aria-labelledby="importador-titulo" tabIndex={-1} ref={modalRef}>
         <div style={estilos.header}>
-          <h2 style={estilos.titulo}>{titulo || 'Importar desde archivo'}</h2>
-          <button style={estilos.cerrar} onClick={onCancelar}>×</button>
+          <h2 id="importador-titulo" style={estilos.titulo}>{titulo || 'Importar desde archivo'}</h2>
+          <button style={estilos.cerrar} onClick={onCancelar} aria-label="Cerrar" disabled={procesando}>×</button>
         </div>
 
         {errorApi && (
-          <div style={{ padding: '0.75rem 1.5rem', background: '#fde8e8', color: '#c0392b', fontSize: '0.875rem' }}>
+          <div role="alert" style={{ padding: '0.75rem 1.5rem', background: 'var(--color-error-suave)', color: 'var(--color-texto)', borderLeft: '4px solid var(--color-error)', fontSize: '0.875rem', overflowWrap: 'anywhere' }}>
             {errorApi}
           </div>
         )}
@@ -429,6 +544,7 @@ export default function ImportadorArchivo({ titulo, columnas, filasEjemplo, nomb
             columnas={columnas}
             filas={filas}
             procesando={procesando}
+            progreso={progreso}
             onConfirmar={confirmarImportacion}
             onVolver={reiniciar}
           />

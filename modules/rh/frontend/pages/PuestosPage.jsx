@@ -140,7 +140,7 @@ export default function PuestosPage() {
             method: 'POST',
             body: JSON.stringify({ filas }),
           })}
-          onExito={() => { cargar(); setMostrarImportador(false); }}
+          onExito={() => { cargar(); }}
           onCancelar={() => setMostrarImportador(false)}
         />
       )}

@@ -13,6 +13,8 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-22] [coder] → code-notes.md — Importador de empleados: fechas de Excel normalizadas, resultado que se queda abierto, errores por fila sin texto de BD, lotes de 100 (jest 1885, Postgres 16 y Chromium reales)
+- [2026-10-22] orquestador → decisions.md — Diagnóstico y corrección de la importación de empleados (fechas de Excel y resultado oculto)
 - [2026-10-21] [revisor] → reviews.md#puerta-de-ingesta-dedicada — Puerta de ingesta dedicada (commit 1f301ed): CON OBSERVACIONES, sin críticos; F2 test intermitente de puertos antes de fusionar
 - [2026-10-21] orquestador → decisions.md — OK del humano para desplegar a staging la ingesta de asistencia
 - [2026-10-21] orquestador → decisions.md — Decisión del humano: puerta de ingesta dedicada por la red interna (opción 1)

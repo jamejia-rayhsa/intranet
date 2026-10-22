@@ -1,3 +1,4 @@
+const { validarCuerpoImportacion, nombresUnicos } = require("../utils/importarEmpleados");
 const Departamento = require("../models/departamento.model");
 const { grupo } = require("../config/database");
 
@@ -102,15 +103,15 @@ const ControladorDepartamento = {
   async importar(req, res) {
     try {
       const { filas } = req.body;
-      if (!Array.isArray(filas) || filas.length === 0)
-        return res.status(400).json({ exito: false, mensaje: "No se recibieron filas para importar" });
+      const problema = validarCuerpoImportacion(filas);
+      if (problema) return res.status(400).json({ exito: false, mensaje: problema });
 
-      const nombresArea = [...new Set(filas.map(f => f.area).filter(Boolean))];
+      const nombresArea = nombresUnicos(filas, 'area');
       const mapaAreas = {};
       if (nombresArea.length > 0) {
         const res2 = await grupo.query(
           "SELECT id, LOWER(nombre) AS nombre FROM areas WHERE LOWER(nombre) = ANY($1)",
-          [nombresArea.map(n => n.toLowerCase())]
+          [nombresArea]
         );
         res2.rows.forEach(r => { mapaAreas[r.nombre] = r.id; });
       }

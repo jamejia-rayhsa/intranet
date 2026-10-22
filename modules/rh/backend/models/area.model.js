@@ -1,4 +1,5 @@
 const { grupo } = require("../config/database");
+const { textoSeguro, numeroFila, MAX_DUPLICADOS_DETALLE } = require("../utils/importarEmpleados");
 
 const Area = {
   async crear(datos) {
@@ -38,23 +39,30 @@ const Area = {
     let insertados = 0;
     let duplicados = 0;
     const errores = [];
+    const duplicadosDetalle = [];
 
     for (const fila of filas) {
-      if (!fila.nombre) { errores.push({ fila, error: "El campo nombre es requerido" }); continue; }
-      if (existentes.has(fila.nombre.toLowerCase())) { duplicados++; continue; }
+      const nombre = textoSeguro(fila && fila.nombre);
+      if (!nombre) { errores.push({ fila: numeroFila(fila), nombre: '', error: "El campo nombre es requerido" }); continue; }
+      if (existentes.has(nombre.toLowerCase())) {
+        duplicados++;
+        if (duplicadosDetalle.length < MAX_DUPLICADOS_DETALLE) duplicadosDetalle.push({ fila: numeroFila(fila), nombre, motivo: 'Nombre ya existe' });
+        continue;
+      }
       try {
         await grupo.query(
           "INSERT INTO areas (nombre, descripcion) VALUES ($1, $2)",
-          [fila.nombre, fila.descripcion || null]
+          [nombre, textoSeguro(fila.descripcion) || null]
         );
         insertados++;
-        existentes.add(fila.nombre.toLowerCase());
+        existentes.add(nombre.toLowerCase());
       } catch (e) {
-        errores.push({ fila, error: e.message });
+        console.error("[areas] importar fila", numeroFila(fila), e);
+        errores.push({ fila: numeroFila(fila), nombre, error: "No se pudo insertar la fila" });
       }
     }
 
-    return { insertados, duplicados, errores };
+    return { insertados, duplicados, duplicados_detalle: duplicadosDetalle, errores };
   },
 };
 

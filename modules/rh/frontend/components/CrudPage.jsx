@@ -117,7 +117,7 @@ export default function CrudPage({
             method: 'POST',
             body: JSON.stringify({ filas }),
           })}
-          onExito={() => { cargar(); setMostrarImportador(false); }}
+          onExito={() => { cargar(); }}
           onCancelar={() => setMostrarImportador(false)}
         />
       )}
