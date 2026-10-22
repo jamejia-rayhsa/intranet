@@ -448,6 +448,26 @@ const ControladorEmpleado = {
       resDeptos.rows.forEach(r => { mapaDepartamentos[r.nombre] = r.id; });
 
       const resultado = await Empleado.importarLote(filas, mapaPuestos, mapaDepartamentos);
+
+      // Auditoría sin datos personales: solo conteos. La IP se recorta a 45 caracteres (ip_origen es VARCHAR(45):
+      // un X-Forwarded-For largo haría fallar el INSERT y se perdería el registro).
+      try {
+        const xff = req.headers && req.headers["x-forwarded-for"];
+        const reqAuditoria = {
+          user: req.user,
+          socket: req.socket,
+          headers: { ...(req.headers || {}), "x-forwarded-for": xff ? String(xff).slice(0, 45) : undefined },
+        };
+        await registrarAccion(reqAuditoria, "rh", "empleados", "importacion", "IMPORTAR_EMPLEADOS", null, {
+          filas_recibidas: filas.length,
+          insertados: resultado.insertados,
+          duplicados: resultado.duplicados,
+          errores: resultado.errores.length,
+        });
+      } catch (errorAuditoria) {
+        console.error("Error al registrar auditoría de la importación:", errorAuditoria.message);
+      }
+
       res.json({ exito: true, datos: resultado });
     } catch (error) {
       console.error('[empleados] importar', error);

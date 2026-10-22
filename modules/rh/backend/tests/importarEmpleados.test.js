@@ -93,7 +93,7 @@ describe("Empleado.importarLote", () => {
       base(1, { fecha_nacimiento: "1990-01-01", fecha_ingreso: "2024-02-29" }),
       base(2, { fecha_nacimiento: "", fecha_ingreso: "  " }),
     ]);
-    expect(r).toEqual({ insertados: 2, duplicados: 0, duplicados_detalle: [], errores: [] });
+    expect(r).toEqual({ insertados: 2, duplicados: 0, duplicados_detalle: [], errores: [], sin_catalogo: { puestos: [], departamentos: [] } });
     expect(inserts[0].slice(11, 13)).toEqual(["1990-01-01", "2024-02-29"]);
     expect(inserts[1].slice(11, 13)).toEqual([null, null]);
   });
@@ -156,6 +156,65 @@ describe("Empleado.importarLote", () => {
     expect(r.errores).toEqual([{ fila: 3, nombre: "Ana2 Prueba", error: "No se pudo insertar la fila" }]);
     expect(JSON.stringify(r)).not.toMatch(/PostgreSQL|invalid input|syntax/i);
     expect(console.error).toHaveBeenCalled();
+  });
+});
+
+describe("Empleado.importarLote - puestos y departamentos fuera del catálogo", () => {
+  it("guarda NULL pero informa nombre y filas afectadas (solo insertadas; máx. 100 nombres)", async () => {
+    const inserts = simularBd();
+    const r = await Empleado.importarLote([
+      base(1, { puesto: "Analista", departamento: "TI" }),
+      base(2, { puesto: "Chofer", departamento: "Logística" }),
+      base(3, { puesto: "chofer", departamento: "LOGÍSTICA" }),
+      base(4, { puesto: "Chofer", departamento: "", fecha_ingreso: "31/02/2024" }), // error: no cuenta
+      base(5, { departamento: "Reparto" }),
+    ], { analista: 7 }, { ti: 3 });
+    expect(r.insertados).toBe(4);
+    expect(inserts[0].slice(15, 17)).toEqual([7, 3]);
+    expect(inserts[1].slice(15, 17)).toEqual([null, null]);
+    expect(r.sin_catalogo).toEqual({
+      puestos: [{ nombre: "Chofer", filas: 2 }],
+      departamentos: [{ nombre: "Logística", filas: 2 }, { nombre: "Reparto", filas: 1 }],
+    });
+    const muchos = Array.from({ length: 150 }, (_, i) => base(i, { puesto: `Puesto${i}` }));
+    const r2 = await Empleado.importarLote(muchos);
+    expect(r2.sin_catalogo.puestos).toHaveLength(100);
+  });
+});
+
+describe("auditoría de la importación", () => {
+  it("registra IMPORTAR_EMPLEADOS con conteos, sin datos personales y con la IP recortada a 45", async () => {
+    jest.resetModules();
+    const registrarAccion = jest.fn().mockResolvedValue(null);
+    jest.doMock("../../../auditoria/backend/services/auditoria.service", () => ({ registrarAccion }));
+    const C = require("../controllers/empleado.controller");
+    const bd = require("../../../portal/backend/config/database").grupo;
+    bd.query.mockImplementation(async () => ({ rows: [] }));
+    const req = { body: { filas: [base(1, { curp: "CURP00000000000001" }), base(2, { fecha_ingreso: "xx" })] }, user: { usuario_id: 5 },
+      headers: { "x-forwarded-for": "1.2.3.4, " + "9.9.9.9, ".repeat(20), "user-agent": "t" }, socket: { remoteAddress: "::1" } };
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    await C.importar(req, res);
+    expect(registrarAccion).toHaveBeenCalledTimes(1);
+    const [rq, modulo, tabla, id, accion, previos, nuevos] = registrarAccion.mock.calls[0];
+    expect([modulo, tabla, accion, previos]).toEqual(["rh", "empleados", "IMPORTAR_EMPLEADOS", null]);
+    expect(accion.length).toBeLessThanOrEqual(20);
+    expect(nuevos).toEqual({ filas_recibidas: 2, insertados: 1, duplicados: 0, errores: 1 });
+    expect(JSON.stringify(nuevos)).not.toMatch(/Ana|CURP/);
+    expect(rq.headers["x-forwarded-for"].length).toBe(45);
+    expect(id).toBe("importacion");
+    expect(res.json.mock.calls[0][0].exito).toBe(true);
+    jest.dontMock("../../../auditoria/backend/services/auditoria.service");
+  });
+
+  it("si la auditoría falla, la importación igual responde 200", async () => {
+    jest.resetModules();
+    jest.doMock("../../../auditoria/backend/services/auditoria.service", () => ({ registrarAccion: jest.fn().mockRejectedValue(new Error("boom")) }));
+    const C = require("../controllers/empleado.controller");
+    require("../../../portal/backend/config/database").grupo.query.mockImplementation(async () => ({ rows: [] }));
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    await C.importar({ body: { filas: [base(1)] }, headers: {}, socket: {} }, res);
+    expect(res.json.mock.calls[0][0].exito).toBe(true);
+    jest.dontMock("../../../auditoria/backend/services/auditoria.service");
   });
 });
 

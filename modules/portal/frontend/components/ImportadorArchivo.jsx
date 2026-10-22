@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import {
   filasDesdeMatriz, separarFilas, dividirEnLotes, resultadoVacio, sumarResultados,
-  construirCsvResultado, numeroFilaDeError, nombreDeError, TAMANO_LOTE,
+  construirCsvResultado, numeroFilaDeError, nombreDeError, avisosSinCatalogo, TAMANO_LOTE,
 } from '../utils/importarFilas';
 
 const estilos = {
@@ -313,7 +313,7 @@ function VistaPreview({ columnas, filas, procesando, progreso, onConfirmar, onVo
 }
 
 function descargarCsv(resultado) {
-  const csv = construirCsvResultado(resultado.errores, resultado.duplicados_detalle);
+  const csv = construirCsvResultado(resultado.errores, resultado.duplicados_detalle, resultado.sin_catalogo);
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -335,7 +335,10 @@ function TarjetaResumen({ tipo, valor, etiqueta }) {
 }
 
 function VistaResultado({ resultado, onNuevo, onCerrar }) {
-  const { insertados = 0, duplicados = 0, errores = [], duplicados_detalle: detalleDup = [] } = resultado;
+  const { insertados = 0, duplicados = 0, errores = [], duplicados_detalle: detalleDup = [], interrupcion = '' } = resultado;
+  const avisos = avisosSinCatalogo(resultado.sin_catalogo);
+  const sinDepto = ((resultado.sin_catalogo || {}).departamentos || []).reduce((t, d) => t + d.filas, 0);
+  const sinPuesto = ((resultado.sin_catalogo || {}).puestos || []).reduce((t, d) => t + d.filas, 0);
   const encabezadoRef = useRef(null);
   // El foco pasa al resumen para que el lector de pantalla anuncie el resultado y no se pierda al cambiar de vista.
   useEffect(() => { if (encabezadoRef.current) encabezadoRef.current.focus(); }, []);
@@ -351,6 +354,26 @@ function VistaResultado({ resultado, onNuevo, onCerrar }) {
             <TarjetaResumen tipo={errores.length ? 'err' : ''} valor={errores.length} etiqueta="Errores" />
           </div>
         </div>
+
+        {interrupcion && (
+          <div role="alert" style={{ marginBottom: '1rem', padding: '0.75rem 1rem', background: 'var(--color-error-suave)', borderLeft: '4px solid var(--color-error)', color: 'var(--color-texto)', fontSize: '0.875rem', overflowWrap: 'anywhere' }}>
+            <strong>La importación se interrumpió.</strong> {interrupcion}
+            {' '}Revisa la lista antes de volver a importar: reimportar el archivo completo duplica las filas que no tienen CURP ni número de nómina.
+          </div>
+        )}
+
+        {avisos.length > 0 && (
+          <div role="alert" style={{ marginBottom: '1rem', padding: '0.75rem 1rem', background: 'var(--color-advertencia-suave)', borderLeft: '4px solid var(--color-advertencia)', color: 'var(--color-texto)', fontSize: '0.875rem' }}>
+            <p style={{ margin: '0 0 0.5rem', fontWeight: 600 }}>
+              {sinDepto > 0 && `${sinDepto} ${sinDepto === 1 ? 'empleado quedó sin departamento' : 'empleados quedaron sin departamento'}. `}
+              {sinPuesto > 0 && `${sinPuesto} ${sinPuesto === 1 ? 'empleado quedó sin puesto' : 'empleados quedaron sin puesto'}. `}
+              No tendrán turno ni cupo de vacaciones hasta asignarlos.
+            </p>
+            <ul style={{ margin: 0, paddingLeft: '1.25rem', overflowWrap: 'anywhere' }}>
+              {avisos.map((a, i) => <li key={i}>{a.motivo}</li>)}
+            </ul>
+          </div>
+        )}
 
         {errores.length > 0 && (
           <div role="alert" style={{ marginBottom: '1rem' }}>
@@ -423,7 +446,7 @@ function VistaResultado({ resultado, onNuevo, onCerrar }) {
       </div>
 
       <div style={estilos.pie}>
-        {(errores.length > 0 || detalleDup.length > 0) && (
+        {(errores.length > 0 || detalleDup.length > 0 || avisos.length > 0) && (
           <button style={{ ...estilos.botonSecundario, color: 'var(--color-primario)', fontWeight: 600 }} onClick={() => descargarCsv(resultado)}>
             ⬇ Descargar errores (CSV)
           </button>
@@ -461,44 +484,76 @@ export default function ImportadorArchivo({ titulo, columnas, filasEjemplo, nomb
   const [resultado, setResultado] = useState(null);
   const modalRef = useRef(null);
 
-  useEffect(() => { if (modalRef.current) modalRef.current.focus(); }, []);
+  const enCurso = useRef(false); // guardia contra doble clic: el estado `procesando` llega un render tarde
+
+  useEffect(() => {
+    // Al abrir, el foco pasa al diálogo; al desmontar vuelve al elemento que lo abrió (botón "Importar").
+    const apertura = document.activeElement;
+    if (modalRef.current) modalRef.current.focus();
+    return () => { if (apertura && apertura.focus && document.contains(apertura)) apertura.focus(); };
+  }, []);
 
   async function confirmarImportacion() {
+    if (enCurso.current) return;
+    enCurso.current = true;
+    try {
+      await ejecutarImportacion();
+    } finally {
+      enCurso.current = false;
+    }
+  }
+
+  async function ejecutarImportacion() {
     const { enviar, omitidas } = separarFilas(filas, columnas);
     const lotes = dividirEnLotes(enviar, TAMANO_LOTE);
     setProcesando(true);
     setErrorApi('');
     let acumulado = resultadoVacio();
     let fallo = '';
-    let enviadas = 0;
-    try {
-      for (let i = 0; i < lotes.length; i++) {
-        setProgreso({ actual: i + 1, total: lotes.length });
+    let loteFallido = -1;
+    let seguro = false; // true: el servidor respondió que NO procesó el lote (400/413 o exito:false)
+    for (let i = 0; i < lotes.length; i++) {
+      setProgreso({ actual: i + 1, total: lotes.length });
+      try {
         const resp = await onImportar(lotes[i]);
-        if (!resp || !resp.exito) { fallo = (resp && resp.mensaje) || 'Error al importar'; break; }
+        if (!resp || !resp.exito) { fallo = (resp && resp.mensaje) || 'Error al importar'; seguro = true; loteFallido = i; break; }
         acumulado = sumarResultados(acumulado, resp.datos);
-        enviadas += lotes[i].length;
+      } catch (err) {
+        fallo = err && err.message ? err.message : 'Error de conexión';
+        seguro = !!err && (err.status === 400 || err.status === 413);
+        loteFallido = i;
+        break;
       }
-    } catch (err) {
-      fallo = err && err.message ? err.message : 'Error de conexión';
     }
     setProgreso(null);
     setProcesando(false);
 
+    const nombreDe = (f) => [f.nombre, f.apellido_paterno, f.apellido_materno].filter(Boolean).join(' ');
+    let interrupcion = '';
     if (fallo) {
-      // Lo que no se llegó a enviar se reporta como error para que el CSV incluya todas las filas con problema.
-      enviar.slice(enviadas).forEach(f => acumulado.errores.push({
-        fila: f._fila, nombre: [f.nombre, f.apellido_paterno, f.apellido_materno].filter(Boolean).join(' '),
-        error: 'No se envió: ' + fallo,
-      }));
+      // Se reportan TODAS las filas sin confirmar: el lote en vuelo puede haberse insertado aunque no llegara la
+      // respuesta (no se dice "no se envió"); los lotes posteriores sí quedaron sin enviar.
+      lotes.forEach((lote, i) => {
+        if (i < loteFallido) return;
+        lote.forEach(f => acumulado.errores.push({
+          fila: f._fila, nombre: nombreDe(f),
+          error: i === loteFallido
+            ? (seguro ? `No se envió: ${fallo}` : `Resultado no confirmado (lote ${i + 1} de ${lotes.length}): revisa la lista antes de reintentar`)
+            : 'No se envió: la importación se interrumpió antes de este lote',
+        }));
+      });
+      interrupcion = seguro
+        ? `${fallo}.`
+        : `No se pudo confirmar el resultado del lote ${loteFallido + 1} de ${lotes.length} (${fallo}).`;
     }
     acumulado.errores = omitidas.concat(acumulado.errores);
 
-    if (fallo && enviadas === 0) {
+    // Falla segura en el primer lote: nada se insertó, se puede reintentar desde la vista previa.
+    if (fallo && seguro && loteFallido === 0) {
       setErrorApi(fallo);
       return;
     }
-    if (fallo) setErrorApi(`La importación se interrumpió: ${fallo}`);
+    if (fallo) { acumulado.interrupcion = interrupcion; setErrorApi(`La importación se interrumpió: ${fallo}`); }
     setResultado(acumulado);
     setVista('resultado');
     onExito(acumulado);
@@ -512,7 +567,18 @@ export default function ImportadorArchivo({ titulo, columnas, filasEjemplo, nomb
   }
 
   function manejarTecla(e) {
-    if (e.key === 'Escape' && !procesando) onCancelar();
+    if (e.key === 'Escape' && !procesando) { onCancelar(); return; }
+    if (e.key !== 'Tab' || !modalRef.current) return;
+    // Trampa de foco: Tab/Shift+Tab no salen del diálogo.
+    const foco = Array.from(modalRef.current.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    )).filter(el => !el.disabled && el.offsetParent !== null);
+    if (!foco.length) { e.preventDefault(); return; }
+    const primero = foco[0];
+    const ultimo = foco[foco.length - 1];
+    const activo = document.activeElement;
+    if (e.shiftKey && (activo === primero || activo === modalRef.current)) { e.preventDefault(); ultimo.focus(); }
+    else if (!e.shiftKey && activo === ultimo) { e.preventDefault(); primero.focus(); }
   }
 
   return (

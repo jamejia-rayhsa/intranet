@@ -137,19 +137,60 @@ export function dividirEnLotes(filas, tamano) {
   return lotes;
 }
 
+export const MAX_SIN_CATALOGO = 100;
+
 export function resultadoVacio() {
-  return { insertados: 0, duplicados: 0, errores: [], duplicados_detalle: [] };
+  return {
+    insertados: 0, duplicados: 0, errores: [], duplicados_detalle: [],
+    sin_catalogo: { puestos: [], departamentos: [] },
+  };
+}
+
+// Suma por nombre (sin distinguir mayúsculas) las listas [{ nombre, filas }]; máximo MAX_SIN_CATALOGO nombres.
+function sumarSinCatalogo(a, b) {
+  const orden = [];
+  const mapa = {};
+  (a || []).concat(Array.isArray(b) ? b : []).forEach(function (it) {
+    if (!it || typeof it.nombre !== 'string') return;
+    const k = it.nombre.toLowerCase();
+    if (!mapa[k]) {
+      if (orden.length >= MAX_SIN_CATALOGO) return;
+      mapa[k] = { nombre: it.nombre, filas: 0 };
+      orden.push(k);
+    }
+    mapa[k].filas += Number(it.filas) || 0;
+  });
+  return orden.map(function (k) { return mapa[k]; });
 }
 
 // Suma el resultado de un lote al acumulado (devuelve uno nuevo).
 export function sumarResultados(acumulado, parcial) {
   const p = parcial || {};
+  const sc = p.sin_catalogo || {};
+  const prev = acumulado.sin_catalogo || { puestos: [], departamentos: [] };
   return {
     insertados: acumulado.insertados + (Number(p.insertados) || 0),
     duplicados: acumulado.duplicados + (Number(p.duplicados) || 0),
     errores: acumulado.errores.concat(Array.isArray(p.errores) ? p.errores : []),
     duplicados_detalle: acumulado.duplicados_detalle.concat(Array.isArray(p.duplicados_detalle) ? p.duplicados_detalle : []),
+    sin_catalogo: {
+      puestos: sumarSinCatalogo(prev.puestos, sc.puestos),
+      departamentos: sumarSinCatalogo(prev.departamentos, sc.departamentos),
+    },
   };
+}
+
+// Avisos de catálogo como filas { tipo, nombre, motivo } (para la vista y el CSV).
+export function avisosSinCatalogo(sinCatalogo) {
+  const sc = sinCatalogo || {};
+  const avisos = [];
+  (sc.departamentos || []).forEach(function (d) {
+    avisos.push({ nombre: d.nombre, filas: d.filas, motivo: 'El departamento "' + d.nombre + '" no existe en el catálogo: ' + d.filas + (d.filas === 1 ? ' empleado quedó sin departamento' : ' empleados quedaron sin departamento') });
+  });
+  (sc.puestos || []).forEach(function (d) {
+    avisos.push({ nombre: d.nombre, filas: d.filas, motivo: 'El puesto "' + d.nombre + '" no existe en el catálogo: ' + d.filas + (d.filas === 1 ? ' empleado quedó sin puesto' : ' empleados quedaron sin puesto') });
+  });
+  return avisos;
 }
 
 // Los modelos antiguos devolvían { fila: <objeto>, error }; los nuevos { fila: <número>, nombre, error }.
@@ -172,14 +213,17 @@ function celdaCsv(valor) {
   return '"' + s.replace(/"/g, '""') + '"';
 }
 
-// CSV (con BOM UTF-8) de omitidas + errores + duplicados: Tipo, Fila, Nombre, Motivo.
-export function construirCsvResultado(errores, duplicadosDetalle) {
+// CSV (con BOM UTF-8) de omitidas + errores + duplicados + avisos de catálogo: Tipo, Fila, Nombre, Motivo.
+export function construirCsvResultado(errores, duplicadosDetalle, sinCatalogo) {
   const lineas = [['Tipo', 'Fila', 'Nombre', 'Motivo'].map(celdaCsv).join(',')];
   (errores || []).forEach(function (e) {
     lineas.push([celdaCsv('Error'), celdaCsv(numeroFilaDeError(e)), celdaCsv(nombreDeError(e)), celdaCsv(e.error)].join(','));
   });
   (duplicadosDetalle || []).forEach(function (d) {
     lineas.push([celdaCsv('Duplicado'), celdaCsv(numeroFilaDeError(d)), celdaCsv(nombreDeError(d)), celdaCsv(d.motivo)].join(','));
+  });
+  avisosSinCatalogo(sinCatalogo).forEach(function (a) {
+    lineas.push([celdaCsv('Aviso'), celdaCsv(''), celdaCsv(a.nombre), celdaCsv(a.motivo)].join(','));
   });
   return '﻿' + lineas.join('\r\n') + '\r\n';
 }

@@ -6,11 +6,14 @@
 // cuerpo supere los 100 kb (un cuerpo mayor lo corta el parser global con 413 JSON).
 const MAX_FILAS_IMPORTAR = 200;
 const MAX_DUPLICADOS_DETALLE = 200;
+const MAX_SIN_CATALOGO = 100;
 
 const ANIO_MINIMO = 1900;
 const ANIO_MAXIMO = 2100;
 
-// Longitudes por columna de empleados (según el esquema de BD) y su etiqueta para el mensaje.
+// Longitudes máximas por columna de empleados y su etiqueta para el mensaje. Son reglas de negocio y en nss, curp y
+// rfc son MÁS estrictas que el VARCHAR(20) del esquema (NSS de 11 dígitos, CURP de 18, RFC de 13); en el resto
+// coinciden con el VARCHAR del esquema.
 const LIMITES_EMPLEADO = [
   ["nombre", 100, "Nombre"],
   ["apellido_paterno", 100, "Apellido paterno"],
@@ -131,6 +134,7 @@ function nombresUnicos(filas, clave) {
 module.exports = {
   MAX_FILAS_IMPORTAR,
   MAX_DUPLICADOS_DETALLE,
+  MAX_SIN_CATALOGO,
   LIMITES_EMPLEADO,
   esFechaValida,
   textoSeguro,

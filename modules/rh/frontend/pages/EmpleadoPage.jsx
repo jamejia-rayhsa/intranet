@@ -154,8 +154,10 @@ export default function EmpleadoPage() {
     }
   }
 
-  async function cargarEmpleados() {
-    setCargando(true);
+  // silencioso: recarga la lista SIN poner `cargando` (el early return de "Cargando empleados..." desmontaría el
+  // importador abierto y con él su vista de resultados). Usar siempre silencioso tras importar.
+  async function cargarEmpleados({ silencioso = false } = {}) {
+    if (!silencioso) setCargando(true);
     try {
       const respuesta = await obtenerEmpleados({
         pagina,
@@ -170,7 +172,7 @@ export default function EmpleadoPage() {
     } catch (error) {
       console.error("Error al cargar empleados:", error);
     } finally {
-      setCargando(false);
+      if (!silencioso) setCargando(false);
     }
   }
 
@@ -328,7 +330,7 @@ export default function EmpleadoPage() {
             method: 'POST',
             body: JSON.stringify({ filas }),
           })}
-          onExito={() => { cargarEmpleados(); }}
+          onExito={() => { cargarEmpleados({ silencioso: true }); }}
           onCancelar={() => setMostrarImportador(false)}
         />
       )}

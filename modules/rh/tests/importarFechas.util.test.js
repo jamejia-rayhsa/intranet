@@ -51,12 +51,28 @@ describe("normalizarFecha - serial de Excel", () => {
     expect(U.normalizarFecha("45305")).toEqual({ valor: "2024-01-14" });
   });
 
-  it("respeta el sistema 1900: serial 1, 59, 61 y el 29-feb-1900", () => {
-    expect(U.normalizarFecha(1)).toEqual({ valor: "1900-01-01" });
-    expect(U.normalizarFecha(59)).toEqual({ valor: "1900-02-28" });
-    expect(U.normalizarFecha(60).error).toMatch(/29 de febrero de 1900/);
-    expect(U.normalizarFecha(61)).toEqual({ valor: "1900-03-01" });
+  it("respeta el sistema 1900 (fechaDeSerialExcel): serial 1, 59, 60 (29-feb-1900 inexistente) y 61", () => {
+    expect(U.fechaDeSerialExcel(1)).toEqual({ valor: "1900-01-01" });
+    expect(U.fechaDeSerialExcel(59)).toEqual({ valor: "1900-02-28" });
+    expect(U.fechaDeSerialExcel(60).error).toMatch(/29 de febrero de 1900/);
+    expect(U.fechaDeSerialExcel(61)).toEqual({ valor: "1900-03-01" });
     expect(U.normalizarFecha(25569)).toEqual({ valor: "1970-01-01" });
+    expect(U.normalizarFecha(10000)).toEqual({ valor: "1927-05-18" });
+  });
+
+  it("un año suelto o un número de 1 a 4 dígitos es 'fecha incompleta', nunca un serial", () => {
+    for (const v of [1990, 2024, 1, 59, 60, 61, 9999, "1990", "2024", "0", "12", "9999", "1990.5", 1990.5]) {
+      const r = U.normalizarFecha(v);
+      expect(r.valor).toBe("");
+      expect(r.error).toBe("fecha incompleta: usa DD/MM/AAAA o AAAA-MM-DD");
+    }
+    expect(U.normalizarFecha(-5).error).toBeTruthy();
+  });
+
+  it("límite de 5 dígitos: 9999 incompleto, 10000 serial válido; 12345 = 1933-10-18 (serial, no año)", () => {
+    expect(U.normalizarFecha("9999").error).toMatch(/incompleta/);
+    expect(U.normalizarFecha("10000")).toEqual({ valor: "1927-05-18" });
+    expect(U.normalizarFecha("12345")).toEqual({ valor: "1933-10-18" });
   });
 
   it("bisiestos: 29-feb-2024 y 28/29-feb-2100 (2100 no es bisiesto)", () => {
@@ -145,6 +161,14 @@ describe("normalizarFecha - objeto Date en distintas zonas horarias", () => {
     `);
     // 23:59:51 se interpreta como la medianoche (desfase de segundos de SheetJS) del día siguiente
     expect(r).toEqual(["2024-01-15", "2024-01-15", "2024-01-15", "2024-01-16", "2024-12-31", "2024-02-29", "1990-01-01"]);
+  });
+
+  it.each(ZONAS)("heurística del último minuto: solo 23:59:xx pasa al día siguiente (TZ=%s)", (zona) => {
+    const r = enZona(zona, `
+      const f = (h, m, s) => normalizarFecha(new Date(2024, 0, 15, h, m, s)).valor;
+      return [f(0, 0, 0), f(0, 0, 36), f(12, 0, 0), f(18, 0, 0), f(23, 0, 0), f(23, 58, 59), f(23, 59, 0), f(23, 59, 36), f(23, 59, 59)];
+    `);
+    expect(r).toEqual(["2024-01-15", "2024-01-15", "2024-01-15", "2024-01-15", "2024-01-15", "2024-01-15", "2024-01-16", "2024-01-16", "2024-01-16"]);
   });
 
   it.each(ZONAS)("un .xlsx REAL con fechas de Excel se lee sin desfase (TZ=%s)", (zona) => {
@@ -272,7 +296,32 @@ describe("lotes y resultados", () => {
     acc = U.sumarResultados(acc, { insertados: 90, duplicados: 5, errores: [{ fila: 3, error: "a" }], duplicados_detalle: [{ fila: 4, motivo: "m" }] });
     acc = U.sumarResultados(acc, { insertados: 10 });
     acc = U.sumarResultados(acc, undefined);
-    expect(acc).toEqual({ insertados: 100, duplicados: 5, errores: [{ fila: 3, error: "a" }], duplicados_detalle: [{ fila: 4, motivo: "m" }] });
+    expect(acc).toEqual({
+      insertados: 100, duplicados: 5, errores: [{ fila: 3, error: "a" }], duplicados_detalle: [{ fila: 4, motivo: "m" }],
+      sin_catalogo: { puestos: [], departamentos: [] },
+    });
+  });
+
+  it("suma sin_catalogo por nombre (sin distinguir mayúsculas), con tope de 100 nombres", () => {
+    let acc = U.resultadoVacio();
+    acc = U.sumarResultados(acc, { sin_catalogo: { departamentos: [{ nombre: "Logística", filas: 2 }], puestos: [{ nombre: "Chofer", filas: 1 }] } });
+    acc = U.sumarResultados(acc, { sin_catalogo: { departamentos: [{ nombre: "LOGÍSTICA", filas: 3 }, { nombre: "Otro", filas: 1 }] } });
+    expect(acc.sin_catalogo).toEqual({
+      departamentos: [{ nombre: "Logística", filas: 5 }, { nombre: "Otro", filas: 1 }],
+      puestos: [{ nombre: "Chofer", filas: 1 }],
+    });
+    const muchos = Array.from({ length: 150 }, (_, i) => ({ nombre: "P" + i, filas: 1 }));
+    expect(U.sumarResultados(U.resultadoVacio(), { sin_catalogo: { puestos: muchos } }).sin_catalogo.puestos).toHaveLength(100);
+  });
+
+  it("los avisos de catálogo salen en la vista y en el CSV como 'Aviso'", () => {
+    const sc = { departamentos: [{ nombre: "Logística", filas: 2 }], puestos: [{ nombre: "Chofer", filas: 1 }] };
+    const av = U.avisosSinCatalogo(sc);
+    expect(av[0].motivo).toBe('El departamento "Logística" no existe en el catálogo: 2 empleados quedaron sin departamento');
+    expect(av[1].motivo).toBe('El puesto "Chofer" no existe en el catálogo: 1 empleado quedó sin puesto');
+    const csv = U.construirCsvResultado([], [], sc).slice(1).trim().split("\r\n");
+    expect(csv[1]).toBe('"Aviso","","Logística","El departamento ""Logística"" no existe en el catálogo: 2 empleados quedaron sin departamento"');
+    expect(csv).toHaveLength(3);
   });
 
   it("lee número y nombre tanto del formato nuevo como del antiguo (fila objeto)", () => {

@@ -5,8 +5,8 @@
 //   - vacío (null, undefined, '' o solo espacios) -> { valor: '' } sin error.
 //   - Date (SheetJS con cellDates:true): se usa la fecha calendario LOCAL de la celda, sin pasar por UTC
 //     (toISOString desfasaría un día en zonas al este de UTC o con hora cercana a la medianoche).
-//   - número o texto numérico: serial de Excel (sistema 1900, con el error del 29-feb-1900). Se toma la parte
-//     entera; la hora del serial se descarta.
+//   - número o texto numérico: serial de Excel (sistema 1900) con parte entera de 5 o 6 dígitos; se toma la parte
+//     entera y la hora se descarta. De 1 a 4 dígitos (un año suelto como 1990) -> 'fecha incompleta'.
 //   - texto: AAAA-MM-DD, AAAA/MM/DD, DD/MM/AAAA y DD-MM-AAAA (día primero, formato de México).
 //   - lo inválido o ambiguo devuelve { valor: '', error } con un mensaje claro.
 
@@ -59,9 +59,11 @@ function fechaDeDate(d) {
   let anio = d.getFullYear();
   let mes = d.getMonth() + 1;
   let dia = d.getDate();
-  // SheetJS arrastra segundos de desfase histórico de la zona (p. ej. 23:59:xx del día previo al medianoche
-  // de la celda): si la hora es 23:59, la celda era el día siguiente a las 00:00.
-  if (d.getHours() === 23 && d.getMinutes() >= 59) {
+  // SheetJS arrastra un desfase de segundos de la zona (medido: hasta 36 s; en algunas zonas la medianoche de la
+  // celda llega como 23:59:xx del día previo). Solo se corrige lo que cae en el ÚLTIMO MINUTO del día
+  // (23:59:00-23:59:59): una hora real distinta (p. ej. 23:58:59 o 18:00) conserva su día. Una celda con hora
+  // 23:59:xx en una columna de fecha es indistinguible de ese desfase y se toma como el día siguiente.
+  if (d.getHours() === 23 && d.getMinutes() === 59) {
     const sig = new Date(Date.UTC(anio, mes - 1, dia) + MS_DIA);
     anio = sig.getUTCFullYear();
     mes = sig.getUTCMonth() + 1;
@@ -74,17 +76,26 @@ const HORA = '(?:[T ]\\d{1,2}:\\d{2}(?::\\d{2}(?:\\.\\d+)?)?(?:Z|[+-]\\d{2}:?\\d
 const RE_ANIO_PRIMERO = new RegExp('^(\\d{4})([-/])(\\d{1,2})\\2(\\d{1,2})' + HORA + '$');
 const RE_DIA_PRIMERO = /^(\d{1,2})([-/])(\d{1,2})\2(\d{4})$/;
 const RE_NUMERO = /^\d{1,6}(?:\.\d+)?$/;
+const MSG_INCOMPLETA = 'fecha incompleta: usa DD/MM/AAAA o AAAA-MM-DD';
+
+// Serial aceptado en el importador: parte entera de 5 o 6 dígitos (10000 = 1927-05-18 en adelante; los de 1900-1927
+// no se admiten para no confundir un año suelto como 1990 con un serial). El rango 1900-2100 lo valida construir().
+function fechaDeNumero(n) {
+  if (typeof n !== 'number' || !isFinite(n) || n < 0) return { valor: '', error: 'Número de fecha inválido' };
+  if (Math.floor(n) < 10000) return { valor: '', error: MSG_INCOMPLETA };
+  return fechaDeSerialExcel(n);
+}
 
 export function normalizarFecha(valor) {
   if (valor === null || valor === undefined) return { valor: '' };
   if (Object.prototype.toString.call(valor) === '[object Date]') return fechaDeDate(valor);
-  if (typeof valor === 'number') return fechaDeSerialExcel(valor);
+  if (typeof valor === 'number') return fechaDeNumero(valor);
   if (typeof valor !== 'string') return { valor: '', error: 'Formato de fecha no reconocido' };
 
   const texto = valor.trim();
   if (texto === '') return { valor: '' };
 
-  if (RE_NUMERO.test(texto)) return fechaDeSerialExcel(Number(texto));
+  if (RE_NUMERO.test(texto)) return fechaDeNumero(Number(texto));
 
   let m = RE_ANIO_PRIMERO.exec(texto);
   if (m) return construir(Number(m[1]), Number(m[3]), Number(m[4]));

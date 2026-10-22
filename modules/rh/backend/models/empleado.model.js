@@ -1,6 +1,6 @@
 const { grupo } = require("../config/database");
 const {
-  MAX_DUPLICADOS_DETALLE, numeroFila, nombreCompleto, prepararFilaEmpleado,
+  MAX_DUPLICADOS_DETALLE, MAX_SIN_CATALOGO, numeroFila, nombreCompleto, prepararFilaEmpleado,
 } = require("../utils/importarEmpleados");
 
 const CAMPOS_PERMITIDOS = [
@@ -279,7 +279,7 @@ const Empleado = {
   },
 
   // Importación por lotes. Cada fila se valida (fechas AAAA-MM-DD reales y longitudes) ANTES del INSERT.
-  // Respuesta: { insertados, duplicados, duplicados_detalle:[{fila,nombre,motivo}] (máx. 200), errores:[{fila,nombre,error}] }.
+  // Respuesta: { sin_catalogo:{puestos:[{nombre,filas}],departamentos:[...]} (máx. 100 nombres c/u), insertados, duplicados, duplicados_detalle:[{fila,nombre,motivo}] (máx. 200), errores:[{fila,nombre,error}] }.
   // `fila` es el número de fila del archivo (_fila). Nunca se devuelve texto de PostgreSQL.
   async importarLote(filas, mapaPuestos = {}, mapaDepartamentos = {}) {
     const curpsExistentes = new Set(
@@ -296,6 +296,15 @@ const Empleado = {
     let duplicados = 0;
     const duplicadosDetalle = [];
     const errores = [];
+    // Puestos/departamentos escritos en el archivo que no existen en el catálogo: la fila se guarda con NULL y se avisa.
+    const sinPuesto = new Map();
+    const sinDepto = new Map();
+    const anotarFaltante = (mapa, nombre) => {
+      const k = nombre.toLowerCase();
+      const previo = mapa.get(k);
+      if (previo) previo.filas++;
+      else if (mapa.size < MAX_SIN_CATALOGO) mapa.set(k, { nombre, filas: 1 });
+    };
 
     const registrarDuplicado = (cruda, fila, motivo) => {
       duplicados++;
@@ -346,6 +355,8 @@ const Empleado = {
           ]
         );
         insertados++;
+        if (fila.puesto && !puestoId) anotarFaltante(sinPuesto, fila.puesto);
+        if (fila.departamento && !deptId) anotarFaltante(sinDepto, fila.departamento);
         if (curpLower) { curpsExistentes.add(curpLower); curpsArchivo.add(curpLower); }
         if (nominaLower) { nominasExistentes.add(nominaLower); nominasArchivo.add(nominaLower); }
       } catch (e) {
@@ -354,7 +365,10 @@ const Empleado = {
       }
     }
 
-    return { insertados, duplicados, duplicados_detalle: duplicadosDetalle, errores };
+    return {
+      insertados, duplicados, duplicados_detalle: duplicadosDetalle, errores,
+      sin_catalogo: { puestos: [...sinPuesto.values()], departamentos: [...sinDepto.values()] },
+    };
   },
 };
 
