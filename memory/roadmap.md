@@ -80,3 +80,9 @@
 ## Fase 4 — Motor de análisis (retardo/falta/salida anticipada/incompleta, cruce con vacaciones, permisos y calendario) con snapshot de turno y periodos quincenales cerrados a los 3 días — NO INICIADA
 ## Fase 5 — Pantallas: Mi asistencia, Equipo (jefe), RH (turnos, asignaciones, justificaciones, estado de sincronización) — NO INICIADA
 ## Fase 6 — Revisión final, pruebas integrales y cierre — NO INICIADA
+
+---
+
+# Corrección (2026-10-22): importador de empleados (fechas de Excel y resultado oculto)
+> Rama `fix/importador-empleados-fechas`. Una sola fase: coder → revisor + tester → commit → PR → GO/NO-GO y OK de despliegue del humano.
+- **Situación:** EN CURSO (coder). Diagnóstico y alcance en decisions.md (2026-10-22).

@@ -1,4 +1,5 @@
 const Empleado = require("../models/empleado.model");
+const { validarCuerpoImportacion, nombresUnicos } = require("../utils/importarEmpleados");
 const Ubicacion = require("../models/ubicacion.model");
 const Usuario = require("../../../portal/backend/models/usuario.model");
 const SupabaseAdmin = require("../../../portal/backend/services/supabaseAdmin.service");
@@ -425,19 +426,19 @@ const ControladorEmpleado = {
 
   async importar(req, res) {
     try {
-      const { filas } = req.body;
-      if (!Array.isArray(filas) || filas.length === 0)
-        return res.status(400).json({ exito: false, mensaje: 'No se recibieron filas para importar' });
+      const { filas } = req.body || {};
+      const problema = validarCuerpoImportacion(filas);
+      if (problema) return res.status(400).json({ exito: false, mensaje: problema });
 
-      const nombresPuesto = [...new Set(filas.map(f => f.puesto).filter(Boolean))];
-      const nombresDepto  = [...new Set(filas.map(f => f.departamento).filter(Boolean))];
+      const nombresPuesto = nombresUnicos(filas, 'puesto');
+      const nombresDepto  = nombresUnicos(filas, 'departamento');
 
       const [resPuestos, resDeptos] = await Promise.all([
         nombresPuesto.length
-          ? grupo.query("SELECT id, LOWER(nombre) AS nombre FROM puestos WHERE LOWER(nombre) = ANY($1)", [nombresPuesto.map(n => n.toLowerCase())])
+          ? grupo.query("SELECT id, LOWER(nombre) AS nombre FROM puestos WHERE LOWER(nombre) = ANY($1)", [nombresPuesto])
           : { rows: [] },
         nombresDepto.length
-          ? grupo.query("SELECT id, LOWER(nombre) AS nombre FROM departamentos WHERE LOWER(nombre) = ANY($1)", [nombresDepto.map(n => n.toLowerCase())])
+          ? grupo.query("SELECT id, LOWER(nombre) AS nombre FROM departamentos WHERE LOWER(nombre) = ANY($1)", [nombresDepto])
           : { rows: [] },
       ]);
 
@@ -447,9 +448,30 @@ const ControladorEmpleado = {
       resDeptos.rows.forEach(r => { mapaDepartamentos[r.nombre] = r.id; });
 
       const resultado = await Empleado.importarLote(filas, mapaPuestos, mapaDepartamentos);
+
+      // Auditoría sin datos personales: solo conteos. La IP se recorta a 45 caracteres (ip_origen es VARCHAR(45):
+      // un X-Forwarded-For largo haría fallar el INSERT y se perdería el registro).
+      try {
+        const xff = req.headers && req.headers["x-forwarded-for"];
+        const reqAuditoria = {
+          user: req.user,
+          socket: req.socket,
+          headers: { ...(req.headers || {}), "x-forwarded-for": xff ? String(xff).slice(0, 45) : undefined },
+        };
+        await registrarAccion(reqAuditoria, "rh", "empleados", "importacion", "IMPORTAR_EMPLEADOS", null, {
+          filas_recibidas: filas.length,
+          insertados: resultado.insertados,
+          duplicados: resultado.duplicados,
+          errores: resultado.errores.length,
+        });
+      } catch (errorAuditoria) {
+        console.error("Error al registrar auditoría de la importación:", errorAuditoria.message);
+      }
+
       res.json({ exito: true, datos: resultado });
     } catch (error) {
-      res.status(500).json({ exito: false, mensaje: 'Error al importar empleados', error: error.message });
+      console.error('[empleados] importar', error);
+      res.status(500).json({ exito: false, mensaje: 'Error al importar empleados' });
     }
   },
 };

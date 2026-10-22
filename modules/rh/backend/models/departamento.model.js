@@ -1,4 +1,5 @@
 const { grupo } = require("../config/database");
+const { textoSeguro, numeroFila, MAX_DUPLICADOS_DETALLE } = require("../utils/importarEmpleados");
 
 const Departamento = {
   async crear(datos) {
@@ -75,25 +76,32 @@ const Departamento = {
     let insertados = 0;
     let duplicados = 0;
     const errores = [];
+    const duplicadosDetalle = [];
 
     for (const fila of filas) {
-      if (!fila.nombre) { errores.push({ fila, error: "El campo nombre es requerido" }); continue; }
-      if (existentes.has(fila.nombre.toLowerCase())) { duplicados++; continue; }
-      const areaId = fila.area ? (mapaAreas[fila.area.toLowerCase()] || null) : null;
+      const nombre = textoSeguro(fila && fila.nombre);
+      if (!nombre) { errores.push({ fila: numeroFila(fila), nombre: '', error: "El campo nombre es requerido" }); continue; }
+      if (existentes.has(nombre.toLowerCase())) {
+        duplicados++;
+        if (duplicadosDetalle.length < MAX_DUPLICADOS_DETALLE) duplicadosDetalle.push({ fila: numeroFila(fila), nombre, motivo: 'Nombre ya existe' });
+        continue;
+      }
+      const area = textoSeguro(fila.area);
+      const areaId = area ? (mapaAreas[area.toLowerCase()] || null) : null;
       try {
         await grupo.query(
           "INSERT INTO departamentos (nombre, descripcion, area_id) VALUES ($1, $2, $3)",
-          [fila.nombre, fila.descripcion || null, areaId]
+          [nombre, textoSeguro(fila.descripcion) || null, areaId]
         );
         insertados++;
-        existentes.add(fila.nombre.toLowerCase());
+        existentes.add(nombre.toLowerCase());
       } catch (e) {
         console.error("[departamentos] importar", e);
-        errores.push({ fila, error: "No se pudo insertar el departamento" });
+        errores.push({ fila: numeroFila(fila), nombre, error: "No se pudo insertar la fila" });
       }
     }
 
-    return { insertados, duplicados, errores };
+    return { insertados, duplicados, duplicados_detalle: duplicadosDetalle, errores };
   },
 };
 

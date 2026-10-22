@@ -1,4 +1,5 @@
 const { grupo } = require("../config/database");
+const { textoSeguro, numeroFila, MAX_DUPLICADOS_DETALLE } = require("../utils/importarEmpleados");
 
 const Puesto = {
   async crear(datos) {
@@ -69,32 +70,35 @@ const Puesto = {
     let insertados = 0;
     let duplicados = 0;
     const errores = [];
+    const duplicadosDetalle = [];
 
     for (const fila of filas) {
-      if (!fila.nombre) {
-        errores.push({ fila, error: 'El campo nombre es requerido' });
+      const nombre = textoSeguro(fila && fila.nombre);
+      if (!nombre) {
+        errores.push({ fila: numeroFila(fila), nombre: '', error: 'El campo nombre es requerido' });
         continue;
       }
-      if (existentes.has(fila.nombre.toLowerCase())) {
+      if (existentes.has(nombre.toLowerCase())) {
         duplicados++;
+        if (duplicadosDetalle.length < MAX_DUPLICADOS_DETALLE) duplicadosDetalle.push({ fila: numeroFila(fila), nombre, motivo: 'Nombre ya existe' });
         continue;
       }
-      const deptId = fila.departamento
-        ? (mapaDepartamentos[fila.departamento.toLowerCase()] || null)
-        : null;
+      const depto = textoSeguro(fila.departamento);
+      const deptId = depto ? (mapaDepartamentos[depto.toLowerCase()] || null) : null;
       try {
         await grupo.query(
           "INSERT INTO puestos (nombre, descripcion, departamento_id) VALUES ($1, $2, $3)",
-          [fila.nombre, fila.descripcion || null, deptId]
+          [nombre, textoSeguro(fila.descripcion) || null, deptId]
         );
         insertados++;
-        existentes.add(fila.nombre.toLowerCase());
+        existentes.add(nombre.toLowerCase());
       } catch (e) {
-        errores.push({ fila, error: e.message });
+        console.error('[puestos] importar fila', numeroFila(fila), e);
+        errores.push({ fila: numeroFila(fila), nombre, error: 'No se pudo insertar la fila' });
       }
     }
 
-    return { insertados, duplicados, errores };
+    return { insertados, duplicados, duplicados_detalle: duplicadosDetalle, errores };
   },
 };
 

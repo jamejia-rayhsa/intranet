@@ -2940,3 +2940,105 @@ Hallazgos abiertos:
 **Veredicto:** CON OBSERVACIONES. Sin hallazgos críticos ni altos; no bloquea la fusión ni el despliegue a staging. Recomendado antes de fusionar: F2 (el test intermitente pasa a ser CI roto). Recomendado antes de producción: decidir F1 y corregir F3 y F4 (doc y compose).
 
 **Pendientes sin verificar:** iptables/DOCKER-USER reales (F4, F5), `docker compose up` completo, el mensaje exacto de la interpolación de `INGESTA_PORT=abc` (el compose falla con `invalid containerPort: abc`), Traefik con un servicio en la red `proxy` que tenga la ingesta.
+
+### [2026-10-22] [revisor] — Importador de empleados
+**Alcance:** commit aff5f03 (HEAD de fix/importador-empleados-fechas). Lectura de code-notes y decisions (entrada 2026-10-22 del orquestador). Jest: importarFechas.util, importarEmpleados (backend) y empleado.controller: 87/87 en verde. Sin mutaciones (solo lectura). Verificaciones con node sobre una copia de importarFechas.js en el scratchpad.
+
+**1. CRÍTICO — El resultado sigue sin quedarse abierto en EmpleadoPage (viola la decisión)**
+**Archivo/línea:** modules/rh/frontend/pages/EmpleadoPage.jsx:158 (`setCargando(true)` dentro de `cargarEmpleados`), :281-283 (`if (cargando) return <div>Cargando empleados...</div>`), :300-333 (ImportadorArchivo renderizado en el return posterior), :331 (`onExito={() => { cargarEmpleados(); }}`).
+**Problema:** `onExito` llama `cargarEmpleados()`, que pone `cargando=true` antes de la petición; el componente devuelve el placeholder y desmonta `ImportadorArchivo` con su estado (`vista='resultado'`, `resultado`). El usuario ve el spinner y luego la lista, sin el resumen ni los errores: exactamente el síntoma original. CrudPage y PuestosPage sí se salvan porque su `cargar()` no pone `cargando=true` (CrudPage.jsx:31-41, PuestosPage.jsx:30-41).
+**Severidad:** crítico (violación de la decisión 2026-10-22 "mantener abierta la vista de resultados"). Escalado al orquestador.
+**Fix sugerido:** en EmpleadoPage no usar `cargando` para recargas: separar carga inicial (`cargandoInicial`) del refresco, o no poner `cargando=true` en `cargarEmpleados` cuando ya hay datos; alternativa: renderizar el importador antes del early return. Añadir prueba de componente que monte EmpleadoPage, importe y compruebe que `role="status"` con "Resultado de la importación" sigue en el DOM. Los jest actuales no lo detectan (no hay pruebas de componente del importador) y el harness de Chromium citado en code-notes no monta EmpleadoPage.
+
+**2. ALTO — Texto numérico de 1 a 6 dígitos se toma como serial de Excel: años sueltos quedan como fechas válidas en 1905/1933**
+**Archivo/línea:** modules/portal/frontend/utils/importarFechas.js:76 (`RE_NUMERO`) y :87 (`if (RE_NUMERO.test(texto)) return fechaDeSerialExcel(...)`).
+**Problema:** verificado con node: `"1990"` -> `1905-06-12`, `"2024"` -> `1905-07-16`, `"12345"` -> `1933-10-18`, todos "válidos" y sin error; un CSV o una celda de texto con solo el año de nacimiento se importa como fecha incorrecta sin aviso. La prueba `importarFechas.util.test.js:46-52` fija el comportamiento de `"45305"` pero no cubre años sueltos.
+**Severidad:** alto (corrupción silenciosa de fecha de nacimiento / ingreso; afecta cupo y antigüedad).
+**Fix sugerido:** en texto, solo tratar como serial un número con 5 o más dígitos o con parte decimal (los seriales de 2024 son 45xxx); rechazar con "Formato no reconocido (usa AAAA-MM-DD o DD/MM/AAAA)" los textos de 4 dígitos o menos. Mantener el serial para `typeof valor === 'number'`, donde Excel sí lo entrega. Añadir pruebas con "1990", "2024" y "12345".
+
+**3. ALTO (riesgo de negocio, preexistente, no cambiar la regla) — Puesto o departamento no encontrado se guarda como NULL sin aviso**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js (`puestoId = ... || null`, `deptId = ... || null`, ~línea 320-322); modules/rh/backend/models/departamento.model.js (`areaId`); modules/rh/backend/models/puesto.model.js (`deptId`); controladores empleado.controller.js:437-449 y puesto/departamento.controller.js (construcción de `mapaPuestos`/`mapaDepartamentos`).
+**Problema:** el empleado queda sin puesto/departamento y, por tanto, sin turno por departamento, cupo de vacaciones ni aprobación por jefe, y la importación informa "Insertados" sin mencionarlo.
+**Severidad:** alto (negocio).
+**Fix sugerido (sin cambiar la regla):** que `importarLote` acumule `sin_catalogo: { puestos: [{ nombre, filas: n }], departamentos: [{ nombre, filas: n }] }` (filas afectadas por nombre que no existe en el catálogo) y lo devuelva en `datos`; `VistaResultado` muestra un bloque de aviso ámbar ("N empleados se importaron sin puesto/departamento: ...") y lo incluye en el CSV como tipo "Aviso". Los contadores de `resultadoVacio`/`sumarResultados` se extienden igual (sumar por nombre). Opcional: mostrar lo mismo en la vista previa antes de confirmar, usando los mapas de catálogo que ya se cargan por lote.
+
+**4. MEDIO — Fallo a mitad de lotes: sin reintento y el lote en vuelo se reporta como "No se envió" aunque pudo insertarse**
+**Archivo/línea:** modules/portal/frontend/components/ImportadorArchivo.jsx:475-481 (`break` ante fallo o excepción de red), :488-493 (todas las filas desde `enviadas` marcadas "No se envió: ...").
+**Problema:** si la red cae con el lote 3 ya en vuelo, el servidor puede haber insertado 100 filas; la UI las cuenta como no enviadas. Si el usuario reimporta el archivo, las filas con CURP o nómina se marcan como duplicadas (correcto), pero las filas sin CURP ni nómina se insertan otra vez (duplicados reales). La detección solo usa CURP y nómina (empleado.model.js, consulta de curpsExistentes/nominasExistentes).
+**Severidad:** medio.
+**Fix sugerido:** distinguir en el mensaje el lote en vuelo ("resultado desconocido: revisa el listado antes de reimportar") de los lotes no enviados; ofrecer "Reintentar lotes pendientes" que reenvíe solo los no confirmados; en backend, detección de duplicados también por nombre + apellido paterno + fecha de nacimiento cuando no hay CURP ni nómina (o una clave de idempotencia por lote).
+
+**5. MEDIO — Duplicados entre peticiones concurrentes y ausencia de restricción UNIQUE**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js (`importarLote`: dos SELECT de tabla completa al inicio de cada petición y comprobación solo en memoria); migraciones 001/004/010 (no existe UNIQUE sobre `curp` ni `numero_nomina`; solo índice no único `idx_empleados_nomina`).
+**Problema:** dos importaciones simultáneas (dos pestañas o dos usuarios) leen el mismo estado y ambas insertan la misma CURP. Además, cada petición carga todos los empleados (y todas las nóminas) aunque solo lleguen 100 filas: con lotes de 100 el coste crece con N x total de empleados.
+**Severidad:** medio.
+**Fix sugerido:** `CREATE UNIQUE INDEX ... ON empleados (LOWER(curp)) WHERE curp IS NOT NULL AND curp <> ''` y lo mismo para `LOWER(numero_nomina)`, con migración que valide antes datos existentes; capturar `23505` por fila y contarlo como duplicado. Sustituir los SELECT completos por una consulta `WHERE LOWER(curp) = ANY($1)` con las claves del lote.
+
+**6. MEDIO — La importación de empleados no registra auditoría**
+**Archivo/línea:** modules/rh/backend/controllers/empleado.controller.js:426-456 (`importar`); compárese con `registrarAccion` en los alta/edición de la misma clase (líneas ~220 y ~345).
+**Problema:** un alta masiva de empleados (con datos personales) no deja rastro de quién, cuándo ni cuántas filas se insertaron.
+**Severidad:** medio.
+**Fix sugerido:** tras `importarLote`, `registrarAccion` con módulo rh, acción "importar_empleados" y `{ insertados, duplicados, errores: errores.length }`, con el mismo manejo no bloqueante (try/catch con console.error) que usa el controlador en las demás acciones.
+
+**7. MEDIO — Catálogos sin validación de longitud: el error es genérico y sin motivo**
+**Archivo/línea:** modules/rh/backend/models/area.model.js, puesto.model.js, departamento.model.js (catch de INSERT: "No se pudo insertar la fila"); esquema: `nombre VARCHAR(100) NOT NULL UNIQUE` (migración 001/004/005).
+**Problema:** un nombre de más de 100 caracteres falla en PostgreSQL y el usuario recibe "No se pudo insertar la fila" sin decir por qué; no cumple "errores claros" de la decisión.
+**Severidad:** medio.
+**Fix sugerido:** validar `nombre` ≤ 100 caracteres (y no vacío) antes del INSERT, con mensaje "Nombre excede 100 caracteres (tiene N)", igual que en `LIMITES_EMPLEADO` de utils/importarEmpleados.js.
+
+**8. MEDIO — Cobertura de pruebas: el flujo de UI no se prueba con jest**
+**Archivo/línea:** modules/rh/tests/importarFechas.util.test.js (solo utilidades puras); no hay prueba de ImportadorArchivo.jsx ni de EmpleadoPage/PuestosPage/CrudPage.
+**Problema:** el hallazgo 1 pasa todas las pruebas. No hay evidencia de mutación (ni de getFullYear/getUTCFullYear ni de la validación de 1900-2100 de forma aislada).
+**Severidad:** medio.
+**Fix sugerido:** prueba de componente (Testing Library o similar, según el stack actual) para: resultado visible tras onExito en las tres páginas; cierre con Escape solo fuera de "procesando"; doble clic no duplica lotes. Ejecutar una mutación manual sobre fechaDeDate en un clon fuera del repo.
+
+**9. BAJO — Heurística de 23:59 mueve fechas reales un día**
+**Archivo/línea:** modules/portal/frontend/utils/importarFechas.js:62-69.
+**Problema:** si una celda de fecha llega como Date a las 23:59:xx, se suma un día; un valor real de ese tipo se corrompe. Es un parche sobre el desfase de SheetJS, no una corrección de origen.
+**Severidad:** bajo.
+**Fix sugerido:** redondear al día local más cercano: `Math.round((d - new Date(y, m-1, dia)) / MS_DIA)` sumado a la fecha calendario, en lugar de comparar la hora.
+
+**10. BAJO — Comentario de longitudes no coincide con el esquema**
+**Archivo/línea:** modules/rh/backend/utils/importarEmpleados.js:13 ("según el esquema de BD") y :20 (`nss` 11), :18 (`curp` 18), :19 (`rfc` 13).
+**Problema:** el esquema usa VARCHAR(20) para nss, curp y rfc. Los límites más estrictos son reglas de negocio (NSS de 11 dígitos, CURP 18, RFC 13), pero el comentario dice otra cosa.
+**Severidad:** bajo.
+**Fix sugerido:** corregir el comentario ("reglas de negocio, más estrictas que el VARCHAR(20) del esquema") y documentarlo en code-notes.
+
+**11. BAJO — Accesibilidad del diálogo**
+**Archivo/línea:** modules/portal/frontend/components/ImportadorArchivo.jsx:520 (`role="dialog" aria-modal="true"` sin trampa de foco), :464 (foco solo al montar), :346 (`role="status"` en un div con `tabIndex=-1` que recibe foco).
+**Problema:** Tab sale del diálogo hacia la página de fondo; al cerrar no se devuelve el foco al botón "Importar"; el anuncio del resultado depende de que el foco caiga en un live region.
+**Severidad:** bajo.
+**Fix sugerido:** atrapar Tab dentro del diálogo; restaurar foco al elemento que abrió el importador al desmontar; anunciar el resumen con un `aria-live="polite"` separado y dejar el foco en el encabezado del diálogo.
+
+**12. BAJO — Doble clic en Importar sin guardia**
+**Archivo/línea:** modules/portal/frontend/components/ImportadorArchivo.jsx:466 (`confirmarImportacion`), :303-307 (botón).
+**Problema:** la guardia depende solo de `disabled` por estado; entre dos eventos rápidos puede lanzarse el envío dos veces (los duplicados lo mitigan, pero se envían lotes dobles).
+**Severidad:** bajo.
+**Fix sugerido:** `const enCurso = useRef(false)` al inicio de confirmarImportacion, con `if (enCurso.current) return;`.
+
+**13. BAJO — Un INSERT por fila sin transacción por lote**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js (bucle con `await grupo.query(INSERT ...)`, ~línea 333).
+**Problema:** un fallo de conexión a mitad del lote deja filas insertadas y otras no, sin marca de lote. Es N+1 aceptable para 200 filas, pero no es atómico.
+**Severidad:** bajo.
+**Fix sugerido:** una transacción por lote (BEGIN/COMMIT) o INSERT multifila; se reporta el lote completo como no confirmado si el COMMIT falla.
+
+**14. INFO — Cambio de contrato (`{insertados, duplicados, errores}`)**
+**Archivo/línea:** modules/rh/backend/models/*.model.js (`importarLote`, `errores[].fila` pasa de objeto a número; `errores[].error` pasa de texto de PostgreSQL a mensaje propio; nuevo campo `duplicados_detalle`), controladores de los cuatro catálogos.
+**Problema:** no encontré otros consumidores en el repo (grep de `importar`, `errores` y `ImportadorArchivo` en modules/ y config/): solo ImportadorArchivo y sus 4 páginas. `numeroFilaDeError` acepta ambos formatos.
+**Severidad:** bajo (sin consumidores externos; documentado en el JSDoc de importarLote).
+**Fix sugerido:** ninguno; anotar el contrato nuevo en code-notes.
+
+**Sin hallazgos:**
+- Fixtures: sin datos reales. Los CURP, correos y teléfonos de las pruebas son ficticios ("Ana Prueba", ejemplo.com, 5512345678).
+- Serial de Excel: 1 = 1900-01-01, 59, 60 rechazado (29-feb-1900), 61 = 1900-03-01, parte decimal descartada: correcto y probado.
+- Zonas horarias: la prueba con .xlsx real pasa en America/Mexico_City, UTC y Pacific/Auckland; el código usa getters locales de la fecha de SheetJS.
+- Formatos: DD/MM/AAAA (día primero) y MM/DD/AAAA rechazado si el mes > 12; la ambigüedad 01/02/2024 se interpreta como 1 de febrero (día primero), documentado.
+- 31-feb, 29-feb no bisiesto, años 1900-2100: rechazados en front y backend.
+- Tope de 200 filas (400 con mensaje), 500 sin error.message, mensajes sin texto de PostgreSQL, consultas parametrizadas (ANY($1)): correctos.
+- Autorización: las cuatro rutas de importación usan verificarPermiso con edicion (rh Empleados/Departamentos/Puestos; áreas usa Empleados).
+- Numeración: `_fila` = fila del archivo con encabezado en fila 1; las filas en blanco no desplazan la numeración (`blankrows:true`).
+- Doble lectura de columnas: sin cambios en las columnas de texto; `numeroATexto` y `valorATexto` no alteran CURP, NSS ni teléfonos (probado).
+- Variables CSS usadas: todas definidas en globales.css (`--color-exito`, `--color-advertencia`, `--color-error` y sus -suave).
+- dist/ no está versionado (no hay riesgo de bundle desactualizado en el commit).
+
+**Veredicto:** NO APROBADO para staging. Un crítico (1) rompe la decisión de dejar abierta la vista de resultados en EmpleadoPage, que es la página donde se originó el incidente. Corregir (1) y (2) antes del despliegue; (3) es un aviso de negocio que conviene decidir antes de que la importación llegue a producción; el resto puede ir en la siguiente iteración.
