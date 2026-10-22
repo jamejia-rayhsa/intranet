@@ -13,6 +13,7 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-22] orquestador → decisions.md — Validación de la primera carga de marcas en staging: cifras cuadran, 63 de 63 empleados con nómina tienen marcas, 15 códigos sin vincular
 - [2026-10-22] orquestador → decisions.md — Publicación y despliegue a staging de la corrección del importador de empleados (PR #15)
 - [2026-10-22] [coder] → code-notes.md — Correcciones de la revisión del importador (resultado oculto en EmpleadoPage, años sueltos, sin_catalogo, fallo a mitad de lotes, auditoría IMPORTAR_EMPLEADOS, foco)
 - [2026-10-22] orquestador → decisions.md — OK del humano para desplegar a staging la corrección del importador
