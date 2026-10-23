@@ -2,6 +2,7 @@ const { Router } = require("express");
 const ControladorTurno = require("../controllers/turno.controller");
 const ControladorAsignacion = require("../controllers/turnoAsignacion.controller");
 const ControladorLlave = require("../controllers/llaveIngesta.controller");
+const ControladorAdmin = require("../controllers/asistenciaAdmin.controller");
 const ControladorMotor = require("../controllers/asistenciaMotor.controller");
 const TurnoAsignacion = require("../models/turnoAsignacion.model");
 const { authenticateJWT } = require("../../../portal/backend/middleware/auth.middleware");
@@ -20,6 +21,8 @@ const VER_ASIGNACIONES = verificarPermiso("rh", "Turnos", "consulta");
 
 // --- Catálogo de turnos ---
 router.get("/turnos", LEER, ControladorTurno.listar);
+// Uso de cada turno hoy (departamentos / empleados): pantalla de administración. Va ANTES de /turnos/:id.
+router.get("/turnos/uso", VER_ASIGNACIONES, ControladorAdmin.usoDeTurnos);
 router.get("/turnos/:id", LEER, ControladorTurno.obtener);
 router.post("/turnos", ESCRIBIR, ControladorTurno.crear);
 router.put("/turnos/:id", ESCRIBIR, ControladorTurno.actualizar);
@@ -34,6 +37,9 @@ for (const [ruta, controlador] of [
   router.post(`/asignaciones/${ruta}`, ESCRIBIR, controlador.asignar);
   router.put(`/asignaciones/${ruta}/:id/terminar`, ESCRIBIR, validarId("id"), controlador.terminar);
 }
+
+// Buscador de empleados (nombre o nómina) con su turno efectivo de hoy, para la pantalla de asignaciones
+router.get("/empleados", VER_ASIGNACIONES, ControladorAdmin.buscarEmpleados);
 
 // --- Por empleado ---
 // "RH" = Empleados:edicion (como vacaciones). Empleado: solo el suyo; jefe inmediato VIGENTE: el de
@@ -72,6 +78,13 @@ router.put("/llaves/:id/ips", ADMIN_INGESTA, ControladorLlave.editarIps);
 router.get("/lotes", VER_INGESTA, ControladorLlave.lotes);
 router.post("/marcas/revincular", ADMIN_INGESTA, ControladorLlave.revincular);
 
+// Lectura para las pantallas de administración (marcas, códigos sin empleado, sincronización)
+router.get("/marcas", VER_INGESTA, ControladorAdmin.marcas);
+router.post("/marcas/exportaciones", VER_INGESTA, ControladorAdmin.registrarExportacion);
+router.get("/marcas/codigos-sin-empleado", VER_INGESTA, ControladorAdmin.codigosSinEmpleado);
+router.get("/empleados-sin-nomina", VER_INGESTA, ControladorAdmin.empleadosSinNomina);
+router.get("/sincronizacion/estado", VER_INGESTA, ControladorAdmin.estadoSincronizacion);
+router.get("/sincronizacion/lotes", VER_INGESTA, ControladorAdmin.lotes);
 // --- Motor de análisis (Fase 4) ---
 // Lectura de resultados y resumen: Asistencia:consulta + alcance por usuario dentro del controlador (RH todo;
 // los demás, solo su empleado y sus subordinados directos). Lecturas de gestión (parámetros, sin identificador,

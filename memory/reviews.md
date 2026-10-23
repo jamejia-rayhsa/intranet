@@ -3257,6 +3257,142 @@ Hallazgos abiertos:
 4. Ejecutar en modo actualizar y exigir insertados = 0 (con los 71 existentes, cualquier alta indica identificación fallida); revisar los errores "Conflicto" y "Posible duplicado".
 5. Una sola importación a la vez; no lanzar otra mientras corre (R-3).
 
+### [2026-10-23] [revisor] — Pantallas de administración de Asistencia (Fase 5, parte 1)
+**Alcance:** commit a76e37c (rama feat/asistencia-pantallas, árbol de trabajo). 5 pantallas RH, 7 endpoints GET nuevos, MenuDinamico (modo estricto), CSS, pruebas. Lectura de memory/decisions.md, code-notes.md, docs/asistencia/*, .claude/rules/*.
+**Veredicto:** CON OBSERVACIONES. Crítico: 0. Alto: 0. Medio: 8. Bajo: 10.
+**Verificación ejecutada:** jest de las dos suites nuevas 153/153 (`asistenciaPantallas.util.test.js`, `asistenciaAdmin.api.test.js`); jest completo 64 suites / 2235 tests en verde; eslint 0 errores (1 aviso previo en MenuDinamico.jsx:5); merge de prueba con `git merge-tree` contra feat/asistencia-motor (solo lectura).
+
+**Verificado sin hallazgos:**
+- Permisos: Turnos (consulta/edición) e Ingesta solo para rh_admin y super_admin (migración 012 y 013); `/empleados` y `/turnos/uso` exigen Turnos:consulta; los 5 de Ingesta exigen Ingesta:consulta; test por rol: portal_admin, rh_empleado, jefe y empleado = 403 sin tocar la BD.
+- Datos personales: `buscarEmpleados` y `marcas` no seleccionan CURP, RFC, NSS, CLABE ni correo; `crudo`, `area_externa`, IP y hash de lotes no salen en ninguna consulta nueva.
+- SQL: todos los valores del usuario van por `$n`; las interpolaciones son constantes (zona, HOY). LIKE escapado. Errores 500 genéricos (el texto de la BD solo va al log).
+- Topes: marcas ≤93 días (front y back, `diasEntre+1`), ≤500 filas, buscador ≤50, códigos ≤200, sin nómina ≤200, lotes ≤100.
+- Llave: alta, rotación y revocación por POST; `Cache-Control: no-store`; la llave solo vive en la prop del diálogo y `setSecreto(null)` al cerrar; no va a URL, log de red (`app.js` loguea método y ruta) ni a almacenamiento; cerrar exige casilla y Escape no cierra sin confirmar; copiar con aviso de fallback; alta sin IP exige casilla; URL con `<ip-interna-del-servidor>:4010` (el puerto coincide con los compose); no hay IP real en el commit.
+- Marcas: hora México con Intl y `hourCycle h23`; UTC en `title` y en texto sr; fechas como texto (`new Date` solo sobre instantes con zona); CSV con BOM, CRLF, neutraliza `= + - @ \t \r`, tope 5 000 con aviso.
+- Re-vinculación: `ConfirmarDialogo` bloquea doble envío y muestra el error del servidor dentro del diálogo; resultado en role=status.
+- Refresco 60 s: un solo `setInterval` con dependencias estables y `clearInterval` al desmontar.
+- Turnos: validaciones del front replican `turnoValidacion.js` (límites 0-720, umbral ≥ tolerancia, descanso dentro de la jornada con cruce de medianoche, días 1-7 ISO, día no laborable sin horas).
+- Asignaciones: solo turnos activos en el selector; terminar solo acorta (front y back); traslape como 409 visible.
+- Menú: `estricto` solo se activa con `grupo: 'Asistencia'` (MenuDinamico.jsx:143, 151-155, 207); otros módulos sin cambio.
+- Contraste (calculado): badges y avisos texto `--color-texto` sobre suaves ≥ 13:1; error sobre blanco 4,83:1; botón peligro 4,83:1; etiqueta de grupo del menú 5,0-7,4:1. Sin hex ni rgba nuevos; todas las variables usadas están definidas en rayhsa-system.css y globales.css. Diálogos con foco atrapado y retorno (useFocoModal). Tablas dentro de `.asi__tabla-caja` con scroll propio.
+
+**Hallazgos**
+
+**P5-1. MEDIO — Editar IP deja la llave sin restricción sin confirmación**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/LlavesDialogos.jsx:143 y 168-170; modules/rh/backend/utils/ipPermitida.js:39-51; modules/rh/backend/controllers/llaveIngesta.controller.js:207-223.
+**Problema:** al alta se exige una casilla de riesgo si no hay IP, pero en la edición guardar una lista vacía solo muestra un aviso y el servidor la acepta; la llave pasa a servir desde cualquier IP sin confirmación.
+**Severidad:** medio.
+**Fix sugerido:** misma casilla de confirmación cuando la lista queda vacía (en la UI) y, en el servidor, rechazar `[]` salvo `confirmar_sin_ips: true`; la auditoría ya registra el cambio.
+
+**P5-2. MEDIO — Llave creada o rotada que nunca se muestra tras un error de red**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/LlavesDialogos.jsx:35-38 y 105-108; modules/rh/frontend/pages/AsistenciaLlavesPage.jsx:58-80.
+**Problema:** si la respuesta se pierde después de que el servidor haya hecho el COMMIT, la UI muestra error y reactiva el botón. La llave en claro no se vuelve a mostrar, queda una llave válida sin dueño y el operador puede crear otra.
+**Severidad:** medio.
+**Fix sugerido:** al error mostrar "Revisa la lista de llaves antes de reintentar: puede haberse creado una"; no reactivar el envío sin recargar la lista; valorar una clave de idempotencia por intento.
+
+**P5-3. MEDIO — Exportación CSV de marcas sin auditoría**
+**Archivo/línea:** modules/rh/frontend/pages/AsistenciaMarcasPage.jsx:123-158; modules/rh/backend/controllers/asistenciaAdmin.controller.js:94 (handler `marcas`, sin auditar).
+**Problema:** se descargan hasta 5 000 marcas con nombre de empleado y código a un archivo, sin rastro en el servidor. La exportación del importador y la plantilla de carga sí se auditan (decisión de 2026-10-22); aquí no hay coherencia.
+**Severidad:** medio.
+**Fix sugerido:** `POST /api/asistencia/marcas/exportaciones` que registre usuario, rango, filtros y número de filas (sin volcar datos) con Auditoria.crear, llamado desde `exportar()` antes de generar el archivo.
+
+**P5-4. MEDIO — La exportación pagina con OFFSET mientras entran marcas nuevas**
+**Archivo/línea:** modules/rh/frontend/pages/AsistenciaMarcasPage.jsx:129-137; modules/rh/backend/models/asistenciaAdmin.model.js:146-155 (`ORDER BY marca_ts DESC, id DESC` con LIMIT/OFFSET).
+**Problema:** la sincronización inserta cada 15 min al inicio del orden. Durante las ~11 peticiones de una exportación que incluya hoy, las filas se desplazan y el CSV repite marcas (y puede omitir otras). No hay instantánea.
+**Severidad:** medio.
+**Fix sugerido:** paginación por cursor (`marca_ts`, `id`) en la exportación, o fijar `hasta` al día anterior cuando el rango incluye hoy; prueba que inserte filas entre páginas.
+
+**P5-5. MEDIO — El aviso de retraso no aplica días hábiles ni festivos**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaFechas.js:141-158 (la comprobación de la línea 148 solo mira la hora).
+**Problema:** sábados y domingos de 07:00 a 20:00, y festivos, el último envío del viernes produce "Posible retraso" si la interfaz no envía esos días. Ni decisions.md ni docs/asistencia dicen si la interfaz opera en fin de semana; el encargo pide días hábiles.
+**Severidad:** medio (falso positivo, pendiente de confirmar el horario de envío).
+**Fix sugerido:** confirmar con el humano el calendario de envíos; si es lunes a viernes, excluir sábado, domingo y festivos (calendario_laboral) en `evaluarRetraso`, con pruebas de sábado 10:00 y lunes 07:10.
+
+**P5-6. MEDIO — Terminar una asignación con fecha pasada cambia días ya ocurridos sin aviso**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaAsignaciones.js:67-74; modules/rh/frontend/components/asistencia/TerminarDialogo.jsx:9 y 18; modules/rh/backend/controllers/turnoAsignacion.controller.js:85-102 (no compara con hoy).
+**Problema:** se puede terminar "ayer" y el turno efectivo de días pasados cambia en silencio, justo antes del cierre de quincenas del motor. La decisión de 2026-10-21 admite reclasificar la quincena abierta, pero exige avisarlo.
+**Severidad:** medio.
+**Fix sugerido:** avisar en el diálogo cuando `hasta < hoy` ("cambia días ya transcurridos"); decidir con el humano si el servidor limita `vigente_hasta >= hoy`.
+
+**P5-7. MEDIO — Ninguna pantalla tiene prueba de componente en el repo**
+**Archivo/línea:** modules/rh/tests/asistenciaPantallas.util.test.js (76 casos de lógica pura); modules/rh/tests/cargarUtilEsm.js.
+**Problema:** no se monta ninguna pantalla ni diálogo (no hay Testing Library en los package.json). Lo que protege la UI (llave una sola vez, Escape sin confirmar, 403 a "sin permiso", menú estricto, foco) solo está en el harness del coder fuera del repo (87/87), que no se puede reproducir desde aquí.
+**Severidad:** medio.
+**Fix sugerido:** pruebas de componente o E2E en el repo para LlaveSecretoDialogo, ConfirmarDialogo, el menú con grupo Asistencia y las 5 pantallas en 403, vacío y error.
+
+**P5-8. BAJO — El cargador cargarUtilEsm.js es frágil**
+**Archivo/línea:** modules/rh/tests/cargarUtilEsm.js:12-15.
+**Problema:** quita `export` con una regex sobre líneas que empiezan por "export"; una cadena multilínea o un comentario que empiece así se altera sin error, y la prueba valida el texto del archivo, no el módulo.
+**Severidad:** bajo.
+**Fix sugerido:** transpilar con babel-jest o esbuild, o mover la lógica a un módulo CJS compartido; dejar la regex solo como comprobación.
+
+**P5-9. BAJO — empleados_individuales cuenta también empleados inactivos**
+**Archivo/línea:** modules/rh/backend/models/asistenciaAdmin.model.js:34-38 (sin filtro de estatus) frente a :49 (solo activos).
+**Problema:** dos conteos del mismo turno con bases distintas. La UI solo muestra los efectivos, pero el dato sale en GET /turnos/uso con un nombre que induce a error.
+**Severidad:** bajo.
+**Fix sugerido:** filtrar por `estatus = 'activo'` o renombrar el campo.
+
+**P5-10. BAJO — Página fuera de rango en el buscador de empleados devuelve total 0**
+**Archivo/línea:** modules/rh/backend/models/asistenciaAdmin.model.js:84 y :103; modules/rh/frontend/pages/AsistenciaAsignacionesPage.jsx:265-268.
+**Problema:** el COUNT OVER se calcula sobre filas paginadas; si la página ya no existe total llega 0, la pantalla dice "Ningún empleado coincide" y no ofrece paginación para volver atrás.
+**Severidad:** bajo.
+**Fix sugerido:** COUNT en subconsulta aparte, o devolver la última página cuando la pedida está fuera de rango.
+
+**P5-11. BAJO — La estimación de marcas es de toda la tabla y el porcentaje no lleva "≈"**
+**Archivo/línea:** modules/rh/backend/models/asistenciaAdmin.model.js:228-240 (reltuples de la tabla, no del origen); modules/rh/frontend/pages/AsistenciaSincronizacionPage.jsx:145.
+**Problema:** la cifra se presenta como del origen aunque es de toda la tabla; el porcentaje sobre ese total se muestra exacto. Hoy solo existe `biotime`, pero al crecer o tras cargas masivas sin ANALYZE el dato engaña.
+**Severidad:** bajo.
+**Fix sugerido:** marcar también el porcentaje con "≈" cuando el total es estimado; filtrar la estimación por origen cuando haya más de uno.
+
+**P5-12. BAJO — Página sin tope práctico en las consultas de lectura**
+**Archivo/línea:** modules/rh/backend/controllers/asistenciaAdmin.controller.js:16 (PAGINA_MAXIMA = 100000, con OFFSET de hasta 5·10⁷).
+**Problema:** un rh_admin puede forzar escaneos profundos; no es fuga de datos.
+**Severidad:** bajo.
+**Fix sugerido:** bajar el tope de página (p. ej. 1 000) o usar cursor.
+
+**P5-13. BAJO — Escape en el formulario de turnos descarta cambios sin aviso**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/DialogoAsistencia.jsx:12-21 con TurnoFormulario.jsx:26 (Escape llama a onCerrar sin comprobar cambios).
+**Problema:** un formulario de turno con horarios capturados se pierde al pulsar Escape.
+**Severidad:** bajo.
+**Fix sugerido:** comparar con el valor inicial y pedir confirmación si hay cambios.
+
+**P5-14. BAJO — Accesibilidad menor**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/TurnoFormulario.jsx:201-208 (el error del día solo se asocia a la entrada, :195; la salida tiene aria-invalid sin describedby); modules/rh/frontend/pages/AsistenciaSincronizacionPage.jsx:121 (el carácter ⚠ del aviso sin aria-hidden).
+**Problema:** el lector de pantalla no anuncia el error de la salida y el símbolo se lee como texto.
+**Severidad:** bajo.
+**Fix sugerido:** `aria-describedby` en la salida apuntando al mismo error; `aria-hidden="true"` en el símbolo.
+
+**P5-15. BAJO — N+1 al cargar el catálogo de turnos**
+**Archivo/línea:** modules/rh/frontend/pages/AsistenciaTurnosPage.jsx:40-49 (una petición de detalle por turno en cada carga).
+**Problema:** con un catálogo pequeño es aceptable, pero crece linealmente.
+**Severidad:** bajo.
+**Fix sugerido:** incluir `dias` en el listado o un endpoint por lote.
+
+**P5-16. BAJO — El portapapeles conserva la llave tras copiarla**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/LlaveSecretoDialogo.jsx:31-38.
+**Problema:** la llave queda en el portapapeles del sistema hasta que se copie otra cosa. Es el comportamiento esperado de copiar; se deja registrado para la documentación de operación.
+**Severidad:** bajo.
+**Fix sugerido:** documentarlo en docs/asistencia/operacion-ingesta.md; no limpiar el portapapeles automáticamente (borraría lo que el usuario tenga copiado).
+
+**P5-17. BAJO — Preexistente fuera de este commit: GET /api/asistencia/lotes expone la IP de cada lote**
+**Archivo/línea:** modules/rh/backend/controllers/llaveIngesta.controller.js:226-239; modules/rh/backend/models/ingesta.model.js:150-160 (`l.ip`).
+**Problema:** lo consulta Ingesta:consulta. La pantalla nueva usa /sincronizacion/lotes, que no trae la IP (correcto), pero el endpoint antiguo sigue exponiéndola.
+**Severidad:** bajo.
+**Fix sugerido:** quitar `l.ip` de ese SELECT o restringir la ruta a Ingesta:edicion.
+
+**P5-18. MEDIO — Trazabilidad: no consta el GO del humano a la parte 1 de la Fase 5**
+**Archivo/línea:** memory/decisions.md (árbol de trabajo): no existe la entrada 'GO del humano a la primera parte de la Fase 5' ni ninguna entrada de asistencia del 2026-10-22/23. Sí existen 'Contrato de integración con BioTime' (l.1011) y 'Contrato de la ingesta de marcas' (l.1035).
+**Problema:** la fase se entrega sin el registro del GO que exige el protocolo; no puedo verificar que el humano lo haya dado.
+**Severidad:** medio (proceso, no de código).
+**Fix sugerido:** el orquestador confirma el GO con el humano y lo registra en decisions.md antes de fusionar; el coder no debe escribir ese registro.
+
+**Conflictos previsibles al fusionar con feat/asistencia-motor (merge-tree, solo lectura, 2 conflictos):**
+1. modules/rh/backend/routes/asistencia.routes.js — conflicto de imports (líneas 5-9 del resultado: `ControladorAdmin` frente a `ControladorMotor`). Resolver: conservar las dos líneas.
+2. modules/rh/backend/routes/asistencia.routes.js — conflicto de rutas (líneas 84-123 del resultado; en HEAD son 81-85). Resolver: conservar el bloque de lectura de pantallas Y el bloque del motor (`RH_LECTURA`, /resultados, /resumen, /periodos, /recalcular, /incidencias, /parametros). No hay colisión de rutas: /turnos/uso va antes de /turnos/:id y ninguna de las 7 de lectura coincide con las del motor. Comprobar que el import `tienePermiso` queda (el auto-merge lo deja en la línea 8).
+3. memory/code-notes.md — ambos añaden al final. Resolver: conservar las dos entradas.
+- Sin conflicto (auto-merge o no tocados por el motor): memory/INDEX.md, main.jsx, MenuDinamico.jsx, rayhsa-system.css, decisions.md. Atención: si el motor o la Fase 5 parte 2 añaden pantallas al menú o rutas en esos archivos, habrá choque en esas zonas.
+
+**Notas:** el commit tiene 37 archivos y ~4 600 líneas; se revisó completo, no se pide split. No se modificó código; no se hizo commit. Se añadió esta entrada a memory/reviews.md y una línea en memory/INDEX.md del árbol de trabajo.
 ### [2026-10-23] [revisor] — Motor de análisis de asistencia (Fase 4)
 **Alcance:** commit `47d49f8` (38 archivos). Leídos: INDEX, decisions (2026-10-21/22/23), research (reglas de borde), code-notes Fase 4, docs/asistencia/motor-analisis.md; código de motor.js, tiempo.js, motorAsistencia.js, candado.js, planificador.js, controlador, modelo de resultados, rutas, migración 014. Jest `asistenciaMotor` + `asistenciaPlanificador`: 108/108 OK. Probe de casos de borde con el motor puro (script en scratchpad, no versionado).
 **Nota:** no encontré en memoria las "8 decisiones" que pide el coder (no están al final de code-notes ni de decisions); las respuestas de abajo son recomendaciones del revisor a partir del código y de la documentación.

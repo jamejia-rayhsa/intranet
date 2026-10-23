@@ -171,6 +171,27 @@
   padding-left: calc(2.75rem - 3px);
 }
 
+.rayhsa .sidebar-subgrupo {
+  margin-top: 0.35rem;
+  padding: 0.55rem 1.25rem 0.2rem 2.75rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.rayhsa-drawer .sidebar-subgrupo {
+  margin-top: 0.35rem;
+  padding: 0.55rem 1.25rem 0.2rem 2.85rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
 .rayhsa .sidebar-pie {
   padding: 0.75rem 1rem;
   border-top: 1px solid rgba(255, 255, 255, 0.1);

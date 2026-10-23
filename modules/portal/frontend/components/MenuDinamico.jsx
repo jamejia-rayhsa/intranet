@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { Fragment, useEffect, useState, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { usarAuth } from '../context/AuthContext';
 
@@ -24,6 +24,12 @@ const SUB_RUTAS = {
     { path: '/rh/departamentos', label: 'Departamentos', opcion: 'Departamentos' },
     { path: '/rh/puestos', label: 'Puestos', opcion: 'Empleados' },
     { path: '/rh/ubicaciones', label: 'Ubicaciones', opcion: 'Empleados' },
+    // Grupo «Asistencia» (administración): visible solo con el permiso de Turnos / Ingesta
+    { path: '/rh/asistencia/turnos', label: 'Turnos', opcion: 'Turnos', grupo: 'Asistencia' },
+    { path: '/rh/asistencia/asignaciones', label: 'Asignaciones', opcion: 'Turnos', grupo: 'Asistencia' },
+    { path: '/rh/asistencia/marcas', label: 'Marcas', opcion: 'Ingesta', grupo: 'Asistencia' },
+    { path: '/rh/asistencia/sincronizacion', label: 'Sincronización', opcion: 'Ingesta', grupo: 'Asistencia' },
+    { path: '/rh/asistencia/llaves', label: 'Llaves de ingesta', opcion: 'Ingesta', grupo: 'Asistencia' },
   ],
   tickets: [
     { path: '/tickets', label: 'Dashboard', opcion: null },
@@ -134,7 +140,7 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
   const modulosVisibles = modulosActivos.filter((m) => {
     const subRutas = SUB_RUTAS[m.nombre] || [];
     if (subRutas.length === 0) return true; // módulos sin sub-rutas siempre se muestran
-    return subRutas.some((sr) => tieneAcceso(m.nombre, sr.opcion));
+    return subRutas.some((sr) => tieneAcceso(m.nombre, sr.opcion, Boolean(sr.grupo)));
   });
 
   function esActivo(ruta) {
@@ -142,10 +148,11 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
     return location.pathname === ruta || location.pathname.startsWith(ruta + '/');
   }
 
-  function tieneAcceso(moduloNombre, opcion) {
+  // `estricto`: sin permiso explícito no se muestra (ni siquiera con la lista de permisos vacía)
+  function tieneAcceso(moduloNombre, opcion, estricto = false) {
     if (usuario?.rol_nombre === 'super_admin') return true;
     if (!opcion) return true;
-    if (permisos.length === 0) return true;
+    if (permisos.length === 0 && !estricto) return true;
     return permisos.some(
       (p) =>
         p.modulo.toLowerCase() === moduloNombre.toLowerCase() &&
@@ -197,15 +204,16 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
 
               <div className={`sidebar-subitems${estaAbierto ? ' abierto' : ''}`}>
                 {subRutas
-                  .filter((sr) => tieneAcceso(m.nombre, sr.opcion))
-                  .map(sr => (
-                    <Link
-                      key={sr.path}
-                      to={sr.path}
-                      className={esActivo(sr.path) ? 'activo' : ''}
-                    >
-                      {sr.label}
-                    </Link>
+                  .filter((sr) => tieneAcceso(m.nombre, sr.opcion, Boolean(sr.grupo)))
+                  .map((sr, i, visibles) => (
+                    <Fragment key={sr.path}>
+                      {sr.grupo && visibles[i - 1]?.grupo !== sr.grupo && (
+                        <div className="sidebar-subgrupo" role="presentation">{sr.grupo}</div>
+                      )}
+                      <Link to={sr.path} className={esActivo(sr.path) ? 'activo' : ''}>
+                        {sr.label}
+                      </Link>
+                    </Fragment>
                   ))}
               </div>
             </div>

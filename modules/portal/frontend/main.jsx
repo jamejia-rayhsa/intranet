@@ -39,6 +39,11 @@ import EmpleadoPage from '../../rh/frontend/pages/EmpleadoPage';
 import VacacionesPage from '../../rh/frontend/pages/VacacionesPage';
 import VacacionesListadoPage from '../../rh/frontend/pages/VacacionesListadoPage';
 import CalendarioLaboralPage from '../../rh/frontend/pages/CalendarioLaboralPage';
+import AsistenciaTurnosPage from '../../rh/frontend/pages/AsistenciaTurnosPage';
+import AsistenciaAsignacionesPage from '../../rh/frontend/pages/AsistenciaAsignacionesPage';
+import AsistenciaMarcasPage from '../../rh/frontend/pages/AsistenciaMarcasPage';
+import AsistenciaSincronizacionPage from '../../rh/frontend/pages/AsistenciaSincronizacionPage';
+import AsistenciaLlavesPage from '../../rh/frontend/pages/AsistenciaLlavesPage';
 import PuestosPage from '../../rh/frontend/pages/PuestosPage';
 import DepartamentosPage from '../../rh/frontend/pages/DepartamentosPage';
 import AreasPage from '../../rh/frontend/pages/AreasPage';
@@ -67,6 +72,11 @@ const BREADCRUMBS = {
   '/rh/admin':           ['Recursos Humanos', 'Permisos y ausencias'],
   '/rh/vacaciones':      ['Recursos Humanos', 'Vacaciones'],
   '/rh/calendario':      ['Recursos Humanos', 'Calendario'],
+  '/rh/asistencia/turnos':        ['Recursos Humanos', 'Asistencia · Turnos'],
+  '/rh/asistencia/asignaciones':  ['Recursos Humanos', 'Asistencia · Asignaciones'],
+  '/rh/asistencia/marcas':        ['Recursos Humanos', 'Asistencia · Marcas'],
+  '/rh/asistencia/sincronizacion': ['Recursos Humanos', 'Asistencia · Sincronización'],
+  '/rh/asistencia/llaves':        ['Recursos Humanos', 'Asistencia · Llaves de ingesta'],
   '/auditoria':          ['Transversal', 'Auditoría'],
   '/auditoria/logs':     ['Transversal', 'Bitácora'],
   '/comercial':          ['Comercial', 'Dashboard'],
@@ -169,6 +179,11 @@ function AppRutas() {
         <Route path="/rh/vacaciones" element={<RutaProtegida><VacacionesPage /></RutaProtegida>} />
         <Route path="/rh/vacaciones/listado" element={<RutaProtegida><VacacionesListadoPage /></RutaProtegida>} />
         <Route path="/rh/calendario" element={<RutaProtegida><CalendarioLaboralPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/turnos" element={<RutaProtegida><AsistenciaTurnosPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/asignaciones" element={<RutaProtegida><AsistenciaAsignacionesPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/marcas" element={<RutaProtegida><AsistenciaMarcasPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/sincronizacion" element={<RutaProtegida><AsistenciaSincronizacionPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/llaves" element={<RutaProtegida><AsistenciaLlavesPage /></RutaProtegida>} />
         <Route path="/rh/puestos" element={<RutaProtegida><PuestosPage /></RutaProtegida>} />
         <Route path="/rh/departamentos" element={<RutaProtegida><DepartamentosPage /></RutaProtegida>} />
         <Route path="/rh/areas" element={<RutaProtegida><AreasPage /></RutaProtegida>} />
