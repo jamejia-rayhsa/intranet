@@ -13,6 +13,20 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-23] orquestador → decisions.md — Fase 4 (motor) y pantallas de administración listas para GO/NO-GO; plan de fusión y despliegue
+- [2026-10-23] [tester] → tests.md — Motor de análisis de asistencia (Fase 4), regla de comida: oráculo propio 0 diferencias en 4 028 días, 37/37 casos a mano, frontera 16:00 consistente, PUT /parametros y cambio de ventana sin tocar lo cerrado, tope duro/apagado/réplicas, API 189/189, jest 18/18, lint 0 errores; sin fallos del motor, 1 menor (F-M4-4)
+- [2026-10-23] [tester] → decisions.md — F-M4-1/2/3 verificados corregidos; PARA RESOLVER F-M4-4 (fila `tiempo_excedido` al apagar vs `interrumpida` en el doc)
+- [2026-10-23] [coder] → code-notes.md — Regla de comida (ventana 13:00-16:00 como parámetros), F-M4-1 (test de app.js aislado), F-M4-2 (apagado con vuelta colgada) y F-M4-3 (014 con justificaciones duplicadas); verificación 126/126 pg16+pg17
+- [2026-10-23] [tester] → tests.md — Motor de análisis de asistencia (Fase 4), parcial antes del cambio de regla de comida: oráculo propio 0 diferencias en 3 816 días (regla 14:00, obsoleta para salidas), zonas/DST, periodos/snapshot/trigger/cursor, tope duro, 409 inmediato, réplicas, SIGTERM, caída de BD, API 189/189, rendimiento; 3 FAIL (jest intermitente por una prueba del motor, candado tras SIGTERM, migración con duplicados)
+- [2026-10-23] [tester] → decisions.md — PARA RESOLVER F-M4-1 (jest intermitente por asistenciaPlanificador.test.js), F-M4-2 (candado 4501 tras apagar con vuelta colgada), F-M4-3 (migración 014 con justificaciones duplicadas)
+- [2026-10-23] orquestador → decisions.md — Decisión del humano: la comida (1 h) puede caer entre las 13:00 y las 16:00 y se checa al salir y volver; nueva regla de salida del motor
+- [2026-10-23] [coder] → code-notes.md — Correcciones de la revisión de la Fase 4 (entrada temprana, salida anticipada con corte en el descanso, tope duro del planificador con pg_terminate_backend, medios; verificación 123/123 pg16+pg17, 33/33 mutantes)
+- [2026-10-23] orquestador → decisions.md — Decisión del humano: la interfaz sincroniza todos los días; aviso de retraso por última comunicación; correcciones del motor y de las pantallas en curso
+- [2026-10-23] orquestador → decisions.md — Fase 4: respuestas a las 8 decisiones del coder; revisión NO APROBADA (entrada temprana = falta, salida temprana = incompleta, planificador sin tope)
+- [2026-10-23] [revisor] → reviews.md#motor-de-análisis-de-asistencia-fase-4 — Motor de asistencia Fase 4: NO APROBADO (1 crítico: entrada 06:50 = falta; 2 altos: salida temprana = incompleta, vuelta colgada sin tope)
+- [2026-10-23] [coder] → code-notes.md — Asistencia Fase 4: motor de análisis (migración 014, motor puro, orquestador con candado 4501, planificador en proceso, API /api/asistencia, verificación pg16+pg17 106/106 contra un oráculo, 66/67 mutantes, jest 4608)
+- [2026-10-23] orquestador → decisions.md — GO del humano a la primera parte de la Fase 5 (pantallas de administración de Asistencia); carga real de empleados OK
+- [2026-10-23] orquestador → decisions.md — Despliegue a staging de la plantilla de carga completa (PR #17)
 - [2026-10-22] [coder] → code-notes.md — Una importación no congela la intranet (lock_timeout 3 s + 409, tope de 2 simultáneas, reintento del front), libros 1904, nómina con espacios, repetidos entre lotes (jest 2082, 23 mutantes, 15 importaciones simultáneas con la API en 200)
 - [2026-10-22] [revisor] → reviews.md#re-revisión-de-integridad-de-la-carga — Re-revisión de integridad de la carga: CON OBSERVACIONES, sin críticos (R-1 fechas 1904, R-2 nómina con espacio, R-3 pool y candado sin límite)
 - [2026-10-22] [coder] → code-notes.md — Correcciones de integridad del modo actualizar (CURP inválida/sin identificador/ceros = error, NSS y estatus sin pisar, candado advisory 4410 y SAVEPOINT por fila, fechas Excel como serial, exportación auditada; 195 importaciones simultáneas 0 errores, jest 2062, 37 mutantes)

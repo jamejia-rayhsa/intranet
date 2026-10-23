@@ -238,7 +238,7 @@ const LlaveControlador = {
     }
   },
 
-  // Re-vincula marcas huérfanas por numero_nomina (la Fase 4 la llamará periódicamente)
+  // Re-vincula marcas huérfanas por numero_nomina (el motor de asistencia también la llama en cada vuelta del planificador)
   async revincular(req, res) {
     const cuerpo = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : {};
     let limite = 5000;
@@ -249,7 +249,9 @@ const LlaveControlador = {
       limite = Number(cuerpo.limite);
     }
     try {
-      const datos = await Ingesta.vincularHuerfanas({ limite });
+      // `afectadas` es para el motor de asistencia: no va a la respuesta ni a la auditoría
+      const { vinculadas, pendientes } = await Ingesta.vincularHuerfanas({ limite });
+      const datos = { vinculadas, pendientes };
       if (datos.vinculadas > 0) {
         await auditar(req, "REVINCULAR_MARCAS", "marcas", null, datos, "asistencia_marcas");
       }
