@@ -2,9 +2,10 @@ const { Router } = require("express");
 const ControladorTurno = require("../controllers/turno.controller");
 const ControladorAsignacion = require("../controllers/turnoAsignacion.controller");
 const ControladorLlave = require("../controllers/llaveIngesta.controller");
+const ControladorMotor = require("../controllers/asistenciaMotor.controller");
 const TurnoAsignacion = require("../models/turnoAsignacion.model");
 const { authenticateJWT } = require("../../../portal/backend/middleware/auth.middleware");
-const { verificarPermiso } = require("../../../portal/backend/middleware/permisos.middleware");
+const { verificarPermiso, tienePermiso } = require("../../../portal/backend/middleware/permisos.middleware");
 const { accesoEmpleado, validarId } = require("../middleware/acceso-empleado.middleware");
 
 const router = Router();
@@ -70,5 +71,37 @@ router.post("/llaves/:id/revocar", ADMIN_INGESTA, ControladorLlave.revocar);
 router.put("/llaves/:id/ips", ADMIN_INGESTA, ControladorLlave.editarIps);
 router.get("/lotes", VER_INGESTA, ControladorLlave.lotes);
 router.post("/marcas/revincular", ADMIN_INGESTA, ControladorLlave.revincular);
+
+// --- Motor de análisis (Fase 4) ---
+// Lectura de resultados y resumen: Asistencia:consulta + alcance por usuario dentro del controlador (RH todo;
+// los demás, solo su empleado y sus subordinados directos). Lecturas de gestión (parámetros, sin identificador,
+// ajustes pendientes): RH = Empleados:edicion o Asistencia:edicion. Escrituras: Asistencia:edicion (rh_admin y
+// super_admin; rh_empleado y portal_admin no).
+const ESCRIBIR_ASISTENCIA = verificarPermiso("rh", "Asistencia", "edicion");
+const RH_LECTURA = async (req, res, next) => {
+  if (!req.user) return res.status(401).json({ exito: false, mensaje: "Usuario no autenticado" });
+  try {
+    if ((await tienePermiso(req.user, "rh", "Empleados", "edicion")) || (await tienePermiso(req.user, "rh", "Asistencia", "edicion"))) {
+      return next();
+    }
+    return res.status(403).json({ exito: false, mensaje: "No tienes permisos suficientes" });
+  } catch (error) {
+    console.error(`[AsistenciaMotor] Error al verificar permisos: ${(error && (error.code || error.name)) || "Error"}`);
+    return res.status(500).json({ exito: false, mensaje: "Error al verificar permisos" });
+  }
+};
+router.get("/resultados", LEER, ControladorMotor.resultados);
+router.get("/resumen", LEER, ControladorMotor.resumen);
+router.get("/periodos", LEER, ControladorMotor.periodos);
+router.post("/periodos/:id/cerrar", ESCRIBIR_ASISTENCIA, validarId("id"), ControladorMotor.cerrarPeriodo);
+router.post("/periodos/:id/reabrir", ESCRIBIR_ASISTENCIA, validarId("id"), ControladorMotor.reabrirPeriodo);
+router.post("/recalcular", ESCRIBIR_ASISTENCIA, ControladorMotor.recalcular);
+router.get("/sin-identificador", LEER, RH_LECTURA, ControladorMotor.sinIdentificador);
+router.get("/ajustes-pendientes", LEER, RH_LECTURA, ControladorMotor.ajustes);
+router.post("/ajustes-pendientes/:id/resolver", ESCRIBIR_ASISTENCIA, validarId("id"), ControladorMotor.resolverAjuste);
+router.post("/incidencias", ESCRIBIR_ASISTENCIA, ControladorMotor.justificar);
+router.post("/incidencias/:id/anular", ESCRIBIR_ASISTENCIA, validarId("id"), ControladorMotor.anularIncidencia);
+router.get("/parametros", LEER, RH_LECTURA, ControladorMotor.obtenerParametros);
+router.put("/parametros", ESCRIBIR_ASISTENCIA, ControladorMotor.actualizarParametros);
 
 module.exports = router;
