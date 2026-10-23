@@ -4,6 +4,7 @@
 export const TOPE_FILAS_CSV = 5000;
 export const LIMITE_PAGINA = 50;
 export const LIMITE_PAGINA_CSV = 500;
+export const MAX_PAGINAS_CSV = 12; // corta cualquier bucle (5 000 filas / 500 = 10 páginas + 1 de comprobación)
 
 const BOM = String.fromCharCode(0xfeff);
 const INICIO_FORMULA = /^[=+\-@\t\r]/;
@@ -28,7 +29,7 @@ export const COLUMNAS_CSV = [
   { clave: 'hora_local', titulo: 'Hora (hora de México)' },
   { clave: 'instante_utc', titulo: 'Instante UTC' },
   { clave: 'codigo_empleado', titulo: 'Código' },
-  { clave: 'empleado_nombre', titulo: 'Empleado vinculado' },
+  { clave: 'vinculada', titulo: 'Vinculada a un empleado' },
   { clave: 'estado_marca', titulo: 'Estado (crudo)' },
   { clave: 'tipo_verificacion', titulo: 'Tipo de verificación (crudo)' },
   { clave: 'terminal_alias', titulo: 'Terminal' },
@@ -37,6 +38,8 @@ export const COLUMNAS_CSV = [
 ];
 
 /**
+ * Decisión de privacidad: el CSV NO lleva el nombre del empleado (solo el código, que es su número de nómina, y si la
+ * marca está vinculada): el archivo sale del sistema y no queda controlado. El nombre se ve en la pantalla.
  * CSV con BOM UTF-8 y saltos CRLF. `filas`: objetos con las claves de COLUMNAS_CSV (ya con fecha/hora local
  * calculadas). Cada celda pasa por escaparCeldaCsv (neutraliza fórmulas). Se corta en TOPE_FILAS_CSV.
  * @returns {{texto: string, filas: number, truncado: boolean}}
@@ -55,10 +58,15 @@ export function nombreArchivoCsv(desde, hasta) {
 export const FILTROS_INICIALES = { buscar: '', codigo: '', terminal: '', vinculadas: 'todas', desde: '', hasta: '' };
 
 /** Filtros de la pantalla -> parámetros de GET /api/asistencia/marcas (omite los vacíos). */
-export function parametrosMarcas(filtros, { pagina = 1, limite = LIMITE_PAGINA, contar = true } = {}) {
+export function parametrosMarcas(filtros, { pagina = 1, limite = LIMITE_PAGINA, contar = true, porClave = false, antesId = null } = {}) {
   const p = new URLSearchParams();
   p.set('desde', filtros.desde);
   p.set('hasta', filtros.hasta);
+  if (porClave) {
+    // Exportación por clave: id descendente y `antes_id` = id de la última marca recibida (sin OFFSET)
+    p.set('orden', 'id');
+    if (antesId) p.set('antes_id', String(antesId));
+  }
   p.set('pagina', String(pagina));
   p.set('limite', String(limite));
   if (!contar) p.set('contar', 'false');
@@ -99,11 +107,34 @@ export function filaParaCsv(marca, convertir) {
     hora_local: c.hora,
     instante_utc: c.utc,
     codigo_empleado: marca.codigo_empleado,
-    empleado_nombre: marca.empleado_id ? marca.empleado_nombre : '',
+    vinculada: marca.empleado_id ? 'Sí' : 'No',
     estado_marca: marca.estado_marca,
     tipo_verificacion: marca.tipo_verificacion,
     terminal_alias: marca.terminal_alias,
     terminal_sn: marca.terminal_sn,
     id_externo: marca.id_externo,
   };
+}
+
+/**
+ * Recoge las marcas a exportar paginando por clave. `pedir(antesId)` devuelve un arreglo de marcas (id descendente,
+ * con `id`); se pide la página siguiente con el id de la última recibida, así las marcas que entran durante la
+ * exportación (ids mayores) no desplazan ni repiten filas. Se detiene al pasar el tope (+1 fila para saber si hubo más).
+ */
+export async function recolectarPorClave(pedir, { limite = LIMITE_PAGINA_CSV, tope = TOPE_FILAS_CSV, maxPaginas = MAX_PAGINAS_CSV } = {}) {
+  const filas = [];
+  const vistos = new Set();
+  let antesId = null;
+  for (let i = 0; i < maxPaginas && filas.length <= tope; i += 1) {
+    const lote = await pedir(antesId);
+    for (const m of lote) {
+      if (!vistos.has(String(m.id))) {
+        vistos.add(String(m.id));
+        filas.push(m);
+      }
+    }
+    if (lote.length < limite) break;
+    antesId = lote[lote.length - 1].id;
+  }
+  return filas;
 }

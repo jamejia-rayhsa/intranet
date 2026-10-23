@@ -179,6 +179,13 @@ FROM asistencia_llaves_rechazos ORDER BY ultima DESC LIMIT 50;
 - **Marcas sin empleado (`sin_empleado`):** se guardan igual (`empleado_id` vacío). La vinculación compara `codigo_empleado` (recortado de espacios) con `empleados.numero_nomina` **como texto exacto, solo si hay UNA coincidencia cuyo periodo de empleo contiene la fecha de la marca** (`fecha_ingreso <= fecha de la marca en America/Mexico_City <= fecha_baja`; una fecha vacía es abierta). Así un `numero_nomina` reutilizado por otra persona no atribuye marcas viejas al empleado nuevo; si los periodos de dos empleados con el mismo número se traslapan en esa fecha, no se vincula a ninguno. La re-vinculación usa exactamente la misma regla. `007` no coincide con `7`: los ceros a la izquierda no se normalizan (decisión pendiente; hoy los códigos observados no los llevan). Si dos empleados comparten el número de nómina no se vincula a ninguno.
 - **Re-vincular marcas huérfanas** (por ejemplo después de dar de alta empleados): `POST /api/asistencia/marcas/revincular` con `{"limite":5000}` (permiso Ingesta:edicion); responde `{vinculadas, pendientes}`. La función `Ingesta.vincularHuerfanas` (`modules/rh/backend/models/ingesta.model.js`) es la que ejecutará periódicamente el motor de la Fase 4 (todavía no hay job).
 
+## 9 bis. La llave en el portapapeles y la pantalla de llaves
+
+- Al crear o rotar una llave, la pantalla `/rh/asistencia/llaves` la muestra una sola vez. El botón «Copiar llave» la deja en el **portapapeles del sistema** hasta que se copie otra cosa (algunos gestores del portapapeles conservan un historial): pegarla de inmediato en el gestor de contraseñas y copiar cualquier texto después. No se limpia el portapapeles automáticamente porque borraría lo que la persona tuviera copiado.
+- Si la respuesta de crear o rotar se pierde por un error de red, el servidor pudo haber hecho el cambio: la pantalla lo avisa y refresca la lista; si no se vio la llave, **revocar la creada y crear otra**.
+- Dejar sin IP permitidas una llave (al crearla o al editarla) pide una confirmación explícita del riesgo.
+- `GET /api/asistencia/lotes` (anterior a las pantallas) devuelve la IP de origen de cada lote a quien tenga `Ingesta:consulta` (solo rh_admin y super_admin). Se deja así a propósito; las pantallas usan `/sincronizacion/lotes`, que no la incluye.
+
 ## 10. Qué NO hace la ingesta
 
 No calcula retardos ni faltas (Fase 4), no tiene pantallas (Fase 5), no modifica ni borra marcas (un trigger de la base lo impide: solo se puede vincular `empleado_id`) y no acepta marcas por ninguna otra ruta.

@@ -206,8 +206,8 @@ export default function AsistenciaLlavesPage() {
         </div>
       )}
 
-      {dialogo && dialogo.tipo === "crear" && <CrearLlaveDialogo onCerrar={() => setDialogo(null)} onCreada={alCrear} />}
-      {dialogo && dialogo.tipo === "rotar" && <RotarLlaveDialogo llave={dialogo.llave} onCerrar={() => setDialogo(null)} onRotada={alRotar} />}
+      {dialogo && dialogo.tipo === "crear" && <CrearLlaveDialogo onCerrar={() => setDialogo(null)} onCreada={alCrear} onRespuestaPerdida={cargar} />}
+      {dialogo && dialogo.tipo === "rotar" && <RotarLlaveDialogo llave={dialogo.llave} onCerrar={() => setDialogo(null)} onRotada={alRotar} onRespuestaPerdida={cargar} />}
       {dialogo && dialogo.tipo === "ips" && <EditarIpsDialogo llave={dialogo.llave} onCerrar={() => setDialogo(null)} onGuardado={alEditarIps} />}
       {dialogo && dialogo.tipo === "revocar" && (
         <ConfirmarDialogo titulo="Revocar llave" textoConfirmar="Revocar llave" peligro onConfirmar={revocar} onCancelar={() => setDialogo(null)}>

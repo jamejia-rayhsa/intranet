@@ -1,13 +1,13 @@
 import { useState, useId } from "react";
 import DialogoAsistencia from "./DialogoAsistencia";
 import { crearLlave, rotarLlave, editarIpsLlave } from "../../services/asistencia.service";
-import { parsearIps, validarAltaLlave, revisarIps, MAX_IPS } from "../../utils/asistenciaLlaves";
+import { parsearIps, validarAltaLlave, validarEdicionIps, esErrorSinRespuesta, MENSAJE_RESPUESTA_PERDIDA, MAX_IPS } from "../../utils/asistenciaLlaves";
 import { finDeDiaMexicoISO } from "../../utils/asistenciaFechas";
 
 const textoDeIps = (lista) => (lista || []).join("\n");
 
 /** Alta de llave. Al terminar entrega la llave en claro a `onCreada` (que la muestra una sola vez). */
-export function CrearLlaveDialogo({ onCerrar, onCreada }) {
+export function CrearLlaveDialogo({ onCerrar, onCreada, onRespuestaPerdida }) {
   const id = useId();
   const [nombre, setNombre] = useState("");
   const [ipsTexto, setIpsTexto] = useState("");
@@ -33,7 +33,12 @@ export function CrearLlaveDialogo({ onCerrar, onCreada }) {
       const { llave, ...fila } = r.datos; // la fila pública no conserva la llave
       onCreada({ llave, fila, avisoIps: r.aviso_ips || "" });
     } catch (err) {
-      setErrorServidor((err && err.message) || "No se pudo crear la llave");
+      if (esErrorSinRespuesta(err)) {
+        setErrorServidor(MENSAJE_RESPUESTA_PERDIDA);
+        onRespuestaPerdida();
+      } else {
+        setErrorServidor((err && err.message) || "No se pudo crear la llave");
+      }
       setGuardando(false);
     }
   }
@@ -82,7 +87,7 @@ export function CrearLlaveDialogo({ onCerrar, onCreada }) {
 }
 
 /** Rotación con solape: la llave anterior sigue válida `solape` horas. */
-export function RotarLlaveDialogo({ llave, onCerrar, onRotada }) {
+export function RotarLlaveDialogo({ llave, onCerrar, onRotada, onRespuestaPerdida }) {
   const id = useId();
   const [solape, setSolape] = useState("24");
   const [error, setError] = useState("");
@@ -103,7 +108,12 @@ export function RotarLlaveDialogo({ llave, onCerrar, onRotada }) {
       const { llave: nueva, anterior, ...fila } = r.datos;
       onRotada({ llave: nueva, fila, anterior, solape: horas });
     } catch (err) {
-      setError((err && err.message) || "No se pudo rotar la llave");
+      if (esErrorSinRespuesta(err)) {
+        setError(MENSAJE_RESPUESTA_PERDIDA.replace("la llave sí se haya creado", "la llave sí se haya rotado").replace("revoca la creada y crea otra", "revoca la creada (la de nombre igual y más reciente) y rota de nuevo"));
+        onRespuestaPerdida();
+      } else {
+        setError((err && err.message) || "No se pudo rotar la llave");
+      }
       setGuardando(false);
     }
   }
@@ -135,12 +145,13 @@ export function EditarIpsDialogo({ llave, onCerrar, onGuardado }) {
   const [texto, setTexto] = useState(textoDeIps(llave.ips_permitidas));
   const [error, setError] = useState("");
   const [guardando, setGuardando] = useState(false);
+  const [confirmoSinIps, setConfirmoSinIps] = useState(false);
   const ips = parsearIps(texto);
 
   async function enviar(e) {
     e.preventDefault();
     if (guardando) return;
-    const problema = revisarIps(ips);
+    const problema = validarEdicionIps(ips, confirmoSinIps);
     if (problema) {
       setError(problema);
       return;
@@ -166,7 +177,15 @@ export function EditarIpsDialogo({ llave, onCerrar, onGuardado }) {
           <p id={`${id}-ayuda`} className="asi__ayuda">El cambio aplica de inmediato a los siguientes envíos.</p>
         </div>
         {ips.length === 0 && (
-          <p className="asi__aviso asi__aviso--advertencia">Sin IP permitidas la llave funcionaría desde cualquier IP. Se recomienda siempre restringirla.</p>
+          <div className="asi__aviso asi__aviso--advertencia">
+            <div>
+              <p>Sin IP permitidas la llave funcionaría desde cualquier IP: si se filtra, cualquiera podría enviar marcas. Se recomienda siempre restringirla.</p>
+              <div className="asi__campo asi__campo--casilla" style={{ marginTop: "0.5rem", marginBottom: 0 }}>
+                <input id={`${id}-sinips`} type="checkbox" checked={confirmoSinIps} onChange={(e) => setConfirmoSinIps(e.target.checked)} />
+                <label htmlFor={`${id}-sinips`}>Entiendo el riesgo y acepto dejar la llave sin restricción de IP</label>
+              </div>
+            </div>
+          </div>
         )}
         <div className="asi__acciones">
           <button type="button" className="asi__btn" onClick={onCerrar} disabled={guardando}>Cancelar</button>

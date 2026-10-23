@@ -79,6 +79,11 @@ export default function AsistenciaAsignacionesPage() {
     setErrorEmp("");
     try {
       const [r, t] = await Promise.all([buscarEmpleados({ q: consulta, pagina, limite: POR_PAGINA }), listarTurnos()]);
+      // Página que ya no existe (p. ej. tras cambiar el catálogo): vuelve a la última con datos
+      if (r.datos.empleados.length === 0 && r.datos.total > 0 && pagina > 1) {
+        setPagina(Math.max(1, Math.ceil(r.datos.total / POR_PAGINA)));
+        return;
+      }
       setResultado(r.datos);
       setTurnos(t.datos || []);
     } catch (err) {

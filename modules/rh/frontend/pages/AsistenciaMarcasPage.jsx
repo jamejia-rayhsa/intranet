@@ -4,6 +4,7 @@ import {
   codigosSinEmpleado,
   empleadosSinNomina,
   revincularMarcas,
+  registrarExportacionMarcas,
   mensajeDeError,
 } from "../services/asistencia.service";
 import { fechaMexicoHoy, sumarDias, validarRango, partesLocales, formatoLocal, instanteUtc, MAX_RANGO_DIAS } from "../utils/asistenciaFechas";
@@ -15,6 +16,7 @@ import {
   parametrosMarcas,
   construirCsv,
   filaParaCsv,
+  recolectarPorClave,
   nombreArchivoCsv,
   textoRango,
   textoResultadoRevincular,
@@ -125,16 +127,12 @@ export default function AsistenciaMarcasPage() {
     setExportando(true);
     setAvisoExport("");
     try {
-      const filas = [];
-      let paginaCsv = 1;
-      let hayMas = true;
-      while (hayMas && filas.length <= TOPE_FILAS_CSV) {
-        const r = await consultarMarcas(parametrosMarcas(aplicados, { pagina: paginaCsv, limite: LIMITE_PAGINA_CSV, contar: false }));
-        const lote = r.datos.marcas || [];
-        for (const m of lote) filas.push(filaParaCsv(m, convertir));
-        hayMas = lote.length === LIMITE_PAGINA_CSV;
-        paginaCsv += 1;
-      }
+      // Paginación por clave (id descendente): las marcas que entran durante la exportación no repiten ni omiten filas
+      const marcas = await recolectarPorClave(async (antesId) => {
+        const r = await consultarMarcas(parametrosMarcas(aplicados, { limite: LIMITE_PAGINA_CSV, contar: false, porClave: true, antesId }));
+        return r.datos.marcas || [];
+      });
+      const filas = marcas.map((m) => filaParaCsv(m, convertir));
       const csv = construirCsv(filas);
       const blob = new Blob([csv.texto], { type: "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);
@@ -145,10 +143,17 @@ export default function AsistenciaMarcasPage() {
       enlace.click();
       enlace.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+      // Rastro en la bitácora: solo el número de filas exportadas (sin datos personales)
+      let sinAuditoria = "";
+      try {
+        await registrarExportacionMarcas(csv.filas);
+      } catch (err) {
+        sinAuditoria = ` No se pudo registrar la exportación en la bitácora: ${mensajeDeError(err, "error desconocido")}`;
+      }
       setAvisoExport(
-        csv.truncado
+        (csv.truncado
           ? `Se exportaron las primeras ${csv.filas} marcas (tope de ${TOPE_FILAS_CSV}). Acota el rango o los filtros para obtener el resto.`
-          : `Se exportaron ${csv.filas} ${csv.filas === 1 ? "marca" : "marcas"} a ${nombreArchivoCsv(aplicados.desde, aplicados.hasta)}.`,
+          : `Se exportaron ${csv.filas} ${csv.filas === 1 ? "marca" : "marcas"} a ${nombreArchivoCsv(aplicados.desde, aplicados.hasta)}.`) + sinAuditoria,
       );
     } catch (err) {
       setAvisoExport(`No se pudo exportar: ${mensajeDeError(err, "error desconocido")}`);

@@ -2,6 +2,8 @@
 // Ingesta, consulta) en asistencia.routes.js. Entradas validadas con tope; los errores inesperados responden
 // un 500 genérico (el texto de la BD solo va al log del servidor).
 const AsistenciaAdmin = require("../models/asistenciaAdmin.model");
+const Auditoria = require("../../../auditoria/backend/models/auditoria.model");
+const { ipDeLaPeticion } = require("../middleware/llaveIngesta.middleware");
 const { esFechaValida, esIdValido, tieneControl } = require("../utils/turnoValidacion");
 
 const ORIGEN = "biotime";
@@ -13,7 +15,8 @@ const LIMITE_EMPLEADOS_MAXIMO = 50;
 const LIMITE_LOTES_MAXIMO = 100;
 const LIMITE_CODIGOS = 200;
 const LIMITE_SIN_NOMINA = 200;
-const PAGINA_MAXIMA = 100000;
+const PAGINA_MAXIMA = 1000;
+const TOPE_EXPORTACION = 5000;
 
 const MS_DIA = 86400000;
 
@@ -121,8 +124,22 @@ const ControladorAsistenciaAdmin = {
       return rechazo(res, "contar debe ser true o false");
     }
 
+    // Exportación: paginación por clave (id descendente). `antes_id` = id de la última marca de la página anterior.
+    const orden = req.query.orden === undefined ? "fecha" : req.query.orden;
+    if (orden !== "fecha" && orden !== "id") return rechazo(res, "orden debe ser fecha o id");
+    let antesId;
+    if (req.query.antes_id !== undefined) {
+      if (orden !== "id") return rechazo(res, "antes_id solo se usa con orden=id");
+      if (typeof req.query.antes_id !== "string" || !/^[1-9]\d{0,17}$/.test(req.query.antes_id)) {
+        return rechazo(res, "antes_id debe ser un entero positivo");
+      }
+      antesId = req.query.antes_id;
+    }
+
     try {
       const r = await AsistenciaAdmin.marcas({
+        antesId,
+        ordenPorId: orden === "id",
         desde,
         hasta,
         empleadoId,
@@ -132,12 +149,37 @@ const ControladorAsistenciaAdmin = {
         terminal,
         pagina: pag.pagina,
         limite: pag.limite,
-        contar: contarTexto !== "false",
+        contar: contarTexto !== "false" && orden !== "id",
       });
       res.set("Cache-Control", "no-store");
       res.json(respuestaPaginada("marcas", r.marcas, r.total, pag.pagina, pag.limite));
     } catch (error) {
       errorInterno(res, "consultar las marcas", error);
+    }
+  },
+
+  // Registra en la bitácora que se exportó un CSV de marcas (solo el número de filas: sin datos personales)
+  async registrarExportacion(req, res) {
+    const filas = req.body && req.body.filas;
+    if (!Number.isInteger(filas) || filas < 0 || filas > TOPE_EXPORTACION) {
+      return rechazo(res, `filas debe ser un entero entre 0 y ${TOPE_EXPORTACION}`);
+    }
+    try {
+      const ip = ipDeLaPeticion(req);
+      await Auditoria.crear({
+        usuario_id: req.user && (req.user.usuario_id || req.user.id),
+        modulo: "rh",
+        tabla: "asistencia_marcas",
+        registro_id: "exportacion",
+        accion: "EXPORTAR_MARCAS",
+        valores_previos: null,
+        valores_nuevos: { filas },
+        ip_origen: ip ? ip.slice(0, 45) : null,
+        user_agent: req.headers["user-agent"] ? String(req.headers["user-agent"]).slice(0, 255) : null,
+      });
+      res.status(201).json({ exito: true, mensaje: "Exportación registrada" });
+    } catch (error) {
+      errorInterno(res, "registrar la exportación", error);
     }
   },
 

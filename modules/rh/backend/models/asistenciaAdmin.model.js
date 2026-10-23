@@ -32,7 +32,8 @@ const AsistenciaAdmin = {
        ),
        individuales AS (
          SELECT te.turno_id, COUNT(DISTINCT te.empleado_id)::int AS empleados_individuales
-         FROM turno_empleado te, hoy
+         FROM turno_empleado te
+         JOIN empleados ei ON ei.id = te.empleado_id AND ei.estatus = 'activo', hoy
          WHERE hoy.d BETWEEN te.vigente_desde AND COALESCE(te.vigente_hasta, 'infinity'::date)
          GROUP BY te.turno_id
        ),
@@ -100,7 +101,15 @@ const AsistenciaAdmin = {
        LIMIT $${valores.length - 1} OFFSET $${valores.length}`,
       valores,
     );
-    const total = r.rows.length ? r.rows[0].total : 0;
+    let total = r.rows.length ? r.rows[0].total : 0;
+    if (r.rows.length === 0 && pagina > 1) {
+      // Página fuera de rango: el COUNT OVER no existe sin filas; se cuenta aparte para que la pantalla pueda volver atrás
+      const c = await cliente.query(
+        `SELECT COUNT(*)::int AS total FROM empleados e ${donde}`,
+        texto ? [valores[0]] : [],
+      );
+      total = c.rows[0].total;
+    }
     return { empleados: r.rows.map(({ total: _t, ...fila }) => fila), total };
   },
 
@@ -108,7 +117,7 @@ const AsistenciaAdmin = {
    * Marcas del rango [desde, hasta] (fechas locales de México, ambas inclusivas) con filtros opcionales.
    * El rango se traduce a instantes (sargable con idx_asistencia_marcas_ts). Orden estable: marca_ts, id (desc).
    */
-  async marcas({ desde, hasta, empleadoId, buscar, codigo, vinculadas, terminal, pagina, limite, contar }, cliente = grupo) {
+  async marcas({ desde, hasta, empleadoId, buscar, codigo, vinculadas, terminal, pagina, limite, contar, antesId, ordenPorId = false }, cliente = grupo) {
     const valores = [desde, hasta];
     const condiciones = [
       `m.marca_ts >= ($1::date::timestamp AT TIME ZONE '${ZONA}')`,
@@ -129,6 +138,9 @@ const AsistenciaAdmin = {
             WHERE b.numero_nomina = ${exacto} OR ${NOMBRE_COMPLETO("b")} ILIKE ${parcial}))`,
       );
     }
+    // Paginación por clave (keyset) para la exportación: id descendente y `id < antesId`; las marcas que entran
+    // mientras se exporta tienen ids mayores y no desplazan las páginas siguientes (con OFFSET se repetirían filas).
+    if (antesId) condiciones.push(`m.id < ${param(antesId)}::bigint`);
     if (vinculadas === "si") condiciones.push("m.empleado_id IS NOT NULL");
     if (vinculadas === "no") condiciones.push("m.empleado_id IS NULL");
     if (terminal) {
@@ -149,8 +161,8 @@ const AsistenciaAdmin = {
        FROM asistencia_marcas m
        LEFT JOIN empleados e ON e.id = m.empleado_id
        WHERE ${donde}
-       ORDER BY m.marca_ts DESC, m.id DESC
-       LIMIT ${param(limite)} OFFSET ${param((pagina - 1) * limite)}`,
+       ORDER BY ${ordenPorId ? "m.id DESC" : "m.marca_ts DESC, m.id DESC"}
+       LIMIT ${param(limite)}${ordenPorId ? "" : ` OFFSET ${param((pagina - 1) * limite)}`}`,
       valores,
     );
     return { marcas: filas.rows, total };
@@ -221,6 +233,12 @@ const AsistenciaAdmin = {
       `SELECT l.fecha_recepcion FROM asistencia_sync_lotes l WHERE l.origen = $1 AND l.estatus = 'ok' ORDER BY l.id DESC LIMIT 1`,
       [origen],
     );
+    // Última comunicación de la interfaz = mayor ultimo_uso de las llaves activas del origen (cada petición
+    // autenticada, también GET /estado sin marcas nuevas, lo actualiza; el middleware lo escribe a lo más cada 30 s).
+    const comunicacion = await cliente.query(
+      "SELECT MAX(k.ultimo_uso) AS ultima_comunicacion FROM asistencia_llaves k WHERE k.origen = $1 AND k.estado = 'activa'",
+      [origen],
+    );
     const huerfanas = await cliente.query(
       "SELECT COUNT(*)::int AS total FROM asistencia_marcas WHERE origen = $1 AND empleado_id IS NULL",
       [origen],
@@ -243,6 +261,7 @@ const AsistenciaAdmin = {
       ...(estado.rows[0] || { origen, ultimo_id_externo: null, ultima_marca_ts: null, ultima_subida_ts: null, ultimo_exito: null, ultimo_error: null }),
       ultimo_lote: ultimoLote.rows[0] || null,
       ultimo_lote_ok: ultimoOk.rows[0] ? ultimoOk.rows[0].fecha_recepcion : null,
+      ultima_comunicacion: comunicacion.rows[0] ? comunicacion.rows[0].ultima_comunicacion : null,
       total_marcas: totalMarcas,
       total_marcas_estimado: esEstimado,
       marcas_sin_vincular: huerfanas.rows[0].total,

@@ -197,6 +197,14 @@ describe("Ingesta - autenticación por llave", () => {
     expect(upd.params).toEqual([esc.fila.id, "127.0.0.1"]);
   });
 
+  it("GET /estado (sin enviar marcas) también actualiza ultimo_uso: es la 'última comunicación' de la pantalla de sincronización", async () => {
+    esc.fila.id = ++contadorLlave;
+    const r = await request(app).get(ESTADO).set("X-Api-Key", esc.llave);
+    expect(r.status).toBe(200);
+    const upd = bd.sqls().find((l) => /UPDATE asistencia_llaves SET ultimo_uso/.test(l.sql));
+    expect(upd.params).toEqual([esc.fila.id, "127.0.0.1"]);
+  });
+
   it("si el UPDATE de ultimo_uso falla, la petición sigue (200) y el log no lleva la llave", async () => {
     esc.fila.id = ++contadorLlave;
     esc.falla = { re: /UPDATE asistencia_llaves SET ultimo_uso/, error: new Error("fallo del UPDATE") };

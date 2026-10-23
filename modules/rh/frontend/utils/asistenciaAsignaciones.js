@@ -63,6 +63,24 @@ export function validarAlta({ turno_id, vigente_desde, vigente_hasta }) {
   return { errores };
 }
 
+const sumaDia = (fecha, n) => {
+  const [a, m, d] = fecha.split('-').map(Number);
+  return new Date(Date.UTC(a, m - 1, d + n)).toISOString().slice(0, 10);
+};
+
+/**
+ * Aviso al terminar una asignación con fecha ANTERIOR a hoy (no se bloquea): el turno efectivo cambia desde el día
+ * siguiente a `hasta`. '' si no hace falta avisar (hasta es hoy o futura, o la fecha no es válida).
+ */
+export function avisoTerminarPasado(hasta, hoy) {
+  if (!fechaReal(hasta) || !fechaReal(hoy) || hasta >= hoy) return '';
+  const desde = sumaDia(hasta, 1);
+  return (
+    `El turno efectivo cambia desde el ${desde}: los días desde el ${desde} hasta hoy se recalcularán si su quincena sigue abierta; ` +
+    'las quincenas cerradas no cambian.'
+  );
+}
+
 /** Valida la nueva fecha final al terminar: >= inicio y, si ya tenía final, anterior a ella (solo acorta). */
 export function validarTerminar(asignacion, hasta) {
   if (!fechaReal(hasta)) return 'Indica una fecha final válida';

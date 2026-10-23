@@ -48,6 +48,7 @@ export const listarDepartamentos = () => solicitar("/departamentos");
 export const consultarMarcas = (consulta) => solicitar(`${base}/marcas?${consulta}`);
 export const codigosSinEmpleado = () => solicitar(`${base}/marcas/codigos-sin-empleado`);
 export const empleadosSinNomina = () => solicitar(`${base}/empleados-sin-nomina`);
+export const registrarExportacionMarcas = (filas) => solicitar(`${base}/marcas/exportaciones`, { method: "POST", body: json({ filas }) });
 export const revincularMarcas = () => solicitar(`${base}/marcas/revincular`, { method: "POST", body: json({}) });
 
 // --- Sincronización ---

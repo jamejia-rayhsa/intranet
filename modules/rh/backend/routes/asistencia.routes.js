@@ -79,6 +79,7 @@ router.post("/marcas/revincular", ADMIN_INGESTA, ControladorLlave.revincular);
 
 // Lectura para las pantallas de administración (marcas, códigos sin empleado, sincronización)
 router.get("/marcas", VER_INGESTA, ControladorAdmin.marcas);
+router.post("/marcas/exportaciones", VER_INGESTA, ControladorAdmin.registrarExportacion);
 router.get("/marcas/codigos-sin-empleado", VER_INGESTA, ControladorAdmin.codigosSinEmpleado);
 router.get("/empleados-sin-nomina", VER_INGESTA, ControladorAdmin.empleadosSinNomina);
 router.get("/sincronizacion/estado", VER_INGESTA, ControladorAdmin.estadoSincronizacion);

@@ -76,9 +76,9 @@ describe("asistenciaFechas - fechas como texto", () => {
   });
 });
 
-describe("asistenciaFechas - antigüedad y retraso de la sincronización", () => {
-  // 2026-10-23 en México: UTC-6. 15:00Z = 09:00 local
-  const ev = (ahora, ultimo) => F.evaluarRetraso({ ahora, ultimoEnvio: ultimo });
+describe("asistenciaFechas - antigüedad y retraso de la última comunicación", () => {
+  // México = UTC-6 todo el año. 15:00Z = 09:00 local
+  const ev = (ahora, ultima) => F.evaluarRetraso({ ahora, ultimaComunicacion: ultima });
 
   it("textos de antigüedad", () => {
     expect(F.textoAntiguedad(0)).toBe("hace menos de 1 min");
@@ -91,27 +91,33 @@ describe("asistenciaFechas - antigüedad y retraso de la sincronización", () =>
     expect(F.textoAntiguedad(NaN)).toBe("—");
   });
 
-  it("dentro del horario: 44 min no avisa, 46 min sí", () => {
+  it("dentro del horario: 44 y 45 min no avisan, 46 min sí", () => {
     expect(ev("2026-10-23T15:44:00Z", "2026-10-23T15:00:00Z").estado).toBe("ok");
-    expect(ev("2026-10-23T15:45:00Z", "2026-10-23T15:00:00Z").estado).toBe("ok"); // exactamente 45: aún no
+    expect(ev("2026-10-23T15:45:00Z", "2026-10-23T15:00:00Z").estado).toBe("ok");
     const r = ev("2026-10-23T15:46:00Z", "2026-10-23T15:00:00Z");
     expect(r.estado).toBe("retraso");
-    expect(r.texto).toMatch(/Posible retraso/);
+    expect(r.texto).toMatch(/Posible retraso: la última comunicación/);
   });
 
-  it("fuera del horario 07:00-20:00 no avisa", () => {
-    expect(ev("2026-10-23T03:00:00Z", "2026-10-22T20:00:00Z").estado).toBe("fuera_de_horario"); // 21:00 local
-    expect(ev("2026-10-23T12:59:00Z", "2026-10-22T20:00:00Z").estado).toBe("fuera_de_horario"); // 06:59 local
-    expect(ev("2026-10-24T02:00:00Z", "2026-10-23T20:00:00Z").estado).toBe("fuera_de_horario"); // 20:00 local exacto
+  it("bordes del horario 07:00-20:00 (ambos incluidos): 06:59 fuera, 07:00 dentro, 20:00 dentro, 20:01 fuera", () => {
+    const ultima = "2026-10-22T20:00:00Z"; // ayer 14:00 local
+    expect(ev("2026-10-23T12:59:00Z", ultima).estado).toBe("fuera_de_horario"); // 06:59
+    expect(ev("2026-10-23T13:00:00Z", ultima).estado).toBe("ok"); // 07:00: la espera cuenta desde la apertura (0 min)
+    expect(ev("2026-10-24T02:00:00Z", "2026-10-24T01:00:00Z").estado).toBe("retraso"); // 20:00 local, 60 min sin comunicación
+    expect(ev("2026-10-24T02:01:00Z", "2026-10-24T01:00:00Z").estado).toBe("fuera_de_horario"); // 20:01
   });
 
   it("al abrir la ventana la espera cuenta desde las 07:00, no desde la tarde anterior", () => {
-    expect(ev("2026-10-23T13:30:00Z", "2026-10-22T23:00:00Z").estado).toBe("ok"); // 07:30 local, último ayer
-    expect(ev("2026-10-23T13:50:00Z", "2026-10-22T23:00:00Z").estado).toBe("retraso"); // 07:50 local: 50 min sin envío
+    expect(ev("2026-10-23T13:30:00Z", "2026-10-22T23:00:00Z").estado).toBe("ok"); // 07:30
+    expect(ev("2026-10-23T13:46:00Z", "2026-10-22T23:00:00Z").estado).toBe("retraso"); // 07:46: 46 min sin comunicación
   });
 
-  it("la última hora de la ventana (19:59) sí avisa", () => {
-    expect(ev("2026-10-24T01:59:00Z", "2026-10-23T22:00:00Z").estado).toBe("retraso"); // 19:59 local
+  it("rige TODOS los días: sábado y domingo también avisan (la interfaz sincroniza todos los días)", () => {
+    // 2026-10-24 es sábado y 2026-10-25 domingo
+    expect(ev("2026-10-24T17:00:00Z", "2026-10-24T15:00:00Z").estado).toBe("retraso"); // sáb 11:00, 120 min
+    expect(ev("2026-10-25T17:00:00Z", "2026-10-25T15:00:00Z").estado).toBe("retraso"); // dom 11:00
+    expect(ev("2026-10-24T17:00:00Z", "2026-10-24T16:30:00Z").estado).toBe("ok"); // sáb, 30 min
+    expect(ev("2026-10-25T08:00:00Z", "2026-10-24T15:00:00Z").estado).toBe("fuera_de_horario"); // dom 02:00
   });
 
   it("sin datos", () => {
@@ -133,6 +139,16 @@ describe("asistenciaTurnos - formulario y validación", () => {
     expect(f).toMatchObject({ tolerancia_retardo_min: "10", umbral_falta_min: "30", tolerancia_salida_min: "0", ventana_entrada_antes_min: "60", ventana_entrada_despues_min: "150", ventana_salida_antes_min: "5", ventana_salida_despues_min: "359", descanso_min: "0", activo: true });
     expect(f.dias.map((d) => d.laborable)).toEqual([true, true, true, true, true, false, false]);
     expect(f.dias.map((d) => d.dia_semana)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it("detecta cambios del formulario respecto al inicial", () => {
+    const a = T.formularioVacio();
+    const b = T.formularioVacio();
+    expect(T.hayCambios(a, b)).toBe(false);
+    b.dias[0].hora_entrada = "09:00";
+    expect(T.hayCambios(a, b)).toBe(true);
+    b.dias[0].hora_entrada = "08:00";
+    expect(T.hayCambios(a, b)).toBe(false);
   });
 
   it("un formulario válido no tiene errores", () => {
@@ -316,13 +332,13 @@ describe("asistenciaMarcas - CSV seguro", () => {
 
   it("construye el CSV con BOM, CRLF, encabezado y celdas neutralizadas", () => {
     const filas = [
-      { fecha_local: "2026-10-01", hora_local: "08:03:12", instante_utc: "2026-10-01T14:03:12Z", codigo_empleado: "1001", empleado_nombre: "=Ana, Prueba", estado_marca: "0", tipo_verificacion: "1", terminal_alias: "Entrada", terminal_sn: "SN-FICT-1", id_externo: "5001" },
+      { fecha_local: "2026-10-01", hora_local: "08:03:12", instante_utc: "2026-10-01T14:03:12Z", codigo_empleado: "1001", vinculada: "=Sí, tal vez", estado_marca: "0", tipo_verificacion: "1", terminal_alias: "Entrada", terminal_sn: "SN-FICT-1", id_externo: "5001" },
     ];
     const r = M.construirCsv(filas);
     expect(r.texto.charCodeAt(0)).toBe(0xfeff);
     const lineas = r.texto.slice(1).split("\r\n");
     expect(lineas[0].split(",")[0]).toBe("Fecha (hora de México)");
-    expect(lineas[1]).toBe("2026-10-01,08:03:12,2026-10-01T14:03:12Z,1001,\"'=Ana, Prueba\",0,1,Entrada,SN-FICT-1,5001");
+    expect(lineas[1]).toBe("2026-10-01,08:03:12,2026-10-01T14:03:12Z,1001,\"'=Sí, tal vez\",0,1,Entrada,SN-FICT-1,5001");
     expect(lineas[2]).toBe("");
     expect(r).toMatchObject({ filas: 1, truncado: false });
   });
@@ -345,8 +361,17 @@ describe("asistenciaMarcas - CSV seguro", () => {
   it("convierte una marca del servidor en fila, con hora local y UTC, y vacía lo que no hay", () => {
     const conv = (iso) => (iso === "malo" ? null : { fecha: F.partesLocales(iso).fecha, hora: F.partesLocales(iso).hora, utc: F.instanteUtc(iso) });
     const fila = M.filaParaCsv({ marca_ts: "2026-01-01T03:30:00Z", codigo_empleado: "7", empleado_id: null, empleado_nombre: "", estado_marca: "0", tipo_verificacion: "15", terminal_alias: "A", terminal_sn: "S", id_externo: "9" }, conv);
-    expect(fila).toMatchObject({ fecha_local: "2025-12-31", hora_local: "21:30:00", instante_utc: "2026-01-01T03:30:00Z", empleado_nombre: "" });
+    expect(fila).toMatchObject({ fecha_local: "2025-12-31", hora_local: "21:30:00", instante_utc: "2026-01-01T03:30:00Z", vinculada: "No" });
     expect(M.filaParaCsv({ marca_ts: "malo", codigo_empleado: "7" }, conv)).toMatchObject({ fecha_local: "", instante_utc: "" });
+  });
+
+  it("el CSV no lleva nombres de empleado (solo código y si está vinculada)", () => {
+    const conv = () => ({ fecha: "f", hora: "h", utc: "u" });
+    const fila = M.filaParaCsv({ marca_ts: "x", codigo_empleado: "1001", empleado_id: 7, empleado_nombre: "Nombre Secreto" }, conv);
+    expect(JSON.stringify(fila)).not.toContain("Secreto");
+    expect(fila).toMatchObject({ codigo_empleado: "1001", vinculada: "Sí" });
+    expect(M.COLUMNAS_CSV.map((c) => c.clave)).not.toContain("empleado_nombre");
+    expect(M.construirCsv([fila]).texto).not.toContain("Secreto");
   });
 
   it("nombre de archivo con el rango", () => {
@@ -358,6 +383,40 @@ describe("asistenciaMarcas - parámetros y textos", () => {
   it("omite filtros vacíos y recorta espacios", () => {
     const q = new URLSearchParams(M.parametrosMarcas({ desde: "2026-10-01", hasta: "2026-10-07", buscar: "  Ana ", codigo: "", terminal: "", vinculadas: "todas" }, { pagina: 2, limite: 50 }));
     expect(Object.fromEntries(q)).toEqual({ desde: "2026-10-01", hasta: "2026-10-07", pagina: "2", limite: "50", buscar: "Ana" });
+  });
+
+  it("la exportación por clave pide orden=id y antes_id (sin depender del OFFSET)", () => {
+    const q = (o) => Object.fromEntries(new URLSearchParams(M.parametrosMarcas({ desde: "a", hasta: "b" }, o)));
+    expect(q({ porClave: true, limite: 500, contar: false })).toMatchObject({ orden: "id", contar: "false", limite: "500" });
+    expect(q({ porClave: true }).antes_id).toBeUndefined();
+    expect(q({ porClave: true, antesId: "9001" })).toMatchObject({ orden: "id", antes_id: "9001" });
+    expect(q({}).orden).toBeUndefined();
+    expect(q({ antesId: "9001" }).antes_id).toBeUndefined();
+  });
+
+  it("recolectarPorClave no repite ni omite filas aunque entren marcas nuevas entre páginas", async () => {
+    let tabla = Array.from({ length: 25 }, (_, i) => ({ id: 25 - i })); // ids 25..1 (descendente)
+    const llamadas = [];
+    const pedir = async (antesId) => {
+      llamadas.push(antesId);
+      const lote = tabla.filter((m) => antesId === null || m.id < Number(antesId)).slice(0, 10);
+      // llegan 7 marcas nuevas (ids mayores) justo después de la primera página
+      if (llamadas.length === 1) tabla = [...Array.from({ length: 7 }, (_, i) => ({ id: 32 - i })), ...tabla];
+      return lote;
+    };
+    const filas = await M.recolectarPorClave(pedir, { limite: 10, tope: 100, maxPaginas: 12 });
+    const ids = filas.map((m) => m.id);
+    expect(ids).toEqual(Array.from({ length: 25 }, (_, i) => 25 - i));
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(llamadas).toEqual([null, 16, 6]);
+  });
+
+  it("recolectarPorClave respeta el tope (+1 para saber que hubo más) y el máximo de páginas", async () => {
+    let n = 0;
+    const siempreLleno = async () => Array.from({ length: 10 }, () => ({ id: 1e6 - n++ }));
+    const filas = await M.recolectarPorClave(siempreLleno, { limite: 10, tope: 25, maxPaginas: 12 });
+    expect(filas.length).toBe(30);
+    expect((await M.recolectarPorClave(siempreLleno, { limite: 10, tope: 1e9, maxPaginas: 3 })).length).toBe(30);
   });
 
   it("incluye vinculadas solo si es si/no y contar=false cuando se pide", () => {
@@ -413,6 +472,22 @@ describe("asistenciaLlaves", () => {
     expect(L.validarAltaLlave({ nombre: "BioTime", ips: [], vencimiento: "", permitirSinIps: true })).toEqual({});
     expect(L.validarAltaLlave({ nombre: "BioTime", ips: ["192.0.2.1"], vencimiento: "2026-31-45x", permitirSinIps: false }).vencimiento).toBeDefined();
     expect(L.validarAltaLlave({ nombre: "BioTime", ips: ["192.0.2.1"], vencimiento: "2026-12-31", permitirSinIps: false })).toEqual({});
+  });
+
+  it("editar IP a lista vacía exige confirmar el riesgo", () => {
+    expect(L.validarEdicionIps([], false)).toMatch(/cualquier IP/);
+    expect(L.validarEdicionIps([], true)).toBe("");
+    expect(L.validarEdicionIps(["192.0.2.1"], false)).toBe("");
+    expect(L.validarEdicionIps(["hola"], true)).toMatch(/"hola"/);
+  });
+
+  it("respuesta perdida de crear/rotar: solo los errores sin respuesta del servidor", () => {
+    expect(L.esErrorSinRespuesta(Object.assign(new Error("red"), {}))).toBe(true);
+    expect(L.esErrorSinRespuesta(Object.assign(new Error("x"), { status: 502 }))).toBe(true);
+    expect(L.esErrorSinRespuesta(Object.assign(new Error("x"), { status: 400 }))).toBe(false);
+    expect(L.esErrorSinRespuesta(Object.assign(new Error("x"), { status: 409 }))).toBe(false);
+    expect(L.esErrorSinRespuesta(null)).toBe(false);
+    expect(L.MENSAJE_RESPUESTA_PERDIDA).toContain("Si no ves la llave, revoca la creada y crea otra");
   });
 
   it("qué acciones permite cada estado, igual que el servidor", () => {
@@ -495,6 +570,19 @@ describe("asistenciaAsignaciones", () => {
     expect(A.validarTerminar(cerrada, "2026-12-31")).toMatch(/solo se puede acortar/);
     expect(A.validarTerminar(cerrada, "2027-01-15")).toMatch(/solo se puede acortar/);
     expect(A.validarTerminar(abierta, "")).toMatch(/válida/);
+  });
+
+  it("terminar con fecha pasada avisa desde qué día cambia el turno efectivo (no bloquea)", () => {
+    const aviso = A.avisoTerminarPasado("2026-10-15", HOY);
+    expect(aviso).toContain("desde el 2026-10-16");
+    expect(aviso).toContain("se recalcularán si su quincena sigue abierta");
+    expect(aviso).toContain("las quincenas cerradas no cambian");
+    expect(A.avisoTerminarPasado("2026-10-31", "2026-11-05")).toContain("desde el 2026-11-01"); // cruce de mes
+    expect(A.avisoTerminarPasado("2026-12-31", "2027-01-05")).toContain("desde el 2027-01-01"); // cruce de año
+    expect(A.avisoTerminarPasado(HOY, HOY)).toBe("");
+    expect(A.avisoTerminarPasado("2026-10-30", HOY)).toBe("");
+    expect(A.avisoTerminarPasado("", HOY)).toBe("");
+    expect(A.validarTerminar({ vigente_desde: "2026-09-01", vigente_hasta: null }, "2026-10-15")).toBe(""); // sigue permitido
   });
 
   it("etiqueta el origen del turno efectivo", () => {

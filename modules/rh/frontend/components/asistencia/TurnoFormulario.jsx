@@ -12,6 +12,7 @@ import {
   formularioVacio,
   formularioDesdeTurno,
   validarFormularioTurno,
+  hayCambios,
   construirCuerpoTurno,
 } from "../../utils/asistenciaTurnos";
 
@@ -26,7 +27,9 @@ const etiquetaDe = (campo) => CAMPOS_MINUTOS.find((c) => c.campo === campo).etiq
 export default function TurnoFormulario({ turno, onCerrar, onGuardado }) {
   const editando = Boolean(turno);
   const prefijo = useId();
-  const [f, setF] = useState(() => (turno ? formularioDesdeTurno(turno) : formularioVacio()));
+  const [inicial] = useState(() => (turno ? formularioDesdeTurno(turno) : formularioVacio()));
+  const [f, setF] = useState(inicial);
+  const [confirmandoDescarte, setConfirmandoDescarte] = useState(false);
   const [errores, setErrores] = useState({});
   const [resumen, setResumen] = useState([]);
   const [errorServidor, setErrorServidor] = useState("");
@@ -58,6 +61,13 @@ export default function TurnoFormulario({ turno, onCerrar, onGuardado }) {
     );
   }
 
+  // Escape y Cancelar: con cambios sin guardar piden confirmación antes de descartarlos
+  function pedirCierre() {
+    if (guardando) return;
+    if (hayCambios(inicial, f)) setConfirmandoDescarte(true);
+    else onCerrar();
+  }
+
   async function guardar(e) {
     e.preventDefault();
     if (guardando) return;
@@ -79,7 +89,7 @@ export default function TurnoFormulario({ turno, onCerrar, onGuardado }) {
   }
 
   return (
-    <DialogoAsistencia titulo={editando ? "Editar turno" : "Nuevo turno"} onCerrar={onCerrar} bloqueado={guardando} ancho="46rem">
+    <DialogoAsistencia titulo={editando ? "Editar turno" : "Nuevo turno"} onCerrar={confirmandoDescarte ? () => setConfirmandoDescarte(false) : pedirCierre} bloqueado={guardando} ancho="46rem">
       <form onSubmit={guardar} noValidate>
         {(resumen.length > 0 || errorServidor) && (
           <div role="alert" className="asi__aviso asi__aviso--error">
@@ -93,6 +103,13 @@ export default function TurnoFormulario({ turno, onCerrar, onGuardado }) {
                 </ul>
               </div>
             )}
+          </div>
+        )}
+        {confirmandoDescarte && (
+          <div role="alert" className="asi__aviso asi__aviso--advertencia">
+            <span>Hay cambios sin guardar. ¿Descartarlos?</span>
+            <button type="button" className="asi__btn asi__btn--chico" onClick={() => setConfirmandoDescarte(false)}>Seguir editando</button>
+            <button type="button" className="asi__btn asi__btn--chico asi__btn--peligro" onClick={onCerrar}>Descartar cambios</button>
           </div>
         )}
         {editando && (
@@ -204,6 +221,7 @@ export default function TurnoFormulario({ turno, onCerrar, onGuardado }) {
                           value={d.hora_salida}
                           onChange={(e) => cambiarDia(dia.numero, { hora_salida: e.target.value })}
                           aria-invalid={errores[`dia_${dia.numero}`] ? "true" : undefined}
+                          aria-describedby={errores[`dia_${dia.numero}`] ? `${id(`dia-${dia.numero}`)}-error` : undefined}
                         />
                       </div>
                       {errores[`dia_${dia.numero}`] && (
@@ -222,7 +240,7 @@ export default function TurnoFormulario({ turno, onCerrar, onGuardado }) {
         </fieldset>
 
         <div className="asi__acciones">
-          <button type="button" className="asi__btn" onClick={onCerrar} disabled={guardando}>Cancelar</button>
+          <button type="button" className="asi__btn" onClick={pedirCierre} disabled={guardando}>Cancelar</button>
           <button type="submit" className="asi__btn asi__btn--primario" disabled={guardando}>
             {guardando ? "Guardando…" : editando ? "Guardar cambios" : "Crear turno"}
           </button>

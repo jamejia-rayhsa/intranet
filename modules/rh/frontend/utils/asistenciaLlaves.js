@@ -58,3 +58,20 @@ export function validarAltaLlave({ nombre, ips, vencimiento, permitirSinIps }) {
 
 /** Texto de la lista de IP para mostrar en la tabla. */
 export const textoIps = (llave) => (llave.ips_permitidas && llave.ips_permitidas.length ? llave.ips_permitidas.join(', ') : 'Sin restricción');
+
+export const MENSAJE_RESPUESTA_PERDIDA =
+  'No se recibió la respuesta del servidor: puede que la llave sí se haya creado. Si no ves la llave, revoca la creada y crea otra. ' +
+  'La lista se actualizó para que veas si quedó una llave nueva.';
+
+/** Error sin respuesta del servidor (red caída, proxy con HTML): el servidor pudo haber hecho el cambio. */
+export const esErrorSinRespuesta = (err) => Boolean(err) && (err.status === undefined || err.status === null || err.status >= 502);
+
+/** Edición de IP: dejar la lista vacía quita la restricción y exige confirmación explícita. '' si es válida. */
+export function validarEdicionIps(ips, confirmoSinIps) {
+  const problema = revisarIps(ips);
+  if (problema) return problema;
+  if (ips.length === 0 && !confirmoSinIps) {
+    return 'Dejar la lista vacía permite que la llave funcione desde cualquier IP. Confirma que aceptas el riesgo o escribe al menos una IP.';
+  }
+  return '';
+}

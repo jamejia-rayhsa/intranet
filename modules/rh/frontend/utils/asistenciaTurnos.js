@@ -222,3 +222,8 @@ export function resumirUso(uso) {
   const emp = uso.empleados_efectivos;
   return `${dep} ${dep === 1 ? 'departamento' : 'departamentos'}, ${emp} ${emp === 1 ? 'empleado' : 'empleados'}`;
 }
+
+/** ¿El formulario cambió respecto al inicial? (para pedir confirmación al descartar con Escape o Cancelar). */
+export function hayCambios(inicial, actual) {
+  return JSON.stringify(inicial) !== JSON.stringify(actual);
+}

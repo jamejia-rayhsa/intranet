@@ -132,28 +132,28 @@ export function textoAntiguedad(minutos) {
 }
 
 /**
- * Antigüedad del último envío de la interfaz. La interfaz sincroniza cada 15 min dentro del horario 07:00-20:00
- * (México): se avisa "posible retraso" si pasan más de 45 min SOLO dentro de ese horario. Fuera del horario
- * no se avisa, y al abrir la ventana la antigüedad cuenta desde las 07:00 (no desde la tarde anterior).
- * `ahora` debe venir del servidor para no depender del reloj del navegador.
+ * Retraso de la interfaz según su ÚLTIMA COMUNICACIÓN (mayor ultimo_uso de las llaves activas: cualquier petición
+ * autenticada, también GET /estado en un día sin marcas). La interfaz sincroniza cada 15 min TODOS los días
+ * (también fines de semana y festivos): se avisa "posible retraso" si pasan más de 45 min dentro de 07:00-20:00
+ * (ambos extremos incluidos, hora de México). Fuera de ese horario no se avisa, y al abrir la ventana la espera
+ * cuenta desde las 07:00 (no desde la tarde anterior). `ahora` debe venir del servidor.
  * @returns {{estado:'sin_datos'|'ok'|'retraso'|'fuera_de_horario', antiguedadMin:number|null, texto:string}}
  */
-export function evaluarRetraso({ ahora, ultimoEnvio, umbralMin = UMBRAL_RETRASO_MIN }) {
+export function evaluarRetraso({ ahora, ultimaComunicacion, umbralMin = UMBRAL_RETRASO_MIN }) {
   const dAhora = aDate(ahora);
-  const dUltimo = aDate(ultimoEnvio);
+  const dUltima = aDate(ultimaComunicacion);
   if (!dAhora) return { estado: 'sin_datos', antiguedadMin: null, texto: 'Sin información de la hora del servidor' };
-  if (!dUltimo) return { estado: 'sin_datos', antiguedadMin: null, texto: 'Aún no se ha recibido ningún envío' };
-  const antiguedadMin = Math.floor((dAhora.getTime() - dUltimo.getTime()) / MS_MIN);
+  if (!dUltima) return { estado: 'sin_datos', antiguedadMin: null, texto: 'Aún no hay ninguna comunicación de la interfaz con una llave activa' };
+  const antiguedadMin = Math.floor((dAhora.getTime() - dUltima.getTime()) / MS_MIN);
   const local = partesLocales(dAhora.toISOString());
-  const dentro = local.minutos >= VENTANA_SYNC_INICIO_MIN && local.minutos < VENTANA_SYNC_FIN_MIN;
+  const dentro = local.minutos >= VENTANA_SYNC_INICIO_MIN && local.minutos <= VENTANA_SYNC_FIN_MIN;
   if (!dentro) {
-    return { estado: 'fuera_de_horario', antiguedadMin, texto: `Último envío ${textoAntiguedad(antiguedadMin)} (fuera del horario de sincronización 07:00-20:00)` };
+    return { estado: 'fuera_de_horario', antiguedadMin, texto: `Última comunicación ${textoAntiguedad(antiguedadMin)} (fuera del horario de sincronización 07:00-20:00)` };
   }
-  // Minutos desde las 07:00 de hoy: la espera no empieza antes de que abra la ventana
   const desdeApertura = local.minutos - VENTANA_SYNC_INICIO_MIN;
   const efectiva = Math.min(antiguedadMin, desdeApertura);
   if (efectiva > umbralMin) {
-    return { estado: 'retraso', antiguedadMin, texto: `Posible retraso: el último envío fue ${textoAntiguedad(antiguedadMin)} (se espera uno cada 15 min)` };
+    return { estado: 'retraso', antiguedadMin, texto: `Posible retraso: la última comunicación de la interfaz fue ${textoAntiguedad(antiguedadMin)} (se espera una cada 15 min)` };
   }
-  return { estado: 'ok', antiguedadMin, texto: `Último envío ${textoAntiguedad(antiguedadMin)}` };
+  return { estado: 'ok', antiguedadMin, texto: `Última comunicación ${textoAntiguedad(antiguedadMin)}` };
 }

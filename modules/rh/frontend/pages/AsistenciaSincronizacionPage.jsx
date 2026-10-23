@@ -101,13 +101,14 @@ export default function AsistenciaSincronizacionPage() {
   }
 
   const ultimoLote = estado && estado.ultimo_lote;
-  const retraso = estado ? evaluarRetraso({ ahora: estado.ahora, ultimoEnvio: ultimoLote ? ultimoLote.fecha_recepcion : null }) : null;
+  // El aviso se basa en la última COMUNICACIÓN de la interfaz (un día sin marcas solo consulta /estado y no envía lotes)
+  const retraso = estado ? evaluarRetraso({ ahora: estado.ahora, ultimaComunicacion: estado.ultima_comunicacion }) : null;
 
   return (
     <div className="asi">
       <h1>Sincronización con BioTime</h1>
       <p className="asi__sub">
-        La interfaz envía las marcas cada 15 minutos. Esta pantalla se actualiza sola cada 60 segundos.
+        La interfaz se comunica cada 15 minutos todos los días (07:00-20:00, hora de México). Esta pantalla se actualiza sola cada 60 segundos.
         {actualizado && <> Última actualización: <Hora valor={actualizado} /> (hora de México).</>}
       </p>
       <div className="asi__barra">
@@ -118,7 +119,7 @@ export default function AsistenciaSincronizacionPage() {
 
       {estado && retraso && (
         <div role="status" aria-live="polite">
-          {retraso.estado === "retraso" && <p className="asi__aviso asi__aviso--advertencia">⚠ {retraso.texto}</p>}
+          {retraso.estado === "retraso" && <p className="asi__aviso asi__aviso--advertencia"><span aria-hidden="true">⚠ </span>{retraso.texto}</p>}
           {retraso.estado === "ok" && <p className="asi__aviso asi__aviso--ok">{retraso.texto}</p>}
           {(retraso.estado === "fuera_de_horario" || retraso.estado === "sin_datos") && <p className="asi__aviso asi__aviso--info">{retraso.texto}</p>}
         </div>
@@ -126,10 +127,13 @@ export default function AsistenciaSincronizacionPage() {
 
       {estado && (
         <dl className="asi__tarjetas" aria-label="Estado de la sincronización">
+          <Tarjeta titulo="Última comunicación de la interfaz" detalle="Cualquier petición con llave activa, aunque no envíe marcas">
+            <Hora valor={estado.ultima_comunicacion} />
+          </Tarjeta>
           <Tarjeta titulo="Último id externo (cursor)"><span className="asi__mono">{estado.ultimo_id_externo ?? "—"}</span></Tarjeta>
           <Tarjeta titulo="Última marca recibida"><Hora valor={estado.ultima_marca_ts} /></Tarjeta>
           <Tarjeta titulo="Última subida del checador"><Hora valor={estado.ultima_subida_ts} /></Tarjeta>
-          <Tarjeta titulo="Último envío recibido" detalle={ultimoLote ? `Estatus: ${infoEstatusLote(ultimoLote.estatus).texto}` : undefined}>
+          <Tarjeta titulo="Último envío de marcas" detalle={ultimoLote ? `Estatus: ${infoEstatusLote(ultimoLote.estatus).texto}` : undefined}>
             <Hora valor={ultimoLote ? ultimoLote.fecha_recepcion : null} />
           </Tarjeta>
           <Tarjeta titulo="Último envío correcto"><Hora valor={estado.ultimo_exito || estado.ultimo_lote_ok} /></Tarjeta>
@@ -142,7 +146,7 @@ export default function AsistenciaSincronizacionPage() {
           >
             {textoTotalMarcas(estado.total_marcas, estado.total_marcas_estimado)}
           </Tarjeta>
-          <Tarjeta titulo="Marcas sin vincular" detalle={`${porcentaje(estado.marcas_sin_vincular, estado.total_marcas)} del total`}>
+          <Tarjeta titulo="Marcas sin vincular" detalle={`${estado.total_marcas_estimado ? "≈ " : ""}${porcentaje(estado.marcas_sin_vincular, estado.total_marcas)} del total`}>
             {formatoEntero(estado.marcas_sin_vincular)}
           </Tarjeta>
         </dl>

@@ -20,6 +20,7 @@ jest.mock("../../../auditoria/backend/models/auditoria.model", () => ({ crear: j
 jest.mock("../../../auditoria/backend/services/auditoria.service", () => ({ registrarAccion: jest.fn() }));
 
 const { __bd: bd } = require("../../../portal/backend/config/database");
+const Auditoria = require("../../../auditoria/backend/models/auditoria.model");
 const { diasEntre } = require("../controllers/asistenciaAdmin.controller");
 
 const app = express();
@@ -64,6 +65,7 @@ function reglasBase() {
   bd.cuando(/FROM asistencia_sync_lotes l WHERE l\.origen = \$1 ORDER BY l\.id DESC LIMIT 1/, () => ({ rows: [{ id: 4, estatus: "ok" }] }));
   bd.cuando(/estatus = 'ok' ORDER BY/, () => ({ rows: [{ fecha_recepcion: "2026-10-01T15:00:00.000Z" }] }));
   bd.cuando(/empleado_id IS NULL"?$|AND empleado_id IS NULL/, () => ({ rows: [{ total: 7 }] }));
+  bd.cuando(/MAX\(k\.ultimo_uso\)/, () => ({ rows: [{ ultima_comunicacion: "2026-10-01T15:50:00.000Z" }] }));
   bd.cuando(/FROM pg_class/, () => ({ rows: [{ estimado: "250000" }] }));
   bd.cuando(/SELECT now\(\) AS ahora/, () => ({ rows: [{ ahora: "2026-10-01T16:00:00.000Z" }] }));
   bd.cuando(/COUNT\(\*\)::int AS total FROM asistencia_sync_lotes/, () => ({ rows: [{ total: 55 }] }));
@@ -255,6 +257,100 @@ describe("GET /marcas", () => {
   });
 });
 
+describe("GET /marcas - paginación por clave (exportación)", () => {
+  const ultimaConsulta = () => bd.sqls().find((l) => /LIMIT/.test(l.sql));
+
+  it("orden=id usa id < antes_id, ordena por id descendente, no usa OFFSET ni COUNT", async () => {
+    const r = await request(app).get(`${BASE}/marcas?${RANGO}&orden=id&antes_id=900000&limite=500`);
+    expect(r.status).toBe(200);
+    const c = ultimaConsulta();
+    expect(c.sql).toContain("m.id < $3::bigint");
+    expect(c.sql).toMatch(/ORDER BY m\.id DESC\s+LIMIT/);
+    expect(c.sql).not.toMatch(/OFFSET/);
+    expect(c.params[2]).toBe("900000");
+    expect(bd.hubo(/COUNT\(\*\)/)).toBe(false);
+    expect(r.body.datos.total).toBeNull();
+  });
+
+  it("sin orden=id sigue por fecha con OFFSET", async () => {
+    await request(app).get(`${BASE}/marcas?${RANGO}`);
+    expect(ultimaConsulta().sql).toMatch(/ORDER BY m\.marca_ts DESC, m\.id DESC\s+LIMIT \$\d+ OFFSET/);
+  });
+
+  it.each([
+    ["orden raro", "orden=x"],
+    ["antes_id sin orden=id", "antes_id=5"],
+    ["antes_id no numérico", "orden=id&antes_id=1;DROP"],
+    ["antes_id cero", "orden=id&antes_id=0"],
+    ["antes_id enorme", `orden=id&antes_id=${"9".repeat(19)}`],
+    ["antes_id arreglo", "orden=id&antes_id[]=5"],
+  ])("400 por %s", async (_n, c) => {
+    const r = await request(app).get(`${BASE}/marcas?${RANGO}&${c}`);
+    expect(r.status).toBe(400);
+    expect(bd.sqls()).toHaveLength(0);
+  });
+
+  it("la página máxima de las consultas es 1 000", async () => {
+    expect((await request(app).get(`${BASE}/empleados?pagina=1000`)).status).toBe(200);
+    expect((await request(app).get(`${BASE}/empleados?pagina=1001`)).status).toBe(400);
+  });
+});
+
+describe("POST /marcas/exportaciones (auditoría de la exportación CSV)", () => {
+  it("registra solo el número de filas, con acción de <= 20 caracteres", async () => {
+    const r = await request(app).post(`${BASE}/marcas/exportaciones`).send({ filas: 180, nombre: "Ana", marcas: [1] });
+    expect(r.status).toBe(201);
+    const dato = Auditoria.crear.mock.calls[0][0];
+    expect(dato).toMatchObject({ modulo: "rh", accion: "EXPORTAR_MARCAS", valores_nuevos: { filas: 180 }, usuario_id: 5 });
+    expect(dato.accion.length).toBeLessThanOrEqual(20);
+    expect(JSON.stringify(dato)).not.toMatch(/Ana/);
+  });
+
+  it.each([[-1], [5001], [1.5], ["10"], [null], [undefined]])("rechaza filas=%s", async (filas) => {
+    const r = await request(app).post(`${BASE}/marcas/exportaciones`).send({ filas });
+    expect(r.status).toBe(400);
+    expect(Auditoria.crear).not.toHaveBeenCalled();
+  });
+
+  it.each(["portal_admin", "rh_empleado", "jefe", "empleado"])("%s recibe 403", async (rol) => {
+    entrar(rol);
+    expect((await request(app).post(`${BASE}/marcas/exportaciones`).send({ filas: 1 })).status).toBe(403);
+    expect(Auditoria.crear).not.toHaveBeenCalled();
+  });
+
+  it("401 sin token y 500 genérico si falla la bitácora", async () => {
+    mockUser = null;
+    expect((await request(app).post(`${BASE}/marcas/exportaciones`).send({ filas: 1 })).status).toBe(401);
+    entrar("rh_admin");
+    Auditoria.crear.mockRejectedValueOnce(new Error("insert into auditoria falló"));
+    const r = await request(app).post(`${BASE}/marcas/exportaciones`).send({ filas: 1 });
+    expect(r.status).toBe(500);
+    expect(JSON.stringify(r.body)).not.toMatch(/insert/);
+  });
+});
+
+describe("Correcciones del modelo", () => {
+  it("empleados_individuales cuenta solo empleados activos", async () => {
+    await request(app).get(`${BASE}/turnos/uso`);
+    expect(bd.sqls()[0].sql).toMatch(/JOIN empleados ei ON ei\.id = te\.empleado_id AND ei\.estatus = 'activo'/);
+  });
+
+  it("una página fuera de rango devuelve el total real para poder volver atrás", async () => {
+    bd.estado.reglas.unshift({ re: /FROM empleados e\s+LEFT JOIN departamentos d ON d.id = e.departamento_id\s+CROSS JOIN hoy/s, respuesta: { rows: [] } });
+    bd.cuando(/SELECT COUNT\(\*\)::int AS total FROM empleados e/, () => ({ rows: [{ total: 45 }] }));
+    bd.estado.reglas.unshift(bd.estado.reglas.pop());
+    const r = await request(app).get(`${BASE}/empleados?pagina=9`);
+    expect(r.body.datos).toMatchObject({ empleados: [], total: 45, paginas_totales: 3 });
+  });
+
+  it("la última comunicación sale de las llaves ACTIVAS del origen", async () => {
+    await request(app).get(`${BASE}/sincronizacion/estado`);
+    const q = bd.sqls().find((l) => /MAX\(k\.ultimo_uso\)/.test(l.sql));
+    expect(q.sql).toMatch(/k\.estado = 'activa'/);
+    expect(q.params).toEqual(["biotime"]);
+  });
+});
+
 describe("GET /marcas/codigos-sin-empleado y /empleados-sin-nomina", () => {
   it("resume los códigos huérfanos con totales", async () => {
     const r = await request(app).get(`${BASE}/marcas/codigos-sin-empleado`);
@@ -290,6 +386,7 @@ describe("GET /sincronizacion/*", () => {
       total_marcas: 250000,
       total_marcas_estimado: true,
       marcas_sin_vincular: 7,
+      ultima_comunicacion: "2026-10-01T15:50:00.000Z",
       ahora: "2026-10-01T16:00:00.000Z",
     });
     expect(bd.hubo(/SELECT COUNT\(\*\)::int AS total FROM asistencia_marcas WHERE origen = \$1$/)).toBe(false);

@@ -55,6 +55,7 @@ export default function LlaveSecretoDialogo({ llave, titulo, detalle, onCerrar }
           </span>
         )}
       </div>
+      <p className="asi__ayuda">Al copiar, la llave queda en el portapapeles del sistema hasta que copies otra cosa: pégala de inmediato en el gestor de contraseñas y luego copia cualquier texto para reemplazarla.</p>
       <div role="status" aria-live="polite">{estadoCopia && <p className="asi__aviso asi__aviso--info">{estadoCopia}</p>}</div>
       <div className="asi__campo asi__campo--casilla">
         <input
