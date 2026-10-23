@@ -7,6 +7,8 @@
 //     (toISOString desfasaría un día en zonas al este de UTC o con hora cercana a la medianoche).
 //   - número o texto numérico: serial de Excel (sistema 1900) con parte entera de 5 o 6 dígitos; se toma la parte
 //     entera y la hora se descarta. De 1 a 4 dígitos (un año suelto como 1990) -> 'fecha incompleta'.
+//   - { serialExcel: n } (celda numérica con formato de fecha, ver hojaAMatriz.js): serial de Excel desde 1 (1900-01-01),
+//     sin pasar por Date (el Date local desplaza un día fechas de 1939-1950 en zonas con horario histórico).
 //   - texto: AAAA-MM-DD, AAAA/MM/DD, DD/MM/AAAA y DD-MM-AAAA (día primero, formato de México).
 //   - lo inválido o ambiguo devuelve { valor: '', error } con un mensaje claro.
 
@@ -47,10 +49,12 @@ function construir(anio, mes, dia) {
 export function fechaDeSerialExcel(serial) {
   if (typeof serial !== 'number' || !isFinite(serial)) return { valor: '', error: 'Número de fecha inválido' };
   const entero = Math.floor(serial);
-  if (entero < 1) return { valor: '', error: 'Número de fecha de Excel fuera de rango' };
+  // 2958465 = 31-dic-9999: más allá el Date no es válido y saldría 'NaN-NaN-NaN'
+  if (entero < 1 || entero > 2958465) return { valor: '', error: 'Número de fecha de Excel fuera de rango' };
   if (entero === 60) return { valor: '', error: 'El 29 de febrero de 1900 no existe (error histórico de Excel)' };
   const base = entero < 60 ? Date.UTC(1899, 11, 31) : Date.UTC(1899, 11, 30);
   const d = new Date(base + entero * MS_DIA);
+  if (isNaN(d.getTime())) return { valor: '', error: 'Número de fecha de Excel fuera de rango' };
   return construir(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
 }
 
@@ -90,6 +94,8 @@ export function normalizarFecha(valor) {
   if (valor === null || valor === undefined) return { valor: '' };
   if (Object.prototype.toString.call(valor) === '[object Date]') return fechaDeDate(valor);
   if (typeof valor === 'number') return fechaDeNumero(valor);
+  // Celda numérica con formato de FECHA en Excel (la marca hojaAMatriz): serial exacto, aritmética pura sin Date local.
+  if (valor !== null && typeof valor === 'object' && typeof valor.serialExcel === 'number') return fechaDeSerialExcel(valor.serialExcel);
   if (typeof valor !== 'string') return { valor: '', error: 'Formato de fecha no reconocido' };
 
   const texto = valor.trim();

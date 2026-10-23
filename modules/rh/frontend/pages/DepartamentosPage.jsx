@@ -1,6 +1,31 @@
 import { useState, useEffect } from "react";
 import { obtenerAreas } from "../services/areas.service";
 import CrudPage from "../components/CrudPage";
+import { solicitar } from "../../../portal/frontend/utils/api";
+import {
+  COLUMNAS_DEPARTAMENTOS, FILAS_EJEMPLO_DEPARTAMENTOS, hojasPlantillaDepartamentos,
+} from "../constants/importacionDepartamentos";
+import { descargarLibro } from "../utils/libroXlsx";
+
+// Turnos activos con su detalle por día (para el horario resumido de la hoja "Catálogos"). Requiere Asistencia:consulta;
+// si falta o falla, la hoja sale sin turnos.
+async function obtenerTurnosConDetalle() {
+  try {
+    const lista = await solicitar("/asistencia/turnos");
+    if (!lista.exito) return [];
+    const activos = lista.datos.filter((t) => t.activo);
+    return await Promise.all(activos.map(async (t) => {
+      try {
+        const d = await solicitar(`/asistencia/turnos/${t.id}`);
+        return d.exito ? d.datos : t;
+      } catch {
+        return t;
+      }
+    }));
+  } catch {
+    return [];
+  }
+}
 
 export default function DepartamentosPage() {
   const [areas, setAreas] = useState([]);
@@ -19,6 +44,7 @@ export default function DepartamentosPage() {
         { key: "nombre", label: "Nombre" },
         { key: "area_nombre", label: "Área" },
         { key: "cupo_vacaciones", label: "Cupo de vacaciones" },
+        { key: "turno_actual", label: "Turno actual" },
         { key: "descripcion", label: "Descripción" },
       ]}
       camposFormulario={[
@@ -42,19 +68,26 @@ export default function DepartamentosPage() {
       ]}
       importadorConfig={{
         titulo: "Importar catálogo de departamentos",
-        columnas: [
-          { clave: "nombre", etiqueta: "Nombre", requerido: true },
-          { clave: "area", etiqueta: "Área", requerido: false },
-          { clave: "descripcion", etiqueta: "Descripción", requerido: false },
-        ],
-        filasEjemplo: [
-          { nombre: "Contabilidad", area: "Administración", descripcion: "Gestión financiera y contable" },
-          { nombre: "Logística", area: "Operaciones", descripcion: "Distribución y almacén" },
-          { nombre: "Ventas", area: "Comercial", descripcion: "Atención y cierre de ventas" },
-          { nombre: "Desarrollo", area: "Tecnología", descripcion: "Construcción y mantenimiento de sistemas" },
-        ],
+        columnas: COLUMNAS_DEPARTAMENTOS,
+        filasEjemplo: FILAS_EJEMPLO_DEPARTAMENTOS,
         nombreArchivo: "plantilla_departamentos.csv",
         rutaImportar: "/departamentos/importar",
+        permiteActualizar: true,
+        textosModo: {
+          titulo: "Qué hacer con los departamentos que ya existen",
+          ayuda: "Se buscan por nombre (sin acentos ni mayúsculas). Solo las celdas con valor sobrescriben: una celda vacía nunca borra datos.",
+        },
+        accionesDescarga: [
+          {
+            etiqueta: "⬇ Descargar plantilla (.xlsx)",
+            onClick: async () => {
+              const turnos = await obtenerTurnosConDetalle();
+              descargarLibro("plantilla_departamentos.xlsx", hojasPlantillaDepartamentos({ turnos, areas }), {
+                Departamentos: [28, 22, 40, 20, 20, 22], Instrucciones: [140], "Catálogos": [30, 40, 30],
+              });
+            },
+          },
+        ],
       }}
     />
   );

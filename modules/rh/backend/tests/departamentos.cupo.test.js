@@ -9,9 +9,10 @@ jest.mock("../../../portal/backend/middleware/auth.middleware", () => ({
 }));
 jest.mock("../../../portal/backend/middleware/permisos.middleware", () => ({
   verificarPermiso: () => (_req, _res, next) => next(),
+  tienePermiso: jest.fn().mockResolvedValue(true),
 }));
 jest.mock("../../../portal/backend/config/database", () => ({
-  grupo: { query: jest.fn() },
+  grupo: { query: jest.fn(), connect: jest.fn() },
 }));
 
 const { grupo } = require("../../../portal/backend/config/database");
@@ -32,6 +33,20 @@ describe("Departamentos - cupo_vacaciones", () => {
     expect(res.status).toBe(200);
     expect(res.body.datos[0].cupo_vacaciones).toBe(2);
     expect(grupo.query.mock.calls[0][0]).toMatch(/SELECT d\.\*/);
+  });
+
+  it("B3: turno_actual solo se pide si el usuario tiene rh/Turnos consulta", async () => {
+    const { tienePermiso } = require("../../../portal/backend/middleware/permisos.middleware");
+    grupo.query.mockResolvedValue({ rows: [{ id: 1, nombre: "TI" }] });
+    tienePermiso.mockResolvedValueOnce(true);
+    await request(app).get("/api/departamentos");
+    expect(tienePermiso).toHaveBeenLastCalledWith(expect.objectContaining({ usuario_id: 5 }), "rh", "Turnos", "consulta");
+    expect(grupo.query.mock.calls[0][0]).toMatch(/turno_actual/);
+    grupo.query.mockClear();
+    tienePermiso.mockResolvedValueOnce(false);
+    const res = await request(app).get("/api/departamentos");
+    expect(res.status).toBe(200);
+    expect(grupo.query.mock.calls[0][0]).not.toMatch(/turno|LATERAL/);
   });
 
   it("PUT actualiza el cupo con SQL parametrizado (acepta cadena numérica)", async () => {
@@ -88,13 +103,40 @@ describe("Departamentos - errores genéricos (sin error.message)", () => {
   });
 
   it("importar: el error por fila tampoco filtra el mensaje de Postgres", async () => {
-    grupo.query
-      .mockResolvedValueOnce({ rows: [] })
-      .mockRejectedValueOnce(new Error(SECRETO));
+    // BD que falla en el INSERT del departamento: el lote sigue (SAVEPOINT) y la fila sale con error genérico
+    const cliente = {
+      release: jest.fn(),
+      query: jest.fn(async (sql) => {
+        if (/^INSERT INTO departamentos/.test(sql)) throw new Error(SECRETO);
+        return { rows: [] };
+      }),
+    };
+    grupo.connect.mockResolvedValue(cliente);
+    grupo.query.mockResolvedValue({ rows: [{ hoy: "2026-10-22" }] });
     const res = await request(app).post("/api/departamentos/importar").send({ filas: [{ nombre: "X" }] });
     expect(res.status).toBe(200);
-    expect(res.body.datos.errores).toHaveLength(1);
+    expect(res.body.datos.errores).toEqual([{ fila: null, nombre: "X", error: "No se pudo guardar la fila" }]);
     expect(JSON.stringify(res.body)).not.toContain("duplicate key");
+    expect(cliente.query).toHaveBeenCalledWith("COMMIT");
+  });
+});
+
+describe("R-10: los logs del CRUD de departamentos no imprimen el error completo ni datos de la fila", () => {
+  it.each([
+    ["get", "/api/departamentos", undefined],
+    ["post", "/api/departamentos", { nombre: "X" }],
+    ["put", "/api/departamentos/1", { nombre: "X" }],
+    ["delete", "/api/departamentos/1", undefined],
+  ])("%s %s", async (metodo, url, cuerpo) => {
+    const e = Object.assign(new Error('duplicate key value violates unique constraint "departamentos_nombre_key"'), {
+      code: "23505", constraint: "departamentos_nombre_key", detail: "Key (nombre)=(Nombre Privado) already exists.",
+    });
+    grupo.query.mockRejectedValue(e);
+    await request(app)[metodo](url).send(cuerpo);
+    const log = console.error.mock.calls.map((c) => c.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ")).join("\n");
+    expect(log).toMatch(/código=23505 constraint=departamentos_nombre_key/);
+    expect(log).not.toMatch(/Privado|duplicate key|detail/);
+    console.error.mockClear();
   });
 });
 

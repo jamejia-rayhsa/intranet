@@ -13,6 +13,21 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-22] [coder] → code-notes.md — Una importación no congela la intranet (lock_timeout 3 s + 409, tope de 2 simultáneas, reintento del front), libros 1904, nómina con espacios, repetidos entre lotes (jest 2082, 23 mutantes, 15 importaciones simultáneas con la API en 200)
+- [2026-10-22] [revisor] → reviews.md#re-revisión-de-integridad-de-la-carga — Re-revisión de integridad de la carga: CON OBSERVACIONES, sin críticos (R-1 fechas 1904, R-2 nómina con espacio, R-3 pool y candado sin límite)
+- [2026-10-22] [coder] → code-notes.md — Correcciones de integridad del modo actualizar (CURP inválida/sin identificador/ceros = error, NSS y estatus sin pisar, candado advisory 4410 y SAVEPOINT por fila, fechas Excel como serial, exportación auditada; 195 importaciones simultáneas 0 errores, jest 2062, 37 mutantes)
+- [2026-10-22] orquestador → decisions.md — Plantilla de carga completa: revisión NO APROBADA y 7 fallos de pruebas; ronda de correcciones de integridad en curso
+- [2026-10-22] [tester] → tests.md — Plantilla de carga completa y departamentos: prueba INTEGRADA con la pantalla real de Empleados y Departamentos (Chromium + Firefox) contra backend real y Postgres real (supabase 17 + pg16): actualizar los 71 (3 195/3 195), departamentos con turno y cupo, formatos, lotes de 80 kb/1 500 filas, red, permisos, auditoría, responsive/axe/teclado, jest 2022 x4 y eslint 0 errores; 7 FAIL (2 medios de concurrencia: deadlock en orden opuesto y ciclos de jefes por carrera; A1-A3 del revisor reproducidos; 4 menores), 0 bloqueados
+- [2026-10-22] [tester] → decisions.md — PARA RESOLVER F-IE-1 a F-IE-7 (deadlock de importaciones simultáneas, carrera de ciclos de jefes, A1-A3 reproducidos, fechas de "empleados actuales" al este de UTC, fechas Excel 1939-1950, 403 como "no confirmado", PII en el log)
+- [2026-10-22] orquestador → decisions.md — Corrección: MBA3 en Solicitudes de Crédito ya no es stub (drift sin registrar desde el ADR de Fase 1)
+- [2026-10-22] [investigador] → research.md#2026-10-22-investigador--convenios-de-compra-estado-de-comercial-autorizacion-importador-dashboards-y-vigencias — Convenios de compra: Comercial solo tiene solicitudes de crédito (sin catálogos cliente/vendedor/producto), sin rol autorizador ni tipo de permiso "autorizar", importador y dashboard reutilizables parcialmente, sin convención de "tiempo estimado para consumir stock"
+- [2026-10-22] [revisor] → reviews.md#plantilla-de-carga-completa-y-departamentos — Plantilla de carga completa y departamentos (749fc02): NO APROBADO para la carga real de 71 en modo actualizar (A1-A3 altos: fila con identificador inválido inserta duplicado, NSS de 10 dígitos sobrescribe, estatus/baja reactiva o da de baja)
+- [2026-10-22] [coder] → code-notes.md — Plantilla de carga completa del expediente (40 columnas, modo actualizar, jefes en segunda pasada, advertencias por campo, CSV robusto, plantilla .xlsx) y carga de departamentos con turno y cupo (jest 2022, 36/38 mutantes, Postgres 16 y Chromium reales)
+- [2026-10-22] orquestador → decisions.md — Petición: plantilla de carga de departamentos con turno y cupo de vacaciones
+- [2026-10-22] orquestador → decisions.md — Carga de relleno 2026 de la interfaz validada contra la base de staging (39,906 marcas)
+- [2026-10-22] orquestador → decisions.md — Decisiones del humano: análisis desde 1-sep-2026 y histórico solo de 2026; criterios del motor
+- [2026-10-22] orquestador → decisions.md — Turno 'Rayhsa' asignado a los 15 departamentos de staging (ejecutado por el humano)
+- [2026-10-22] orquestador → decisions.md — Instrucciones: turno Rayhsa a todos los departamentos (bloqueado), plantilla de carga completa y Fase 4 después
 - [2026-10-22] [coder] → code-notes.md — Correcciones de la revisión del importador (resultado oculto en EmpleadoPage, años sueltos, sin_catalogo, fallo a mitad de lotes, auditoría IMPORTAR_EMPLEADOS, foco)
 - [2026-10-22] orquestador → decisions.md — OK del humano para desplegar a staging la corrección del importador
 - [2026-10-22] [revisor] → reviews.md#importador-de-empleados — Importador de empleados (aff5f03): NO APROBADO; CRÍTICO: EmpleadoPage desmonta el resultado (cargando=true); ALTO: años sueltos como serial (1905)

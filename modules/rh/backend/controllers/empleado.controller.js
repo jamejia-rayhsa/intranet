@@ -1,5 +1,10 @@
 const Empleado = require("../models/empleado.model");
-const { validarCuerpoImportacion, nombresUnicos } = require("../utils/importarEmpleados");
+const { auditarImportacion } = require("../utils/auditoriaImportacion");
+const { describirErrorSql } = require("../utils/logSeguro");
+const { esImportacionEnCurso, responderImportacionEnCurso } = require("../utils/candadosImportacion");
+const {
+  validarCuerpoImportacion, validarParesJefes, normalizarClave,
+} = require("../utils/importarEmpleados");
 const Ubicacion = require("../models/ubicacion.model");
 const Usuario = require("../../../portal/backend/models/usuario.model");
 const SupabaseAdmin = require("../../../portal/backend/services/supabaseAdmin.service");
@@ -426,52 +431,89 @@ const ControladorEmpleado = {
 
   async importar(req, res) {
     try {
-      const { filas } = req.body || {};
+      const { filas, modo } = req.body || {};
       const problema = validarCuerpoImportacion(filas);
       if (problema) return res.status(400).json({ exito: false, mensaje: problema });
-
-      const nombresPuesto = nombresUnicos(filas, 'puesto');
-      const nombresDepto  = nombresUnicos(filas, 'departamento');
-
-      const [resPuestos, resDeptos] = await Promise.all([
-        nombresPuesto.length
-          ? grupo.query("SELECT id, LOWER(nombre) AS nombre FROM puestos WHERE LOWER(nombre) = ANY($1)", [nombresPuesto])
-          : { rows: [] },
-        nombresDepto.length
-          ? grupo.query("SELECT id, LOWER(nombre) AS nombre FROM departamentos WHERE LOWER(nombre) = ANY($1)", [nombresDepto])
-          : { rows: [] },
-      ]);
-
-      const mapaPuestos = {};
-      resPuestos.rows.forEach(r => { mapaPuestos[r.nombre] = r.id; });
-      const mapaDepartamentos = {};
-      resDeptos.rows.forEach(r => { mapaDepartamentos[r.nombre] = r.id; });
-
-      const resultado = await Empleado.importarLote(filas, mapaPuestos, mapaDepartamentos);
-
-      // Auditoría sin datos personales: solo conteos. La IP se recorta a 45 caracteres (ip_origen es VARCHAR(45):
-      // un X-Forwarded-For largo haría fallar el INSERT y se perdería el registro).
-      try {
-        const xff = req.headers && req.headers["x-forwarded-for"];
-        const reqAuditoria = {
-          user: req.user,
-          socket: req.socket,
-          headers: { ...(req.headers || {}), "x-forwarded-for": xff ? String(xff).slice(0, 45) : undefined },
-        };
-        await registrarAccion(reqAuditoria, "rh", "empleados", "importacion", "IMPORTAR_EMPLEADOS", null, {
-          filas_recibidas: filas.length,
-          insertados: resultado.insertados,
-          duplicados: resultado.duplicados,
-          errores: resultado.errores.length,
-        });
-      } catch (errorAuditoria) {
-        console.error("Error al registrar auditoría de la importación:", errorAuditoria.message);
+      if (modo !== undefined && modo !== "omitir" && modo !== "actualizar") {
+        return res.status(400).json({ exito: false, mensaje: "Modo de importación no válido (usa 'omitir' o 'actualizar')" });
       }
+
+      // Catálogos completos (son tablas pequeñas): la comparación sin acentos ni mayúsculas se hace en JS.
+      const [resPuestos, resDeptos, resUbicaciones] = await Promise.all([
+        grupo.query("SELECT id, nombre FROM puestos ORDER BY id"),
+        grupo.query("SELECT id, nombre FROM departamentos ORDER BY id"),
+        grupo.query("SELECT id, nombre FROM ubicaciones WHERE activo IS NOT FALSE ORDER BY id"),
+      ]);
+      const mapa = (filasCatalogo) => {
+        const m = {};
+        for (const r of filasCatalogo.rows) {
+          const k = normalizarClave(r.nombre);
+          if (k && m[k] === undefined) m[k] = r.id;
+        }
+        return m;
+      };
+
+      const resultado = await Empleado.importarLote(
+        filas,
+        { puestos: mapa(resPuestos), departamentos: mapa(resDeptos), ubicaciones: mapa(resUbicaciones) },
+        { modo: modo || "omitir" }
+      );
+
+      await auditarImportacion(req, "empleados", "IMPORTAR_EMPLEADOS", {
+        filas_recibidas: filas.length,
+        modo: modo || "omitir",
+        insertados: resultado.insertados,
+        actualizados: resultado.actualizados,
+        sin_cambios: resultado.sin_cambios,
+        duplicados: resultado.duplicados,
+        errores: resultado.errores.length,
+        advertencias: resultado.advertencias.length + resultado.advertencias_omitidas,
+      });
 
       res.json({ exito: true, datos: resultado });
     } catch (error) {
-      console.error('[empleados] importar', error);
+      if (esImportacionEnCurso(error)) return responderImportacionEnCurso(res);
+      console.error(`[empleados] importar: ${describirErrorSql(error)}`);
       res.status(500).json({ exito: false, mensaje: 'Error al importar empleados' });
+    }
+  },
+
+  // Lista completa en el formato de la plantilla ("Descargar empleados actuales"). Contiene CURP, NSS, RFC y CLABE:
+  // mismo permiso que el listado de empleados y queda auditado (solo el número de filas).
+  async exportarParaImportacion(req, res) {
+    try {
+      const empleados = await Empleado.listarParaExportar();
+      await auditarImportacion(req, "empleados", "EXPORTAR_EMPLEADOS", { filas: empleados.length });
+      res.json({ exito: true, datos: { empleados } });
+    } catch (error) {
+      console.error(`[empleados] exportar: ${describirErrorSql(error)}`);
+      res.status(500).json({ exito: false, mensaje: "Error al exportar empleados" });
+    }
+  },
+
+  // Segunda pasada de la importación: jefe inmediato por número de nómina o CURP (el jefe puede venir en otro lote).
+  async importarJefes(req, res) {
+    try {
+      const { pares } = req.body || {};
+      const { error, validos } = validarParesJefes(pares);
+      if (error) return res.status(400).json({ exito: false, mensaje: error });
+
+      const resultado = await Empleado.asignarJefes(validos);
+
+      await auditarImportacion(req, "empleados", "IMPORTAR_EMP_JEFES", {
+        pares_recibidos: pares.length,
+        asignados: resultado.asignados,
+        sin_cambios: resultado.sin_cambios,
+        no_encontrados: resultado.no_encontrados,
+        ciclos: resultado.ciclos,
+        conflictos: resultado.conflictos,
+      });
+
+      res.json({ exito: true, datos: resultado });
+    } catch (error) {
+      if (esImportacionEnCurso(error)) return responderImportacionEnCurso(res);
+      console.error(`[empleados] importar jefes: ${describirErrorSql(error)}`);
+      res.status(500).json({ exito: false, mensaje: 'Error al asignar los jefes inmediatos' });
     }
   },
 };

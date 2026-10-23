@@ -6,6 +6,8 @@ import {
   obtenerRoles,
 } from "../services/empleados.service";
 import ImportadorArchivo from "../../../portal/frontend/components/ImportadorArchivo";
+import { COLUMNAS_EMPLEADOS, FILAS_EJEMPLO_EMPLEADOS } from "../constants/importacionEmpleados";
+import { descargarPlantillaEmpleados, descargarEmpleadosActuales } from "../utils/plantillaEmpleados";
 import { solicitar } from "../../../portal/frontend/utils/api";
 import { obtenerDepartamentos } from "../services/departamentos.service";
 import { obtenerPuestos } from "../services/puestos.service";
@@ -176,6 +178,14 @@ export default function EmpleadoPage() {
     }
   }
 
+  // Todos los empleados en el formato de la plantilla, para corregirlos y reimportarlos en modo actualizar. Los ordena y
+  // formatea el servidor (orden único, fechas AAAA-MM-DD sin depender de la zona horaria).
+  async function descargarActuales() {
+    const respuesta = await solicitar("/empleados/exportar-importacion");
+    if (!respuesta.exito) throw new Error(respuesta.mensaje || "No se pudo obtener la lista de empleados");
+    descargarEmpleadosActuales(respuesta.datos.empleados);
+  }
+
   function manejarCambio(evento) {
     const { name, value } = evento.target;
     setFormulario((prev) => ({ ...prev, [name]: value }));
@@ -302,33 +312,27 @@ export default function EmpleadoPage() {
       {mostrarImportador && (
         <ImportadorArchivo
           titulo="Importar catálogo de empleados"
-          columnas={[
-            { clave: 'nombre',          etiqueta: 'Nombre',          requerido: true  },
-            { clave: 'apellido_paterno', etiqueta: 'Apellido Paterno', requerido: true  },
-            { clave: 'apellido_materno', etiqueta: 'Apellido Materno', requerido: false },
-            { clave: 'curp',            etiqueta: 'CURP',            requerido: false },
-            { clave: 'rfc',             etiqueta: 'RFC',             requerido: false },
-            { clave: 'nss',             etiqueta: 'NSS',             requerido: false },
-            { clave: 'numero_nomina',   etiqueta: 'Número de Nómina', requerido: false },
-            { clave: 'genero',          etiqueta: 'Género',          requerido: false },
-            { clave: 'estado_civil',    etiqueta: 'Estado Civil',    requerido: false },
-            { clave: 'escolaridad',     etiqueta: 'Escolaridad',     requerido: false },
-            { clave: 'tipo_contrato',   etiqueta: 'Tipo Contrato',   requerido: false },
-            { clave: 'fecha_nacimiento', etiqueta: 'Fecha Nacimiento', requerido: false, tipo: 'fecha' },
-            { clave: 'fecha_ingreso',   etiqueta: 'Fecha Ingreso',   requerido: false, tipo: 'fecha' },
-            { clave: 'puesto',          etiqueta: 'Puesto',          requerido: false },
-            { clave: 'departamento',    etiqueta: 'Departamento',    requerido: false },
-            { clave: 'correo_personal', etiqueta: 'Correo Personal', requerido: false },
-            { clave: 'celular_personal', etiqueta: 'Celular Personal', requerido: false },
-          ]}
-          filasEjemplo={[
-            { nombre: 'Juan', apellido_paterno: 'García', apellido_materno: 'López', curp: 'GALJ900101HDFXXX01', rfc: 'GALJ900101ABC', nss: '12345678901', numero_nomina: 'NOM-001', genero: 'Masculino', estado_civil: 'Soltero', escolaridad: 'Licenciatura', tipo_contrato: 'Indeterminado', fecha_nacimiento: '1990-01-01', fecha_ingreso: '2024-01-15', puesto: 'Analista de TI', departamento: 'TI', correo_personal: 'juan@email.com', celular_personal: '5551234567' },
-            { nombre: 'María', apellido_paterno: 'Hernández', apellido_materno: 'Ruiz', curp: 'HERM850215MDFXXX02', rfc: 'HERM850215XYZ', nss: '98765432109', numero_nomina: 'NOM-002', genero: 'Femenino', estado_civil: 'Casado', escolaridad: 'Maestría', tipo_contrato: 'Indeterminado', fecha_nacimiento: '1985-02-15', fecha_ingreso: '2024-02-01', puesto: 'Gerente Comercial', departamento: 'Comercial', correo_personal: 'maria@email.com', celular_personal: '5559876543' },
-          ]}
+          columnas={COLUMNAS_EMPLEADOS}
+          filasEjemplo={FILAS_EJEMPLO_EMPLEADOS}
           nombreArchivo="plantilla_empleados.csv"
-          onImportar={(filas) => solicitar('/empleados/importar', {
+          permiteActualizar
+          accionesDescarga={[
+            {
+              etiqueta: '⬇ Descargar plantilla (.xlsx)',
+              onClick: async () => descargarPlantillaEmpleados({ puestos, departamentos, ubicaciones }),
+            },
+            {
+              etiqueta: '⬇ Descargar empleados actuales en este formato',
+              onClick: descargarActuales,
+            },
+          ]}
+          onImportar={(filas, opciones) => solicitar('/empleados/importar', {
             method: 'POST',
-            body: JSON.stringify({ filas }),
+            body: JSON.stringify({ filas, modo: opciones && opciones.modo }),
+          })}
+          onImportarJefes={(pares) => solicitar('/empleados/importar/jefes', {
+            method: 'POST',
+            body: JSON.stringify({ pares }),
           })}
           onExito={() => { cargarEmpleados({ silencioso: true }); }}
           onCancelar={() => setMostrarImportador(false)}
