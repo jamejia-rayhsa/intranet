@@ -13,6 +13,12 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-23] orquestador → decisions.md — Fase 1 de Convenios de compra CERRADA (commit en feat/comercial-convenios); esperando GO del humano para la Fase 2 (MBA3)
+- [2026-10-23] [coder] → code-notes.md#2026-10-23-coder--convenios-de-compra-comercial-fase-1-modelo-de-datos--autorización-base — Correcciones post-revisión: nunca-lo-propio en SQL, ids/fechas/montos validados, reglas de cancelar (autorizador/super_admin) y editar (creador/super_admin), bug real en AutorizadoresPage corregido
+- [2026-10-23] orquestador → decisions.md — Decisiones del humano: quién cancela (autorizador/super_admin) y quién edita (creador/super_admin) un convenio
+- [2026-10-23] [tester] → tests.md#2026-10-23-tester--convenios-de-compra-fase-1 — Convenios de compra Fase 1: sin fallos nuevos (Postgres real, backend real, Chromium real, concurrencia, vigencia); PARA RESOLVER sobre cancelar/editar (ya resuelto por el humano)
+- [2026-10-23] [revisor] → reviews.md#2026-10-23-revisor--convenios-de-compra-fase-1 — Convenios de compra Fase 1: APROBADO CON OBSERVACIONES, sin críticos (R-1 a R-13)
+- [2026-10-23] [coder] → code-notes.md#2026-10-23-coder--convenios-de-compra-comercial-fase-1-modelo-de-datos--autorización-base — Convenios de compra Fase 1: migración 002, modelo de autorización por lista, CRUD, pantalla mínima (jest 56/56, Postgres real y Chromium real)
 - [2026-10-23] orquestador → decisions.md — OK del humano: despliegue del PR #17 a staging y GO a la Fase 4 en paralelo
 - [2026-10-23] orquestador → roadmap.md#tarea-2026-10-23-convenios-de-compra-módulo-comercial — Plan PROPUESTO de 6 fases para Convenios de compra (módulo Comercial), pendiente de GO a la Fase 1
 - [2026-10-23] orquestador → decisions.md — MBA3 lectura: canal confirmado (API REST propia mba3api.rayhsa.net con JWT, distinta del web service de escritura); faltan endpoints exactos de vendedor/producto/existencias/ventas

@@ -3256,3 +3256,100 @@ Hallazgos abiertos:
 3. Filtrar nóminas con espacio o guion interno y CURP de 18 caracteres (R-2).
 4. Ejecutar en modo actualizar y exigir insertados = 0 (con los 71 existentes, cualquier alta indica identificación fallida); revisar los errores "Conflicto" y "Posible duplicado".
 5. Una sola importación a la vez; no lanzar otra mientras corre (R-3).
+
+### [2026-10-23] [revisor] — Convenios de compra: Fase 1
+**Alcance:** worktree feat+comercial-convenios, sin commit. Leídos: roadmap (Fase 1), decisions 2026-10-23, code-notes "[2026-10-23] [coder]", research 2026-10-22, migración 002-convenios-compra.sql, bloque de init.sql, convenio.controller.js, autorizador.controller.js, convenio.model.js, autorizador.model.js, convenios.routes.js, app.js, main.jsx, MenuDinamico.jsx, comercial.css, convenios.service.js, ConveniosListado.jsx, ConvenioForm.jsx, AutorizadoresPage.jsx. Ejecutado: npx jest modules/comercial, 4 suites y 56 tests OK.
+
+**Veredicto: APROBADO CON OBSERVACIONES.** Sin críticos. No hay violación de decisions.md (autorización propia bloqueada, lista de autorizadores con activo, administración solo super_admin, permisos granulares, vigencia calculada en SQL). No hace falta escalar.
+
+**Verificado sin hallazgos:**
+- Autorización propia: se comprueba en JS antes de la lista (convenio.controller.js:26), y ningún UPDATE modifica creado_por_id. Ver R-1 sobre la falta de predicado en SQL.
+- Lista de autorizadores: esActivo exige activo = true (autorizador.model.js:51), así que un dado de baja queda bloqueado. super_admin pasa sin estar en la lista (convenio.controller.js:27). soloSuperAdmin está aplicado en las tres rutas /autorizadores (convenios.routes.js:28-30).
+- Permisos: las 7 rutas de /convenios pasan por verificarPermiso('comercial','Convenios', consulta|edicion), incluido el detalle GET /convenios/:id, así que no hay fuga por esa vía. La migración y init.sql tienen el mismo contenido en tablas, índices, opción y permisos (comparado a mano; solo difieren los comentarios). comercial_admin, portal_admin y super_admin reciben consulta y edición.
+- Transacciones: crear e insert de líneas van en enTransaccion (convenio.model.js:131-160). actualizar toma FOR UPDATE antes de reemplazar líneas (convenio.model.js:164-203), así que no hay carrera con una autorización concurrente.
+- Estados: editar exige estatus = pendiente_autorizacion en el UPDATE y en el bloqueo (convenio.model.js:178). Cancelar excluye cancelado en SQL (convenio.model.js:239). Rechazar exige motivo_rechazo (convenio.controller.js:197).
+- Vigencia: SQL_VENCIDO usa (now() AT TIME ZONE 'America/Mexico_City')::date (convenio.model.js:6). No hay columna de estatus vencido ni new Date() en JS.
+- SQL: todos los valores van por parámetros $N. periodo se valida contra la lista en backend (convenio.controller.js:8 y :46); no hay CHECK en BD, decisión documentada por el coder.
+- Auditoría: las acciones usadas son crear, actualizar, autorizar, rechazar, cancelar, agregar y quitar, todas de 10 caracteres o menos (límite VARCHAR(20) de auditoria).
+- Respuestas de error: ninguna expone mensajes de Postgres al cliente (solo console.error en servidor).
+- Fuera de alcance respetado: no hay referencias a MBA3, CSV, movimientos ni tiempo estimado en los archivos nuevos. El CHECK de rol_opcion_permisos.tipo no se modificó (el diff de init.sql solo agrega INSERTs).
+
+**R-1. MEDIO — Autorizar/rechazar: la exclusión de lo propio no está en el UPDATE**
+**Archivo/línea:** modules/comercial/backend/models/convenio.model.js:211 y :225 (WHERE de autorizar y rechazar); comprobación previa en modules/comercial/backend/controllers/convenio.controller.js:170 y :211.
+**Problema:** la regla "nunca lo propio" depende de una lectura previa (obtener) fuera de la sentencia de escritura; el UPDATE solo protege el estatus. Hoy no hay exploit porque creado_por_id es inmutable en el código, pero un cambio futuro que lo modifique rompería la regla sin que la BD lo impida.
+**Severidad:** medio (defensa en profundidad; no explotable con el código actual).
+**Fix sugerido:** añadir AND creado_por_id <> $N al WHERE de autorizar y rechazar, manteniendo el chequeo JS para el mensaje. Si el UPDATE no afecta filas, el controlador ya responde 409; para distinguir el caso propio, releer la fila tras el 409 o usar FOR UPDATE en una transacción. Prueba: en un test de modelo, forzar creado_por_id igual al usuario y verificar que el UPDATE devuelve 0 filas.
+
+**R-2. MEDIO — IDs no validados como numéricos antes de la query**
+**Archivo/línea:** modules/comercial/backend/controllers/convenio.controller.js:91, 132, 160, 201, 237; modules/comercial/backend/controllers/autorizador.controller.js:26 y :45; modules/comercial/backend/routes/convenios.routes.js:21-26 y :30.
+**Problema:** req.params.id y usuario_id llegan sin validar a SQL. Con /convenios/abc, Postgres lanza 22P02 y la respuesta es 500 "Error al obtener convenio" en vez de 400/404. En agregar solo se maneja 23503, así que un usuario_id no numérico también da 500. No hay inyección (son parámetros), pero incumple la regla de validación de entrada.
+**Severidad:** medio.
+**Fix sugerido:** validar con una expresión tipo ^\d+$ (y rango de INT) en las rutas con :id y en agregar/quitar; responder 400 con mensaje "id inválido".
+
+**R-3. MEDIO — Fechas y montos sin validar en backend: entradas inválidas terminan en 500**
+**Archivo/línea:** modules/comercial/backend/controllers/convenio.controller.js:60-65 (fecha_inicio, vigente_hasta) y :37-48 (validarProductos); modules/comercial/backend/models/convenio.model.js:119-125 (empaque, precios, factor).
+**Problema:** solo se verifica que fecha_inicio exista; un formato inválido llega a Postgres (22007) y da 500. La comparación vigente_hasta < fecha_inicio (:63) es de strings, correcta solo con formato ISO. empaque, precio_compra, precio_venta y factor no se validan: aceptan negativos, y texto no numérico da 500.
+**Severidad:** medio.
+**Fix sugerido:** validar fecha_inicio y vigente_hasta con formato AAAA-MM-DD y fecha real; validar empaque, precio_* y factor como números finitos mayores o iguales a 0 (o null). Responder 400 con mensaje por campo.
+
+**R-4. MEDIO (a confirmar con el humano) — Cancelar no exige autoridad**
+**Archivo/línea:** modules/comercial/backend/controllers/convenio.controller.js:235-257; modules/comercial/backend/models/convenio.model.js:234-245; ruta convenios.routes.js:26.
+**Problema:** cualquier usuario con permiso de edición puede cancelar un convenio ya autorizado, sin estar en la lista de autorizadores ni ser super_admin. Las decisiones no dicen si cancelar requiere autoridad, pero cancelar una compra aprobada es una decisión de negocio sensible.
+**Severidad:** medio (pendiente de confirmación).
+**Fix sugerido:** preguntar al humano. Si cancelar autorizados requiere autoridad, aplicar motivoSinAutoridad al cancelar cuando previo.estatus es autorizado, o limitar esa transición a super_admin y autorizadores.
+
+**R-5. BAJO — Autorizar/rechazar: 409 de estado antes que 403 de autoridad**
+**Archivo/línea:** modules/comercial/backend/controllers/convenio.controller.js:162-167 y :203-208 (antes de motivoSinAutoridad en :170 y :211).
+**Problema:** un usuario sin autoridad recibe 409 si el convenio ya no está pendiente, lo que revela el estado a quien no debería consultarlo.
+**Severidad:** bajo.
+**Fix sugerido:** invertir el orden: primero motivoSinAutoridad (403), luego el estado (409).
+
+**R-6. BAJO — Respuestas con forma inconsistente entre listar/obtener y las acciones**
+**Archivo/línea:** modules/comercial/backend/models/convenio.model.js:131-160 (crear), :164-203 (actualizar), :206-217 (autorizar), :219-231 (rechazar), :234-245 (cancelar).
+**Problema:** listar y obtener devuelven vencido, creado_por_nombre y productos; crear, actualizar, autorizar, rechazar y cancelar devuelven RETURNING * sin vencido ni nombres. Un front que reemplace la fila con la respuesta de una acción pierde campos.
+**Severidad:** bajo.
+**Fix sugerido:** tras cada escritura, devolver Convenio.obtener(id) para que todas las respuestas tengan la misma forma.
+
+**R-7. BAJO — productos con elementos null produce 500**
+**Archivo/línea:** modules/comercial/backend/controllers/convenio.controller.js:36-37.
+**Problema:** con productos: [null], p.producto_descripcion lanza TypeError y responde 500 en vez de 400.
+**Severidad:** bajo.
+**Fix sugerido:** al inicio del bucle, rechazar p nulo o no objeto con un mensaje de formato inválido. Opcional: tope de líneas por convenio (hoy no hay límite).
+
+**R-8. BAJO — Filtros de listado: ILIKE sin escapar y estatus sin validar**
+**Archivo/línea:** modules/comercial/backend/models/convenio.model.js:35-36 (estatus), :43-44 y :51-52 (ILIKE).
+**Problema:** % y _ del usuario actúan como comodines; ?estatus=a&estatus=b produce un arreglo que puede dar 500. No hay inyección.
+**Severidad:** bajo.
+**Fix sugerido:** escapar \, % y _ en el patrón ILIKE, y validar estatus contra la lista de la CHECK antes de consultar.
+
+**R-9. BAJO — Edición sin control de propiedad ni de autoridad**
+**Archivo/línea:** modules/comercial/backend/models/convenio.model.js:164-203; ruta modules/comercial/backend/routes/convenios.routes.js:23.
+**Problema:** cualquiera con edición puede reescribir cabecera y líneas de un convenio ajeno mientras esté pendiente. Es coherente con el permiso granular, pero no está confirmado en decisions.md.
+**Severidad:** bajo.
+**Fix sugerido:** confirmar con el humano. Si debe ser solo del creador o de un autorizador, añadir la comprobación en el controlador antes de Convenio.actualizar.
+
+**R-10. BAJO — Autorizador desactivado en la ventana entre lectura y UPDATE**
+**Archivo/línea:** modules/comercial/backend/controllers/convenio.controller.js:170 (lectura de esActivo) y modules/comercial/backend/models/convenio.model.js:207 (UPDATE).
+**Problema:** la autoridad se evalúa antes del UPDATE, fuera de transacción. Si la baja ocurre en ese intervalo, la autorización se completa. Es una ventana de milisegundos y aceptable para este caso.
+**Severidad:** bajo.
+**Fix sugerido:** documentarlo como aceptado. Si se quiere cerrar, hacer la lectura de autoridad y el UPDATE en una transacción con FOR SHARE sobre la fila de comercial_autorizadores.
+
+**R-11. BAJO — Frontend: Editar sin manejo de error al cargar**
+**Archivo/línea:** modules/comercial/frontend/pages/ConvenioForm.jsx:34-50.
+**Problema:** obtenerConvenio(id).then(...).finally(...) no tiene catch. Si la carga falla, el formulario queda vacío sin mensaje, y un guardado posterior sobrescribiría el convenio con lo que el usuario capture.
+**Severidad:** bajo.
+**Fix sugerido:** añadir catch que muestre el error, y no permitir guardar en modo edición si no hubo datos cargados.
+
+**R-12. BAJO — Frontend: botones de autorizar/rechazar visibles a quien no puede usarlos**
+**Archivo/línea:** modules/comercial/frontend/pages/ConveniosListado.jsx:113-119; modules/portal/frontend/components/MenuDinamico.jsx:37-38 (opción "Autorizadores" visible con permiso Convenios).
+**Problema:** los botones aparecen al creador y a usuarios que no son autorizadores; el backend responde 403 y la UI solo muestra el texto del error. El menú "Autorizadores" aparece a comercial_admin y portal_admin, que solo ven el aviso de la página.
+**Severidad:** bajo.
+**Fix sugerido:** ocultar los botones cuando creado_por_id coincida con el usuario, y exponer si el usuario es autorizador activo (p. ej. en /me). Para el menú, filtrar "Autorizadores" por rol_nombre === 'super_admin'.
+
+**R-13. BAJO — Documentación de rol desfasada (no introducido por este cambio)**
+**Archivo/línea:** .claude/rules/backend/api.md (dice "un rol por usuario via usuarios.rol_id"); código real en modules/portal/backend/middleware/auth.middleware.js:66-85 (lee usuario_rol ... LIMIT 1).
+**Problema:** la regla del proyecto no coincide con el código, y el código no ordena el LIMIT 1, así que con dos roles el resultado no es determinista. Este cambio depende de req.user.rol_nombre y rol_id para super_admin y permisos.
+**Severidad:** bajo.
+**Fix sugerido:** corregir api.md o el middleware según la decisión vigente, y añadir ORDER BY determinista en completarRol. Fuera del alcance de este encargo; registrado como nota.
+
+**Notas de alcance:** productos[] sin tope de tamaño y falta de test de concurrencia real ya estaban anotados por el coder; siguen abiertos para la Fase 6.

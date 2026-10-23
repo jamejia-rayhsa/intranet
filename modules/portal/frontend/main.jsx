@@ -50,6 +50,9 @@ import EncuestasPage from '../../tickets/frontend/pages/EncuestasPage';
 import ComercialDashboard from '../../comercial/frontend/pages/ComercialDashboard';
 import SolicitudesListado from '../../comercial/frontend/pages/SolicitudesListado';
 import SolicitudCreditoForm from '../../comercial/frontend/pages/SolicitudCreditoForm';
+import ConveniosListado from '../../comercial/frontend/pages/ConveniosListado';
+import ConvenioForm from '../../comercial/frontend/pages/ConvenioForm';
+import AutorizadoresPage from '../../comercial/frontend/pages/AutorizadoresPage';
 
 import MenuDinamico from './components/MenuDinamico';
 import AppTopbar from './components/AppTopbar';
@@ -69,8 +72,10 @@ const BREADCRUMBS = {
   '/rh/calendario':      ['Recursos Humanos', 'Calendario'],
   '/auditoria':          ['Transversal', 'Auditoría'],
   '/auditoria/logs':     ['Transversal', 'Bitácora'],
-  '/comercial':          ['Comercial', 'Dashboard'],
-  '/comercial/creditos': ['Comercial', 'Solicitudes'],
+  '/comercial':             ['Comercial', 'Dashboard'],
+  '/comercial/creditos':    ['Comercial', 'Solicitudes'],
+  '/comercial/convenios':   ['Comercial', 'Convenios'],
+  '/comercial/autorizadores': ['Comercial', 'Autorizadores'],
   '/admin/usuarios':     ['Admin', 'Usuarios'],
   '/admin/roles':        ['Admin', 'Roles'],
   '/admin/modulos':      ['Admin', 'Módulos'],
@@ -182,6 +187,10 @@ function AppRutas() {
         <Route path="/comercial/creditos" element={<RutaProtegida><SolicitudesListado /></RutaProtegida>} />
         <Route path="/comercial/creditos/nueva" element={<RutaProtegida><SolicitudCreditoForm /></RutaProtegida>} />
         <Route path="/comercial/creditos/:id/editar" element={<RutaProtegida><SolicitudCreditoForm /></RutaProtegida>} />
+        <Route path="/comercial/convenios" element={<RutaProtegida><ConveniosListado /></RutaProtegida>} />
+        <Route path="/comercial/convenios/nuevo" element={<RutaProtegida><ConvenioForm /></RutaProtegida>} />
+        <Route path="/comercial/convenios/:id/editar" element={<RutaProtegida><ConvenioForm /></RutaProtegida>} />
+        <Route path="/comercial/autorizadores" element={<RutaProtegida><AutorizadoresPage /></RutaProtegida>} />
         <Route path="*" element={<Navigate to="/inicio-sesion" />} />
       </Routes>
     </LayoutConMenu>

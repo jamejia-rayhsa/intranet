@@ -6,6 +6,30 @@ type: project
 
 # Decisiones de Arquitectura
 
+### [2026-10-23] orquestador — Fase 1 de Convenios de compra CERRADA (commit en `feat/comercial-convenios`)
+
+**Resultado:** coder corrigió los 3 hallazgos MEDIO del revisor (R-1 "nunca lo propio" movido al WHERE del UPDATE, R-2 ids validados → 400, R-3 fechas/montos validados → 400) y aplicó las 2 reglas de negocio decididas por el humano (cancelar un convenio autorizado: solo autorizador activo o `super_admin`; editar uno pendiente: solo el creador o `super_admin`), de paso arregló varios BAJOS y un bug real en `AutorizadoresPage.jsx` (el chequeo de super_admin nunca funcionaba). Verificado en vivo (Postgres real + backend real + JWT reales, 17/17) y por pruebas (`jest modules/comercial` 136/136; repo completo 2218/2218; eslint 0 errores nuevos). Sin re-revisión completa de esta ronda (cambios acotados y verificados en vivo; ver code-notes.md "Correcciones post-revisión [2026-10-23]").
+
+**Deuda documentada, no bloqueante:** R-6 (forma de respuesta inconsistente entre endpoints — arreglarlo bien rompe asserts existentes, se deja para una limpieza transversal), R-10 (ventana de milisegundos en autorizar/rechazar, ya aceptada por el revisor como de bajo riesgo), parte de R-12 (el frontend no sabe si el usuario actual es autorizador activo para ocultar botones; hoy se resuelve con 403 del backend, sin problema de seguridad, solo de UX).
+
+**Qué queda construido de la Fase 1:** migración `002-convenios-compra.sql` (+ réplica en `init.sql`): `comercial_convenios`, `comercial_convenio_productos`, `comercial_autorizadores`; opción de permiso "Convenios" en Comercial con consulta+edición para `super_admin`/`portal_admin`/`comercial_admin`; CRUD completo con reglas de autorización/cancelación/edición; pantalla mínima (`ConveniosListado`, `ConvenioForm`, `AutorizadoresPage`). Todo sin tocar MBA3, CSV histórico, movimientos de consumo ni dashboard (fases 2-5).
+
+**Siguiente paso:** GO del humano para la Fase 2 (integración de lectura MBA3) — ahí hay que preguntarle qué endpoints usar (ya lo pidió explícitamente el 2026-10-23), porque el manual adjuntado solo confirma `ficha-cliente`.
+
+---
+
+### [2026-10-23] orquestador — Fase 1 de Convenios de compra: revisión/pruebas sin críticos; decisiones del humano sobre cancelar y editar
+
+**Contexto:** coder implementó la Fase 1 (modelo de datos, autorización por lista, CRUD, pantalla mínima) en la rama `feat/comercial-convenios`. Revisor: APROBADO CON OBSERVACIONES, sin críticos (R-1 a R-13 en reviews.md: "nunca lo propio" comprobado en JS y no en el WHERE del UPDATE; ids/montos/fechas sin validar numéricamente, dan 500 en vez de 400; entre otros bajos). Tester: sin fallos nuevos de forma independiente (Postgres real, backend real, Chromium real, concurrencia, vigencia, jest 56/56 y 2138/2138 del repo); confirmó en vivo R-4/R-9 del revisor y abrió un PARA RESOLVER porque decisions.md de hoy no definía quién puede cancelar un convenio ya autorizado ni quién puede editar uno pendiente.
+
+**Decisiones del humano (resuelven ese PARA RESOLVER):**
+- **Cancelar un convenio ya autorizado:** solo alguien de la lista de `comercial_autorizadores` (activo) o `super_admin` — mismo criterio que autorizar/rechazar. El creador por sí solo NO puede cancelar algo ya aprobado.
+- **Editar un convenio pendiente de autorización:** solo el creador (`creado_por_id`) o `super_admin` — nadie más, aunque tenga el permiso general de edición de Convenios.
+
+**Siguiente paso:** ronda de correcciones del coder: aplicar estas 2 reglas nuevas + los 3 hallazgos MEDIO del revisor (R-1 nunca-lo-propio en SQL, R-2 ids no numéricos → 400, R-3 fechas/montos sin validar → 400); los BAJOS (R-5 a R-13) se corrigen si son triviales, si no quedan como deuda documentada. Luego commit de la Fase 1 completa (sin re-revisión completa salvo que algo mayor cambie) y GO/NO-GO del humano para la Fase 2.
+
+---
+
 ### [2026-10-23] orquestador — Decisiones del humano para "Convenios de compra" (Comercial): autorización, catálogos, dashboard, modelo de datos
 
 **Contexto:** tras la investigación de [[research]] (entrada 2026-10-22 del investigador) se presentaron 4 preguntas abiertas antes de planear por fases. Respuestas del humano:
@@ -1189,3 +1213,14 @@ Al desactivar (o registrar inactiva/sábado/domingo/sobre festivo) una actividad
 
 ### [2026-10-23] orquestador — OK del humano: despliegue a staging del PR #17 y GO a la Fase 4 en paralelo
 **Autorización (humano, directa):** "OK para el despliegue y arranca en paralelo la Fase 4". (1) Despliegue **solo a staging** del PR #17 (plantilla de carga completa de empleados y departamentos), merge `ad838bd`; (2) **GO a la Fase 4** (motor de análisis de asistencia) en la rama `feat/asistencia-motor`, desde `main` ya con el PR #17. Los criterios del motor son los de las entradas del 2026-10-21/22 (snapshot de turno, quincenas, análisis desde el 2026-09-01, cierre automático desde la quincena 16-31 oct, `sin_identificador`, ejecución periódica en proceso con candado). Las quincenas anteriores quedan abiertas hasta que RH las cierre.
+
+### [2026-10-23] [tester] — PARA RESOLVER: Convenios de compra Fase 1 — ¿cancelar y editar requieren autoridad?
+
+**Contexto:** probando Convenios de compra Fase 1 con backend real + Postgres real (ver [[tests]] "Convenios de compra: Fase 1"), confirmé en vivo dos ambigüedades de negocio que el revisor ya había señalado por lectura de código (`reviews.md`, R-4 y R-9): decisions.md 2026-10-23 solo dice quién **autoriza o rechaza** (lista de autorizadores o `super_admin`, nunca el propio creador) pero no dice quién puede **cancelar** o **editar**.
+
+1. **Cancelar un convenio ya autorizado no exige ninguna autoridad especial.** Lo probé con el propio creador: crea el convenio, otra persona lo autoriza, y el mismo creador lo cancela con un simple `PUT /convenios/:id/cancelar` (200) — ni la lista de autorizadores ni `super_admin` intervienen. Cancelar una compra ya aprobada es una decisión de negocio potencialmente sensible (según R-4 del revisor).
+2. **Editar un convenio pendiente no exige ser el creador ni un autorizador**, solo el permiso granular "Convenios:edicion". Cualquier `comercial_admin`/`portal_admin`/`super_admin` puede reescribir cabecera y líneas de un convenio ajeno mientras siga `pendiente_autorizacion` (R-9 del revisor).
+
+**Para decidir:** (a) ¿cancelar un convenio `autorizado` debe limitarse a quien está en `comercial_autorizadores` o a `super_admin` (mismo candado que autorizar/rechazar), o se deja abierto a cualquiera con el permiso de edición como está hoy? (b) ¿editar un convenio pendiente debe limitarse al creador (y/o a un autorizador), o el permiso granular de módulo ya es suficiente control como en el resto del proyecto (p. ej. Solicitudes de Crédito)? Fix sugerido por el revisor si se decide restringir: aplicar `motivoSinAutoridad` también a cancelar cuando `previo.estatus === 'autorizado'`, y comprobar `creado_por_id === usuario_id` (u otra regla de propiedad) antes de `Convenio.actualizar`.
+
+**No bloquea el GO de la Fase 1** (no hay crítico ni alto; es un hueco de alcance, no un bug) pero conviene cerrarlo antes de producción. El resto de los hallazgos del revisor (R-1, R-2, R-3, R-5 a R-8, R-10 a R-13) son correcciones de código con fix sugerido, no decisiones de negocio — ver `reviews.md` directamente.

@@ -96,13 +96,13 @@
 Convenios de compra para productos que no se tienen en stock y hay que comprar en mínimos de paquete con el proveedor: autorización por una lista de personas designadas, cantidad a facturar periódicamente al cliente, tiempo estimado de consumo del stock adquirido, datos de cliente/vendedor/producto, registro real de consumo y un dashboard del estado de cada convenio. Carga inicial desde el CSV de convenios actuales adjuntado por el humano (1 convenio = 1 cliente + 1 vendedor + 1 o más líneas de producto; folios que agrupan varios clientes se separan en convenios independientes).
 
 ## Estado global
-- **Fase actual:** NO INICIADA — plan en revisión del humano, ninguna fase tiene GO todavía.
+- **Fase actual:** Fase 1 CERRADA (coder + revisor APROBADO CON OBSERVACIONES + tester sin fallos + ronda de correcciones; commit en `feat/comercial-convenios`). Esperando GO del humano para iniciar la Fase 2.
 - **Actualizado:** 2026-10-23
 
-## Fase 1 — Modelo de datos y autorización base
+## Fase 1 — Modelo de datos y autorización base — CERRADA
 - **Objetivo:** tablas y permisos mínimos para crear/listar/editar un convenio a mano (sin MBA3 ni CSV todavía), con la lista de autorizadores y el registro de quién/cuándo autorizó.
-- **Tareas previstas:** migración `comercial_convenios` (cabecera: código/folio de origen opcional, cliente y vendedor por código + snapshot de nombre, fecha de inicio, vigencia fin nullable, estatus, autoriza_id/autoriza_nombre/fecha_autoriza, observaciones) + `comercial_convenio_productos` (línea: código de producto + snapshot, empaque/mínimo de paquete, unidad de medida, cantidad a facturar periódicamente, periodo, precio compra/venta, factor) + `comercial_autorizadores` (lista administrable de usuarios que pueden autorizar, mantenida por super_admin); nueva opción de permiso "Convenios" dentro de Comercial (consulta/edición, patrón existente); regla de autorización copiando vacaciones (nunca lo propio, solo quien está en la lista o super_admin); backend CRUD + endpoint de autorizar/rechazar; auditoría con `registrarAccion`.
-- **Puerta:** GO del humano antes de pasar a integrar MBA3.
+- **Hecho:** migración `002-convenios-compra.sql` (+ réplica en init.sql): `comercial_convenios`, `comercial_convenio_productos`, `comercial_autorizadores`; opción de permiso "Convenios" en Comercial (super_admin/portal_admin/comercial_admin); backend CRUD + autorizar/rechazar/cancelar con reglas atómicas en SQL (nunca lo propio; cancelar autorizado solo autorizador/super_admin; editar pendiente solo creador/super_admin); auditoría; pantalla mínima (`ConveniosListado`, `ConvenioForm`, `AutorizadoresPage`). Revisor APROBADO CON OBSERVACIONES (0 críticos); tester sin fallos nuevos (Postgres real, backend real, Chromium real, concurrencia, vigencia); ronda de correcciones aplicada y verificada en vivo. Deuda documentada en decisions.md (2026-10-23, "Fase 1 de Convenios de compra CERRADA").
+- **Puerta:** GO del humano antes de pasar a integrar MBA3 (Fase 2) — ahí se le pregunta qué endpoints usar.
 
 ## Fase 2 — Integración de lectura MBA3 (clientes, vendedores, productos, existencias, ventas)
 - **Objetivo:** que el convenio traiga datos reales de MBA3 en vez de captura manual.

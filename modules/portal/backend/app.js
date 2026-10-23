@@ -110,6 +110,7 @@ app.use(
 
 // Rutas de Comercial
 app.use('/api/comercial/solicitudes', require('../../comercial/backend/routes/solicitudesCredito.routes'));
+app.use('/api/comercial', require('../../comercial/backend/routes/convenios.routes'));
 
 // Ruta de salud
 app.get("/api/salud", (req, res) => {
