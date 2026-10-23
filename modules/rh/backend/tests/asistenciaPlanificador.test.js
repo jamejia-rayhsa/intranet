@@ -1,4 +1,6 @@
 /* eslint-env jest */
+const fs = require("fs");
+const path = require("path");
 const { leerConfigPlanificador, crearPlanificador, iniciarPlanificadorAsistencia } = require("../services/asistencia/planificador");
 
 const logSilencioso = () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() });
@@ -149,6 +151,41 @@ describe("planificador: arranque, vueltas y parada", () => {
     expect(reloj.activos().filter((t) => t.ms === 1000)).toHaveLength(0);
   });
 
+  it("apagado con una vuelta COLGADA: pasado el plazo se destruye su conexión (abortar) para liberar el candado (F-M4-2)", async () => {
+    const reloj = relojFalso();
+    const log = logSilencioso();
+    const abortar = jest.fn().mockResolvedValue();
+    const p = crearPlanificador({ ejecutar: () => new Promise(() => {}), abortar, intervaloMs: 1000, tiempoMaxMs: 5000, timeoutMs: 600000, retrasoInicialMs: 1, log, ...reloj });
+    p.iniciar();
+    const vuelta = reloj.disparar(1);
+    await Promise.resolve();
+    const parada = p.detener(250);
+    await Promise.resolve();
+    expect(abortar).not.toHaveBeenCalled(); // aún dentro del plazo
+    await reloj.disparar(250);
+    await parada;
+    expect(abortar).toHaveBeenCalledTimes(1);
+    expect(abortar.mock.calls[0][0]).toEqual({});
+    expect(p.estado().enCurso).toBe(false);
+    expect(log.error).toHaveBeenCalledWith(expect.stringMatching(/apagado con una vuelta sin terminar/));
+    void vuelta;
+  });
+
+  it("apagado con una vuelta que sí termina dentro del plazo: no se aborta nada", async () => {
+    const reloj = relojFalso();
+    const abortar = jest.fn();
+    let terminar;
+    const p = crearPlanificador({ ejecutar: () => new Promise((r) => { terminar = r; }), abortar, intervaloMs: 1000, tiempoMaxMs: 5000, retrasoInicialMs: 1, log: logSilencioso(), ...reloj });
+    p.iniciar();
+    const vuelta = reloj.disparar(1);
+    await Promise.resolve();
+    const parada = p.detener(10000);
+    terminar({ tipo: "incremental", estado: "ok" });
+    await vuelta;
+    await parada;
+    expect(abortar).not.toHaveBeenCalled();
+  });
+
   it("detener() sin vuelta en curso cancela lo programado", async () => {
     const reloj = relojFalso();
     const p = crearPlanificador({ ejecutar: jest.fn(), intervaloMs: 1000, tiempoMaxMs: 1000, retrasoInicialMs: 5, log: logSilencioso(), ...reloj });
@@ -244,8 +281,6 @@ describe("planificador: arranque desde el entorno", () => {
 });
 
 describe("planificador: integración con app.js", () => {
-  const fs = require("fs");
-  const path = require("path");
   const app = fs.readFileSync(path.join(__dirname, "../../../portal/backend/app.js"), "utf8");
 
   it("se inicia SOLO dentro de iniciar() (no al importar el módulo) y se detiene en el apagado", () => {
@@ -263,25 +298,38 @@ describe("planificador: integración con app.js", () => {
     expect(bloque).not.toMatch(/process\.exit/);
   });
 
-  it("importar app.js no activa el planificador aunque el entorno lo pida", () => {
-    const previo = process.env.ASISTENCIA_MOTOR_ACTIVO;
-    process.env.ASISTENCIA_MOTOR_ACTIVO = "true";
-    const espia = jest.fn(() => ({ detener: async () => {} }));
-    jest.isolateModules(() => {
-      jest.doMock("../services/asistencia/planificador", () => ({ iniciarPlanificadorAsistencia: espia }));
-      jest.doMock("../../../portal/backend/config/database", () => ({ grupo: { query: jest.fn().mockResolvedValue({ rows: [] }), connect: jest.fn() }, probarConexion: jest.fn() }));
-      jest.doMock("../../../portal/backend/services/storage.service", () => ({ asegurarBuckets: jest.fn().mockResolvedValue() }));
-      require("../../../portal/backend/app");
+  // Se hace en un PROCESO HIJO: cargar app.js en el proceso de jest (aunque sea con doMock) dejaba módulos reales
+  // (storage.service y sus dependencias) en el registro y contaminaba, de forma intermitente, a archivos.storage.test.js y
+  // adjunto.controller.test.js (F-M4-1). El hijo no comparte ningún estado con jest.
+  it("importar app.js no activa el planificador aunque el entorno lo pida (proceso hijo aislado)", () => {
+    const { spawnSync } = require("child_process");
+    const guion = `
+      const pl = require(${JSON.stringify(path.join(__dirname, "../services/asistencia/planificador"))});
+      let llamadas = 0;
+      const original = pl.iniciarPlanificadorAsistencia;
+      pl.iniciarPlanificadorAsistencia = (...a) => { llamadas++; return original(...a); };
+      require(${JSON.stringify(path.join(__dirname, "../../../portal/backend/app"))});
+      process.stdout.write("LLAMADAS=" + llamadas);
+      process.exit(0);
+    `;
+    const r = spawnSync(process.execPath, ["-e", guion], {
+      encoding: "utf8", timeout: 60000,
+      env: { ...process.env, ASISTENCIA_MOTOR_ACTIVO: "true", POSTGRES_HOST: "127.0.0.1", POSTGRES_PORT: "1", SUPABASE_URL: "http://127.0.0.1:1", NODE_ENV: "test" },
     });
-    expect(espia).not.toHaveBeenCalled();
-    process.env.ASISTENCIA_MOTOR_ACTIVO = previo;
-    if (previo === undefined) delete process.env.ASISTENCIA_MOTOR_ACTIVO;
+    expect(r.stdout).toContain("LLAMADAS=0");
+    expect(r.status).toBe(0);
+  });
+
+  it("vigilancia: este archivo no carga app.js ni storage.service dentro del proceso de jest (F-M4-1)", () => {
+    const fuente = fs.readFileSync(__filename, "utf8");
+    const codigo = fuente.split("\n").filter((l) => !l.trim().startsWith("//") && !l.includes("fuente.") && !l.includes("expect(")).join("\n");
+    expect(codigo).not.toMatch(/jest\.doMock\([^)]*storage\.service/);
+    expect(codigo).not.toMatch(/^\s*require\(["'][^"']*portal\/backend\/app["']\)/m);
+    expect(codigo).not.toMatch(/jest\.isolateModules/);
   });
 });
 
 describe("compose", () => {
-  const fs = require("fs");
-  const path = require("path");
   const leer = (f) => fs.readFileSync(path.join(__dirname, "../../../../", f), "utf8");
 
   it("el motor está apagado por omisión en dev y encendido en staging y prod (con comentario)", () => {

@@ -8,9 +8,14 @@
 //  - Entrada = primera marca del día local (desde las 00:00, sin límite inferior: llegar temprano nunca penaliza) hasta
 //    entrada + ventana_entrada_despues. En un turno que cruza la medianoche el límite inferior sigue siendo
 //    entrada - ventana_entrada_antes (las marcas de la mañana son la salida del turno del día anterior).
-//  - Salida = última marca posterior a la entrada y al CORTE DE SALIDA (finCorteSalida: fin del descanso, o entrada +
-//    ventana_entrada_despues si el turno no tiene descanso) y hasta salida + ventana_salida_despues. Si cae antes de
-//    salida - tolerancia_salida es salida_anticipada con sus minutos (15:00 = 180). Sin marca así = incompleta.
+//  - VENTANA DE COMIDA global (parametros.comida_desde..comida_hasta, 13:00-16:00, inclusive en ambos extremos a nivel de
+//    minuto; la duración esperada es descanso_min del turno): las marcas dentro de ella son de comida, nunca entrada ni
+//    salida. La entrada es la primera marca del día salvo que esa primera marca caiga en la comida o después
+//    (llegada tardía = falta). La salida es la última marca POSTERIOR a comida_hasta: antes de salida - tolerancia es
+//    salida_anticipada con sus minutos (17:30 = 30). Si la última marca del día está dentro de la comida y no hay una
+//    posterior, el día es incompleta con la bandera ultima_marca_en_comida (RH decide). Con >= 2 marcas de comida se
+//    guarda detalle.minutos_comida (última - primera) y la bandera exceso_comida si pasa de descanso_min (solo
+//    informativa). Un turno que cruza la medianoche no usa la ventana de comida: su corte es entrada + ventana.
 //  - Marcas a <= 60 s de la anterior conservada = duplicado de la misma marca.
 //  - retardo: tarde > tolerancia_retardo y <= umbral_falta. falta: sin entrada o tarde > umbral_falta.
 //    salida_anticipada: salida más de tolerancia_salida antes. incompleta: entrada sin salida. Retardo + salida
@@ -68,17 +73,18 @@ function snapshotTurno(turno, fecha, origen, departamentoId) {
 }
 
 /**
- * CORTE DE SALIDA (en minutos desde la medianoche de la fecha): solo una marca POSTERIOR a este instante puede ser la
- * salida del turno. Es el fin del descanso (descanso_inicio + descanso_min) y, si el turno no tiene descanso,
- * entrada + ventana_entrada_despues. Pendiente de confirmación del humano; es el ÚNICO lugar donde se define.
+ * Corte de salida de un turno que cruza la medianoche (no usa ventana de comida): solo una marca posterior a
+ * entrada + ventana_entrada_despues puede ser la salida.
  */
-function finCorteSalida(turno, dia) {
-  const inicio = horaAMinutos(turno.descanso_inicio ? String(turno.descanso_inicio).slice(0, 5) : null);
-  if ((turno.descanso_min || 0) > 0 && inicio !== null) {
-    const ini = dia.cruza && inicio < dia.entrada ? inicio + 1440 : inicio;
-    return ini + turno.descanso_min;
-  }
+function corteNocturno(turno, dia) {
   return dia.entrada + (turno.ventana_entrada_despues_min ?? 150);
+}
+
+/** Ventana de comida (minutos desde 00:00) de los parámetros, con los valores por omisión */
+function ventanaComida(parametros) {
+  const desde = horaAMinutos((parametros && parametros.comida_desde) || "13:00");
+  const hasta = horaAMinutos((parametros && parametros.comida_hasta) || "16:00");
+  return desde !== null && hasta !== null && desde < hasta ? { desde, hasta } : { desde: 780, hasta: 960 };
 }
 
 /** Marcas ordenadas por instante y sin duplicados (<= 60 s de la última conservada). */
@@ -214,21 +220,32 @@ function evaluarDia(ctx) {
   const lecturas = unicas.map((m) => ({ ...m, rel: minutoRelativo(m.ms, fecha) }));
   // Entrada: sin límite inferior salvo en turnos que cruzan la medianoche (ver cabecera)
   const inferior = dia.cruza ? E - cfg.vea : Math.min(0, E - cfg.vea);
-  const enVentanaEntrada = lecturas.filter((m) => m.rel >= inferior && m.rel <= E + cfg.ved);
-  const entrada = enVentanaEntrada[0] || null;
-  const corte = finCorteSalida(turno, dia);
-  const enVentanaSalida = lecturas.filter(
-    (m) => m.rel > corte && m.rel <= S + cfg.vsd && (!entrada || m.ms > entrada.ms),
-  );
-  const salida = enVentanaSalida.length ? enVentanaSalida[enVentanaSalida.length - 1] : null;
+  const comida = ventanaComida(parametros);
+  const esComida = (m) => !dia.cruza && m.rel >= comida.desde && m.rel <= comida.hasta;
+  let entrada;
+  let salida;
+  if (dia.cruza) {
+    entrada = lecturas.find((m) => m.rel >= inferior && m.rel <= E + cfg.ved) || null;
+    const corte = corteNocturno(turno, dia);
+    const candidatas = lecturas.filter((m) => m.rel > corte && m.rel <= S + cfg.vsd && (!entrada || m.ms > entrada.ms));
+    salida = candidatas.length ? candidatas[candidatas.length - 1] : null;
+  } else {
+    // entrada: la primera marca del día, salvo que sea de comida o posterior (o pase de la ventana de entrada)
+    const primera = lecturas.find((m) => m.rel >= inferior) || null;
+    entrada = primera && primera.rel <= E + cfg.ved && !esComida(primera) && primera.rel < comida.desde ? primera : null;
+    // salida: la última marca posterior a comida_hasta (y a la entrada)
+    const candidatas = lecturas.filter((m) => m.rel > comida.hasta && m.rel <= S + cfg.vsd && (!entrada || m.ms > entrada.ms));
+    salida = candidatas.length ? candidatas[candidatas.length - 1] : null;
+  }
   const delDia = lecturas.filter((m) => m.rel >= inferior && m.rel <= S + cfg.vsd);
+  const marcasComida = delDia.filter(esComida);
 
   const explicaciones = [];
   const banderas = [...banderasTurno];
   if (duplicadas > 0) banderas.push("marcas_duplicadas");
   if (delDia.length === 1) banderas.push("marca_unica");
   if (!entrada && salida) banderas.push("salida_sin_entrada");
-  const fueraDeVentana = delDia.filter((m) => m !== entrada && m !== salida);
+  const fueraDeVentana = delDia.filter((m) => m !== entrada && m !== salida && !esComida(m));
   if (fueraDeVentana.length > 0) banderas.push("marcas_fuera_de_ventana");
 
   const tarde = entrada ? entrada.rel - E : 0; // minutos enteros de retraso (negativo = llegó antes)
@@ -265,9 +282,29 @@ function evaluarDia(ctx) {
   const registrarSalida = salida && antes > cfg.tolSalida ? minutosSalida : 0;
   const registrarRetardo = entrada && tarde > cfg.tolRetardo ? minutosRetardo : 0;
 
-  // Sin salida y con marcas intermedias: sugiere al revisor que salió antes de la ventana
-  if (estatus === "incompleta" && fueraDeVentana.some((m) => !entrada || m.ms > entrada.ms)) {
-    banderas.push("marca_intermedia_sin_salida");
+  // Incompleta con más marcas después de la entrada: o la última es de comida (salió a comer sin regreso o se fue:
+  // RH decide) o hay marcas sueltas en la mañana
+  if (estatus === "incompleta") {
+    const posteriores = delDia.filter((m) => entrada && m.ms > entrada.ms);
+    if (posteriores.length > 0) {
+      const ultimaDelDia = posteriores[posteriores.length - 1];
+      if (esComida(ultimaDelDia)) {
+        banderas.push("ultima_marca_en_comida");
+        explicaciones.push(`La última marca del día (${hhmm(ultimaDelDia.rel)}) cae dentro de la comida y no hay una posterior a las ${hhmm(comida.hasta)}: puede ser salida a comer sin regreso o salida anticipada`);
+      } else {
+        banderas.push("marca_intermedia_sin_salida");
+      }
+    }
+  }
+  // Comida: con >= 2 marcas dentro de la ventana se mide cuánto duró (solo informativo)
+  const detalleComida = {};
+  if (!dia.cruza && marcasComida.length >= 2) {
+    const minutosComida = marcasComida[marcasComida.length - 1].rel - marcasComida[0].rel;
+    detalleComida.minutos_comida = minutosComida;
+    if ((turno.descanso_min || 0) > 0 && minutosComida > turno.descanso_min) {
+      banderas.push("exceso_comida");
+      detalleComida.exceso_comida_min = minutosComida - turno.descanso_min;
+    }
   }
 
   // 9) ¿El día ya terminó? Antes: pendiente (con las marcas y minutos provisionales)
@@ -280,6 +317,8 @@ function evaluarDia(ctx) {
     descanso_min: turno.descanso_min || 0,
     marcas_dia: delDia.length,
     marcas_duplicadas: duplicadas,
+    ...(dia.cruza ? {} : { comida: { desde: hhmm(comida.desde), hasta: hhmm(comida.hasta), marcas: marcasComida.length } }),
+    ...detalleComida,
     minutos_tarde: entrada ? tarde : null,
     minutos_antes_salida: salida ? antes : null,
     dia_completo: completo,

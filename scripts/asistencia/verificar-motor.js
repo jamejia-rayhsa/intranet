@@ -120,8 +120,8 @@ async function sembrar() {
     );
     empleados.push({ i, id: r.rows[0].id, nomina, depto, ingreso, baja, estatus });
   }
-  // 5 empleados extra para los casos de borde de las reglas de entrada y salida (nóminas 9201-9205)
-  for (let k = 1; k <= 5; k++) {
+  // 8 empleados extra para los casos de borde de las reglas de entrada, comida y salida (nóminas 9201-9208)
+  for (let k = 1; k <= 8; k++) {
     const r = await q(
       `INSERT INTO empleados (nombre, apellido_paterno, numero_nomina, estatus, fecha_ingreso, departamento_id) VALUES ($1, $2, $3, 'activo', '2020-01-01', $4) RETURNING id`,
       [`Borde${k}`, `Ficticio${k}`, String(9200 + k), deptos[0]],
@@ -340,23 +340,29 @@ function oraculo(W, e, fecha) {
   const E = hm(dia.e);
   let S = hm(dia.s);
   if (S < E) S += 1440;
-  // Entrada: primera marca del día local (desde las 00:00, llegar temprano nunca penaliza) hasta entrada + ventana
-  // posterior; en un turno que cruza la medianoche el límite inferior sigue siendo entrada - ventana anterior.
+  // Reglas de comida: ventana GLOBAL [comida_desde, comida_hasta] (inclusive, a nivel de minuto). Sus marcas nunca son
+  // entrada ni salida. Entrada = la primera marca del día (sin límite inferior; en nocturnos entrada - ventana anterior),
+  // salvo que esa primera marca sea de comida o posterior (llegada tardía). Salida = la última posterior a comida_hasta.
   const cruza = S > 1440;
+  const cd = hm(W.parametros.comida_desde);
+  const ch = hm(W.parametros.comida_hasta);
+  const enComida = (m) => !cruza && m.rel >= cd && m.rel <= ch;
   const inferior = cruza ? E - turno.ventana_entrada_antes_min : Math.min(0, E - turno.ventana_entrada_antes_min);
   let entrada = null;
-  for (const m of unicas) if (m.rel >= inferior && m.rel <= E + turno.ventana_entrada_despues_min) { entrada = m; break; }
-  // Salida: la última marca POSTERIOR al fin del descanso (o a entrada + ventana si no hay descanso) y a la entrada
-  let corte = E + turno.ventana_entrada_despues_min;
-  if (turno.descanso_min > 0 && turno.descanso_inicio) {
-    let ini = hm(String(turno.descanso_inicio).slice(0, 5));
-    if (cruza && ini < E) ini += 1440;
-    corte = ini + turno.descanso_min;
-  }
   let salida = null;
-  for (const m of unicas) {
-    if (entrada && m.seg <= entrada.seg) continue;
-    if (m.rel > corte && m.rel <= S + turno.ventana_salida_despues_min) salida = m; // la última
+  if (cruza) {
+    for (const m of unicas) if (m.rel >= inferior && m.rel <= E + turno.ventana_entrada_despues_min) { entrada = m; break; }
+    for (const m of unicas) {
+      if (entrada && m.seg <= entrada.seg) continue;
+      if (m.rel > E + turno.ventana_entrada_despues_min && m.rel <= S + turno.ventana_salida_despues_min) salida = m;
+    }
+  } else {
+    const primera0 = unicas.find((m) => m.rel >= inferior);
+    if (primera0 && primera0.rel <= E + turno.ventana_entrada_despues_min && primera0.rel < cd) entrada = primera0;
+    for (const m of unicas) {
+      if (entrada && m.seg <= entrada.seg) continue;
+      if (m.rel > ch && m.rel <= S + turno.ventana_salida_despues_min) salida = m; // la última
+    }
   }
   const delDia = unicas.filter((m) => m.rel >= inferior && m.rel <= S + turno.ventana_salida_despues_min);
   const primera = delDia.length ? delDia[0].seg : null;
@@ -479,12 +485,16 @@ async function principal() {
   // casos de borde de las reglas nuevas (martes 6 y miércoles 7 de octubre; hora de México = UTC-6)
   const bordes = [
     [101, "2026-10-06", ["06:50", "18:00"]], // llegó temprano, antes de la ventana: puntual
-    [102, "2026-10-06", ["08:00", "15:00"]], // salida a las 15:00: anticipada de 180 min
+    [102, "2026-10-06", ["08:00", "15:00"]], // última marca dentro de la comida: incompleta + ultima_marca_en_comida
     [103, "2026-10-06", ["08:00", "17:50"]], // 17:50 con tolerancia 3: anticipada de 10 min
     [104, "2026-10-06", ["08:00"]], // una sola marca: incompleta
-    [105, "2026-10-06", ["08:00", "13:30"]], // marca durante el descanso: incompleta
+    [105, "2026-10-06", ["08:00", "13:30"]], // última marca en la comida: incompleta + bandera
+    [106, "2026-10-06", ["08:02", "14:01", "15:03", "18:05"]], // comida de 62 min: puntual (exceso solo informativo)
+    [107, "2026-10-06", ["08:02", "17:30"]], // salida anticipada de 30 min
+    [108, "2026-10-06", ["08:02", "16:00"]], // frontera: 16:00 pertenece a la comida -> incompleta + bandera
     [101, "2026-10-07", ["06:50"]], // solo la entrada temprana: incompleta
-    [102, "2026-10-07", ["08:20", "15:00"]], // retardo y salida temprana: ambos minutos
+    [102, "2026-10-07", ["08:20", "17:30"]], // retardo y salida anticipada: ambos minutos
+    [105, "2026-10-07", ["08:02", "13:00", "14:00", "17:57"]], // comida de 60 min: puntual
   ];
   let idB = 9_500_000;
   for (const [i, fecha, horas] of bordes) {
@@ -509,14 +519,21 @@ async function principal() {
   }
   comprobar("hay días no_aplica y sin_identificador que no se guardan", cmp1.cuenta.no_aplica > 0 && cmp1.cuenta.sin_identificador > 0);
   const dia = async (i, f) => (await q("SELECT estatus, minutos_retardo, minutos_salida_anticipada, detalle->'banderas' AS b FROM asistencia_diaria WHERE empleado_id = $1 AND fecha = $2", [S.porI(i).id, f])).rows[0];
-  const d1 = await dia(101, "2026-10-06"); const d2 = await dia(102, "2026-10-06"); const d3 = await dia(103, "2026-10-06");
-  const d4 = await dia(104, "2026-10-06"); const d5 = await dia(105, "2026-10-06"); const d6 = await dia(101, "2026-10-07"); const d7 = await dia(102, "2026-10-07");
-  comprobar("entrada a las 06:50 (antes de la ventana) con salida 18:00 -> puntual, NO falta", d1.estatus === "puntual" && !d1.b.includes("salida_sin_entrada"), JSON.stringify(d1));
-  comprobar("salida a las 15:00 -> salida_anticipada de 180 min", d2.estatus === "salida_anticipada" && d2.minutos_salida_anticipada === 180, JSON.stringify(d2));
-  comprobar("salida a las 17:50 con tolerancia 3 -> salida_anticipada de 10 min", d3.estatus === "salida_anticipada" && d3.minutos_salida_anticipada === 10, JSON.stringify(d3));
-  comprobar("una sola marca -> incompleta (no salida anticipada)", d4.estatus === "incompleta" && d4.minutos_salida_anticipada === 0, JSON.stringify(d4));
-  comprobar("marca durante el descanso (13:30) -> incompleta con marca_intermedia_sin_salida", d5.estatus === "incompleta" && d5.b.includes("marca_intermedia_sin_salida"), JSON.stringify(d5));
-  comprobar("solo la entrada temprana 06:50 -> incompleta; retardo 08:20 + salida 15:00 -> retardo con ambos minutos", d6.estatus === "incompleta" && d7.estatus === "retardo" && d7.minutos_retardo === 20 && d7.minutos_salida_anticipada === 180, JSON.stringify([d6, d7]));
+  const dias = {};
+  for (const [i, f] of [[101, "2026-10-06"], [102, "2026-10-06"], [103, "2026-10-06"], [104, "2026-10-06"], [105, "2026-10-06"], [106, "2026-10-06"], [107, "2026-10-06"], [108, "2026-10-06"], [101, "2026-10-07"], [102, "2026-10-07"], [105, "2026-10-07"]]) dias[`${i}|${f}`] = await dia(i, f);
+  const g = (i, f) => dias[`${i}|${f}`];
+  const com = async (i, f) => (await q("SELECT detalle->>'minutos_comida' AS m FROM asistencia_diaria WHERE empleado_id = $1 AND fecha = $2", [S.porI(i).id, f])).rows[0].m;
+  comprobar("entrada a las 06:50 (antes de la ventana) con salida 18:00 -> puntual, NO falta", g(101, "2026-10-06").estatus === "puntual" && !g(101, "2026-10-06").b.includes("salida_sin_entrada"));
+  comprobar("08:00 / 15:00 (última marca dentro de la comida) -> incompleta con ultima_marca_en_comida", g(102, "2026-10-06").estatus === "incompleta" && g(102, "2026-10-06").b.includes("ultima_marca_en_comida"), JSON.stringify(g(102, "2026-10-06")));
+  comprobar("salida a las 17:50 con tolerancia 3 -> salida_anticipada de 10 min", g(103, "2026-10-06").estatus === "salida_anticipada" && g(103, "2026-10-06").minutos_salida_anticipada === 10);
+  comprobar("una sola marca -> incompleta (no salida anticipada)", g(104, "2026-10-06").estatus === "incompleta" && g(104, "2026-10-06").minutos_salida_anticipada === 0);
+  comprobar("08:00 / 13:30 -> incompleta con ultima_marca_en_comida", g(105, "2026-10-06").estatus === "incompleta" && g(105, "2026-10-06").b.includes("ultima_marca_en_comida"));
+  comprobar("08:02 / 14:01 / 15:03 / 18:05 -> puntual con minutos_comida 62 y exceso_comida (solo informativo)", g(106, "2026-10-06").estatus === "puntual" && (await com(106, "2026-10-06")) === "62" && g(106, "2026-10-06").b.includes("exceso_comida"));
+  comprobar("08:02 / 17:30 -> salida_anticipada de 30 min", g(107, "2026-10-06").estatus === "salida_anticipada" && g(107, "2026-10-06").minutos_salida_anticipada === 30);
+  comprobar("frontera 08:02 / 16:00 exacto -> 16:00 es de la comida: incompleta + ultima_marca_en_comida", g(108, "2026-10-06").estatus === "incompleta" && g(108, "2026-10-06").b.includes("ultima_marca_en_comida"));
+  comprobar("solo 06:50 -> incompleta; retardo 08:20 + salida 17:30 -> retardo con ambos minutos; 08:02/13:00/14:00/17:57 -> puntual",
+    g(101, "2026-10-07").estatus === "incompleta" && g(102, "2026-10-07").estatus === "retardo" && g(102, "2026-10-07").minutos_retardo === 20 && g(102, "2026-10-07").minutos_salida_anticipada === 30 &&
+    g(105, "2026-10-07").estatus === "puntual" && (await com(105, "2026-10-07")) === "60" && !g(105, "2026-10-07").b.includes("exceso_comida"));
   const sinFila = (await q(
     `SELECT COUNT(*)::int AS n FROM asistencia_diaria d JOIN empleados e ON e.id = d.empleado_id WHERE e.numero_nomina IS NULL OR e.id IN ($1, $2)`,
     [S.porI(10).id, S.porI(11).id],

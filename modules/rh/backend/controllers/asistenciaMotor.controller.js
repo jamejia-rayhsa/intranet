@@ -9,7 +9,7 @@ const Resultados = require("../models/asistenciaResultados.model");
 const Empleado = require("../models/empleado.model");
 const Auditoria = require("../../../auditoria/backend/models/auditoria.model");
 const Motor = require("../services/asistencia/motorAsistencia");
-const { DEFINICION, CLAVES, validarParametro, interpretarParametros } = require("../services/asistencia/parametros");
+const { DEFINICION, CLAVES, validarParametro, validarVentanaComida, interpretarParametros } = require("../services/asistencia/parametros");
 const { tienePermiso } = require("../../../portal/backend/middleware/permisos.middleware");
 const { ipDeLaPeticion } = require("../middleware/llaveIngesta.middleware");
 const { esIdValido, tieneControl } = require("../utils/turnoValidacion");
@@ -362,6 +362,8 @@ const Controlador = {
       cambios[clave] = v.valor;
     }
     try {
+      const errorComida = validarVentanaComida(cambios, await Motor.leerParametros());
+      if (errorComida) return responder400(res, errorComida);
       const { previos, nuevos } = await Motor.guardarParametros(cambios, usuarioDe(req));
       await auditar(req, "asistencia_parametros", "parametros", "ACTUALIZAR_PARAM", previos, nuevos);
       return res.json({ exito: true, datos: nuevos, mensaje: "Parámetros actualizados" });

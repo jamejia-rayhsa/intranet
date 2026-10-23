@@ -22,13 +22,16 @@ Orden de precedencia (el primero que aplica gana):
 | 8 | con marcas | `puntual`, `retardo`, `salida_anticipada`, `incompleta`, `falta` o `pendiente` (abajo) |
 | 9 | `justificada` | RH justificó (incidencia) una `falta`, `retardo`, `salida_anticipada` o `incompleta`: el cálculo original queda en `detalle.calculo_original` |
 
-### Días con marcas (turno Rayhsa: entrada 08:00, salida 18:00, descanso 13:00-14:00)
+### Días con marcas (turno Rayhsa: entrada 08:00, salida 18:00, comida de 60 min dentro de la ventana 13:00-16:00)
 
 El día pertenece a la **fecha local de la entrada** (un turno nocturno 22:00-06:00 de un lunes termina el martes pero es del lunes).
 
-* **Entrada** = la primera marca del día local, **desde las 00:00 hasta `entrada + ventana_entrada_despues`** (10:30 con Rayhsa). No hay límite inferior: llegar temprano (06:50) nunca penaliza. En un turno que cruza la medianoche el límite inferior sigue siendo `entrada − ventana_entrada_antes` (las marcas de la mañana son la salida del turno del día anterior).
-* **Salida** = la última marca del día **posterior al corte de salida** y a la entrada, hasta `salida + ventana_salida_despues` (23:59 con Rayhsa). El **corte de salida es el fin del descanso** (`descanso_inicio + descanso_min` = 14:00 en Rayhsa) o, si el turno no tiene descanso, `entrada + ventana_entrada_despues`. *Es una propuesta pendiente de confirmación del humano y se define en un solo lugar (`finCorteSalida` en `motor.js`).* La `ventana_salida_antes_min` del turno ya no limita la salida (queda en el snapshot).
-* Marcas a **60 segundos o menos** de la anterior conservada son la misma marca (duplicado de la checada). El descanso se descuenta de la jornada y **no se revisa**: las marcas de la comida no cambian el resultado.
+* **Ventana de comida** (decisión del humano, global): `comida_desde = 13:00` y `comida_hasta = 16:00`, **inclusive en ambos extremos a nivel de minuto** (16:00:59 todavía es comida; 16:01 ya no). La duración esperada de la comida es el `descanso_min` del turno (60). Las marcas dentro de la ventana son **marcas de comida: nunca entrada ni salida**. Los turnos que cruzan la medianoche no usan la ventana (su corte es entrada + `ventana_entrada_despues`).
+* **Entrada** = la primera marca del día local, desde las 00:00 (sin límite inferior: llegar temprano, p. ej. 06:50, nunca penaliza), siempre que sea anterior a `comida_desde` y no pase de `entrada + ventana_entrada_despues`. Si la primera marca del día cae dentro de la comida o después, es llegada tardía: **no hay entrada y el día es `falta`**. En un turno nocturno el límite inferior sigue siendo `entrada − ventana_entrada_antes` (las marcas de la mañana son la salida del turno del día anterior).
+* **Salida** = la **última marca posterior a `comida_hasta`** (y posterior a la entrada), hasta `salida + ventana_salida_despues`. Si es anterior a `salida − tolerancia_salida` es `salida_anticipada` con sus minutos; si no, `puntual`. La `ventana_salida_antes_min` del turno ya no interviene (queda en el snapshot).
+* Si la **última marca del día cae dentro de la comida** y no hay ninguna posterior, el día es `incompleta` con la bandera `ultima_marca_en_comida`: puede ser una salida a comer sin regreso o una salida anticipada, y **RH decide o justifica**. Una única marca en todo el día (entrada) también es `incompleta`.
+* Con **dos o más marcas dentro de la ventana** el detalle trae `minutos_comida` (última − primera de la ventana) y, si superan `descanso_min`, la bandera `exceso_comida` y `exceso_comida_min`. Es **solo informativo**: no cambia el estatus.
+* Marcas a **60 segundos o menos** de la anterior conservada son la misma marca (duplicado de la checada).
 
 | Situación | Resultado |
 |---|---|
@@ -38,19 +41,24 @@ El día pertenece a la **fecha local de la entrada** (un turno nocturno 22:00-06
 | Entrada 08:30:59 | `retardo` (30 min, aún dentro del umbral de falta) |
 | Entrada 08:31:00 | `falta` (más de 30 min), `minutos_retardo = 31` |
 | Entrada 08:15 y salida 17:56 | `retardo` con **ambos** minutos: `minutos_retardo = 15`, `minutos_salida_anticipada = 4` |
-| Entrada 06:50 (antes de la ventana) y salida 18:00 | `puntual` (llegar temprano no es falta) |
+| Entrada 06:50 y salida 18:00 | `puntual` (llegar temprano no es falta) |
+| 08:02 / 14:01 / 15:03 / 18:05 | `puntual`; `minutos_comida = 62` y `exceso_comida` (2 min, informativo) |
+| 08:02 / 13:00 / 14:00 / 17:57 | `puntual` (60 min de comida) |
 | Entrada 08:00 y salida 17:56 (4 min antes; la tolerancia de salida de Rayhsa es 3) | `salida_anticipada`, 4 min |
-| Entrada 08:00 y salida 15:00 | `salida_anticipada`, **180 min** |
-| Entrada 08:00 y salida 17:50 | `salida_anticipada`, 10 min (excede la tolerancia de 3) |
-| Entrada 08:00 y una marca a las 13:30 (durante el descanso) | `incompleta` con la bandera `marca_intermedia_sin_salida` |
-| Entrada 08:00 y nada más (una sola marca) | `incompleta` |
-| Sin marcas, o solo marcas después de las 10:30 sin ninguna antes | `falta` |
+| 08:02 / 17:30 | `salida_anticipada`, 30 min |
+| 08:00 / 17:50 | `salida_anticipada`, 10 min (excede la tolerancia de 3) |
+| 08:02 / 14:10 (la última marca está en la comida) | `incompleta` con `ultima_marca_en_comida` |
+| 08:02 / 16:00 exacto | `incompleta` con `ultima_marca_en_comida` (16:00 pertenece a la ventana) |
+| 08:02 / 11:00 (marca suelta de la mañana) | `incompleta` con `marca_intermedia_sin_salida` |
+| Una sola marca a las 08:02 | `incompleta` (`marca_unica`) |
+| Primera marca del día a las 14:30 | `falta` (llegada tardía) |
+| Sin marcas, o ninguna antes de las 13:00 | `falta` |
 | Solo una marca a las 18:00 | `falta` con la bandera `salida_sin_entrada` |
 | El día aún no termina | `pendiente` |
 
 Un día **se califica solo cuando ya terminó**: la hora actual de México debe ser mayor o igual que `salida programada + margen_dia_completo_min` (por omisión 120 min, es decir, a partir de las 20:00 para Rayhsa). Antes es `pendiente` (con el cálculo provisional en `detalle.calculo_provisional`). Para un turno nocturno la comparación usa la salida del día siguiente.
 
-`explicaciones` (texto para RH) y `banderas` quedan en `detalle`: `marcas_duplicadas`, `marca_unica`, `marcas_fuera_de_ventana`, `marca_intermedia_sin_salida` (hay marcas después de la entrada pero ninguna cae en la ventana de salida, p. ej. salió 17:50), `salida_sin_entrada`, `trabajo_en_descanso`, `trabajo_en_festivo`, `marcas_en_vacaciones`, `marcas_en_permiso`, `turno_inactivo`, `dia_pendiente`, `nomina_duplicada`.
+`explicaciones` (texto para RH) y `banderas` quedan en `detalle`: `marcas_duplicadas`, `marca_unica`, `marcas_fuera_de_ventana`, `ultima_marca_en_comida`, `exceso_comida`, `marca_intermedia_sin_salida` (marcas sueltas de la mañana después de la entrada y ninguna salida), `salida_sin_entrada`, `trabajo_en_descanso`, `trabajo_en_festivo`, `marcas_en_vacaciones`, `marcas_en_permiso`, `turno_inactivo`, `dia_pendiente`, `nomina_duplicada`.
 
 ### Snapshot del turno (opción A de la decisión del 2026-10-21)
 
@@ -58,7 +66,7 @@ Cada día calculado guarda el turno usado: nombre, entrada y salida programadas,
 
 ## 2. Parámetros
 
-Tabla `asistencia_parametros`; se leen y editan con `GET/PUT /api/asistencia/parametros` (solo RH). La migración los siembra solo si faltan (no pisa lo que RH editó).
+Tabla `asistencia_parametros`; se leen y editan con `GET/PUT /api/asistencia/parametros` (solo RH; `PUT` valida el formato HH:MM y que `comida_desde` < `comida_hasta`). Un cambio de la ventana de comida aplica a los periodos abiertos en el siguiente barrido completo (o con *Recalcular*). La migración los siembra solo si faltan (no pisa lo que RH editó).
 
 | Clave | Inicial | Rango | Qué hace |
 |---|---|---|---|
@@ -69,6 +77,8 @@ Tabla `asistencia_parametros`; se leen y editan con `GET/PUT /api/asistencia/par
 | `version_motor` | 1 | solo lectura | se guarda en cada día; súbela al cambiar las reglas para que el siguiente barrido reescriba todo |
 | `ventana_seguridad_dias` | 7 | 0-31 | cada vuelta recalcula además los últimos N días de todos los empleados |
 | `barrido_completo_horas` | 24 | 1-168 | cada cuántas horas se recalculan por completo los periodos abiertos |
+| `comida_desde` | `13:00` | HH:MM | inicio de la ventana de comida (global; no hay comida por turno) |
+| `comida_hasta` | `16:00` | HH:MM, mayor que `comida_desde` | fin de la ventana de comida (inclusive); la salida es la última marca posterior |
 
 Las tolerancias, el umbral de falta, las ventanas y el descanso **no son parámetros del motor**: son del turno (`/api/asistencia/turnos`).
 
@@ -132,14 +142,14 @@ Toda escritura queda en la auditoría (`CERRAR_PERIODO`, `REABRIR_PERIODO`, `REC
 1. Que RH asigne la nómina a los 8 empleados que no la tienen (`GET /sin-identificador`) y espere una vuelta del motor: se vinculan sus marcas y se calculan sus días.
 2. Elegir 5 a 10 empleados y una quincena (por ejemplo 1-15 sep) y comparar `GET /resultados` con su lista de asistencia de BioTime: mismos retardos, faltas y salidas anticipadas. `detalle.explicaciones` dice por qué cada día quedó como quedó y `marcas_usadas` qué marcas se tomaron como entrada y salida.
 3. Revisar los casos de borde que RH quiera fijar: los segundos se truncan (08:10:59 es puntual), el umbral de falta (30 min) frente a la ventana de captura de BioTime (150 min), la tolerancia de salida por turno (3 min en Rayhsa y 0 en Logística).
-4. Los días con la bandera `marca_intermedia_sin_salida` tienen marcas después de la entrada pero ninguna posterior al fin del descanso (14:00): conviene preguntar al empleado si salió a comer y no volvió o si olvidó checar. Confirmar con RH que 14:00 sea el corte de salida correcto.
+4. Los días con la bandera `ultima_marca_en_comida` terminan con una marca entre las 13:00 y las 16:00: conviene preguntar al empleado si salió a comer y no volvió o si se fue y olvidó checar. 
 5. Cerrar a mano cada quincena ya validada (`POST /periodos/:id/cerrar`); si luego llegan marcas tardías aparecerán como ajustes pendientes.
 
 ## 7. Límites conocidos
 
 * Los segundos se truncan: no hay forma de distinguir 08:10:00 de 08:10:59.
-* Una salida temprana cuenta como `salida_anticipada` solo si la marca es posterior al fin del descanso (14:00 en Rayhsa); una marca de las 13:30 con entrada a las 08:00 es `incompleta`. La hora de corte está pendiente de confirmación del humano.
-* Una sola marca es `incompleta` (si cae antes de las 10:30) o `falta` con `salida_sin_entrada` (si cae después); el motor no adivina más.
+* La comida es una ventana **global** (13:00-16:00): no hay comida por turno. Quien sale a comer y no regresa, o se va temprano en la tarde sin checar después de las 16:00, queda `incompleta` con `ultima_marca_en_comida`: el motor no puede distinguirlo y RH decide o justifica. Una salida anticipada real se detecta solo si la marca es posterior a las 16:00.
+* Una sola marca antes de las 13:00 es `incompleta`; una sola marca de comida o posterior es `falta` (llegada tardía; después de las 16:00, con `salida_sin_entrada`): el motor no adivina más.
 * Las **vacaciones aprobadas cubren de lunes a viernes**: no cubren un sábado laborable del turno (los turnos actuales tienen el sábado de descanso). Si algún día un turno trabaja sábado, las vacaciones de ese sábado no lo cubren y se calificará con las marcas.
 * Una vuelta que se cuelga (tabla bloqueada, red) se aborta al vencer el tope duro; los cambios de esa vuelta que no alcanzaron a confirmarse se pierden y se reintentan en la siguiente.
 * No se aplican las **correcciones de marca** de RH (`asistencia_incidencias` tipo `correccion_marca`): solo las justificaciones. Las marcas nunca se editan.
@@ -154,7 +164,7 @@ Toda escritura queda en la auditoría (`CERRAR_PERIODO`, `REABRIR_PERIODO`, `REC
 
 ## 8. Verificación reproducible con PostgreSQL real
 
-`scripts/asistencia/verificar-motor.js` siembra 71 empleados ficticios con casos especiales (sin nómina, sin departamento, nómina repetida, bajas e ingresos a mitad de periodo, turno individual y nocturno, vacaciones, permisos y festivos), arranca el backend real, carga marcas con el simulador (`jornadas`) por la ingesta con llave y compara **cada empleado-día** con un oráculo escrito aparte (la hora local la calcula PostgreSQL, no `Intl`). Incluye 5 empleados de borde (entrada 06:50, salida 15:00, salida 17:50, una sola marca, marca durante el descanso). Después prueba idempotencia, rendimiento, concurrencia, cierre automático, periodos cerrados intactos tras editar un turno o transferir, reapertura, marcas tardías y re-vinculadas, el planificador con dos réplicas, el tope duro con una vuelta colgada de verdad (tabla bloqueada) y la API con tokens HS256 por rol. Úsalo solo con una base **desechable**:
+`scripts/asistencia/verificar-motor.js` siembra 71 empleados ficticios con casos especiales (sin nómina, sin departamento, nómina repetida, bajas e ingresos a mitad de periodo, turno individual y nocturno, vacaciones, permisos y festivos), arranca el backend real, carga marcas con el simulador (`jornadas`) por la ingesta con llave y compara **cada empleado-día** con un oráculo escrito aparte (la hora local la calcula PostgreSQL, no `Intl`). Incluye 8 empleados de borde (entrada 06:50, comida de 62 y de 60 min, última marca en la comida, 16:00 exacto, salida 17:50 y 17:30, una sola marca). Después prueba idempotencia, rendimiento, concurrencia, cierre automático, periodos cerrados intactos tras editar un turno o transferir, reapertura, marcas tardías y re-vinculadas, el planificador con dos réplicas, el tope duro con una vuelta colgada de verdad (tabla bloqueada) y la API con tokens HS256 por rol. Úsalo solo con una base **desechable**:
 
 ```bash
 docker run -d --name pg-motor -e POSTGRES_PASSWORD=pw -p 55416:5432 postgres:16-alpine   # o supabase/postgres:17.6.1.136

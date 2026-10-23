@@ -23,17 +23,18 @@ describe("Migración 014 - esquema", () => {
 
   it("es idempotente: sin DROP TABLE, TRUNCATE ni DELETE; índices con IF NOT EXISTS; columnas con IF NOT EXISTS", () => {
     expect(SQL).not.toMatch(/DROP TABLE|TRUNCATE|DELETE FROM/i);
+    expect(SQL).not.toMatch(/ALTER TABLE turnos/);
     for (const m of SQL.matchAll(/CREATE (UNIQUE )?INDEX (?!IF NOT EXISTS)/g)) throw new Error(`índice sin IF NOT EXISTS: ${m[0]}`);
     expect(SQL.match(/ADD COLUMN (?!IF NOT EXISTS)/g)).toBeNull();
     expect(SQL).toMatch(/DROP TRIGGER IF EXISTS trg_asistencia_diaria_periodo_abierto/);
   });
 
-  it("siembra los 7 parámetros con ON CONFLICT DO NOTHING (nunca pisa lo editado por RH)", () => {
+  it("siembra los 9 parámetros con ON CONFLICT DO NOTHING (nunca pisa lo editado por RH)", () => {
     expect(SQL).toMatch(/INSERT INTO asistencia_parametros \(clave, valor, descripcion\) VALUES/);
     expect(SQL).toMatch(/ON CONFLICT \(clave\) DO NOTHING/);
     for (const [clave, valor] of [
       ["analisis_desde", "2026-09-01"], ["cierre_automatico_desde", "2026-10-16"], ["dias_cierre", "3"],
-      ["margen_dia_completo_min", "120"], ["version_motor", "1"], ["ventana_seguridad_dias", "7"], ["barrido_completo_horas", "24"],
+      ["margen_dia_completo_min", "120"], ["version_motor", "1"], ["ventana_seguridad_dias", "7"], ["barrido_completo_horas", "24"], ["comida_desde", "13:00"], ["comida_hasta", "16:00"],
     ]) {
       expect(SQL).toContain(`('${clave}', '${valor}'`);
     }
@@ -92,6 +93,15 @@ describe("Migración 014 - esquema", () => {
     expect(SQL).toMatch(/CREATE UNIQUE INDEX IF NOT EXISTS uq_asistencia_incidencias_justificacion_activa ON asistencia_incidencias\(empleado_id, fecha\) WHERE activa AND tipo = 'justificacion'/);
   });
 
+  it("antes del índice único anula las justificaciones activas duplicadas conservando la más reciente (no falla con datos del build anterior)", () => {
+    const iUpdate = SQL.indexOf("UPDATE asistencia_incidencias i SET activa = false");
+    const iIndice = SQL.indexOf("CREATE UNIQUE INDEX IF NOT EXISTS uq_asistencia_incidencias_justificacion_activa");
+    expect(iUpdate).toBeGreaterThan(-1);
+    expect(iUpdate).toBeLessThan(iIndice);
+    expect(SQL).toMatch(/o\.activa AND o\.tipo = 'justificacion' AND o\.id > i\.id/);
+    expect(SQL).toMatch(/\[anulada por la migración 014/);
+  });
+
   it("asistencia_ajustes_pendientes: una fila por marca y motivos acotados", () => {
     expect(SQL).toMatch(/CONSTRAINT asistencia_ajustes_marca_key UNIQUE \(marca_id\)/);
     expect(SQL).toMatch(/motivo IN \('marca_posterior_cierre', 'marca_vinculada_posterior_cierre'\)/);
@@ -109,6 +119,10 @@ describe("Migración 014 - esquema", () => {
     const fks = [...SQL.matchAll(/ ([a-z_]+) (?:INT|BIGINT) (?:NOT NULL )?REFERENCES/g)].map((m) => m[1]);
     // marca_id ya tiene el índice único de asistencia_ajustes_marca_key
     for (const fk of new Set(fks)) if (fk !== "marca_id") expect(SQL).toMatch(new RegExp(`INDEX IF NOT EXISTS [a-z_]+ ON [a-z_]+\\(${fk}[,)]`));
+  });
+
+  it("la comida es global: NO se añaden columnas a turnos", () => {
+    expect(SQL).not.toMatch(/ALTER TABLE turnos/);
   });
 
   it("no toca las migraciones 012 ni 013", () => {

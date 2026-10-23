@@ -13,6 +13,10 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-23] [coder] → code-notes.md — Regla de comida (ventana 13:00-16:00 como parámetros), F-M4-1 (test de app.js aislado), F-M4-2 (apagado con vuelta colgada) y F-M4-3 (014 con justificaciones duplicadas); verificación 126/126 pg16+pg17
+- [2026-10-23] [tester] → tests.md — Motor de análisis de asistencia (Fase 4), parcial antes del cambio de regla de comida: oráculo propio 0 diferencias en 3 816 días (regla 14:00, obsoleta para salidas), zonas/DST, periodos/snapshot/trigger/cursor, tope duro, 409 inmediato, réplicas, SIGTERM, caída de BD, API 189/189, rendimiento; 3 FAIL (jest intermitente por una prueba del motor, candado tras SIGTERM, migración con duplicados)
+- [2026-10-23] [tester] → decisions.md — PARA RESOLVER F-M4-1 (jest intermitente por asistenciaPlanificador.test.js), F-M4-2 (candado 4501 tras apagar con vuelta colgada), F-M4-3 (migración 014 con justificaciones duplicadas)
+- [2026-10-23] orquestador → decisions.md — Decisión del humano: la comida (1 h) puede caer entre las 13:00 y las 16:00 y se checa al salir y volver; nueva regla de salida del motor
 - [2026-10-23] [coder] → code-notes.md — Correcciones de la revisión de la Fase 4 (entrada temprana, salida anticipada con corte en el descanso, tope duro del planificador con pg_terminate_backend, medios; verificación 123/123 pg16+pg17, 33/33 mutantes)
 - [2026-10-23] orquestador → decisions.md — Decisión del humano: la interfaz sincroniza todos los días; aviso de retraso por última comunicación; correcciones del motor y de las pantallas en curso
 - [2026-10-23] orquestador → decisions.md — Fase 4: respuestas a las 8 decisiones del coder; revisión NO APROBADA (entrada temprana = falta, salida temprana = incompleta, planificador sin tope)

@@ -433,10 +433,10 @@ describe("lecturas de gestión: sin identificador, ajustes pendientes y parámet
     expect((await get("/api/asistencia/ajustes-pendientes?resueltos=true")).status).toBe(200);
   });
 
-  it("parámetros: devuelve los 7 con tipo y si son editables", async () => {
+  it("parámetros: devuelve los 9 con tipo y si son editables", async () => {
     Motor.listarParametros.mockResolvedValue([{ clave: "dias_cierre", valor: "3", descripcion: "x", fecha_actualizacion: null }]);
     const r = await get("/api/asistencia/parametros");
-    expect(r.body.datos).toHaveLength(7);
+    expect(r.body.datos).toHaveLength(9);
     expect(r.body.datos.find((p) => p.clave === "dias_cierre")).toMatchObject({ valor: 3, tipo: "entero", editable: true });
     expect(r.body.datos.find((p) => p.clave === "version_motor").editable).toBe(false);
   });
@@ -603,6 +603,18 @@ describe("PUT /parametros", () => {
     const dato = Auditoria.crear.mock.calls[0][0];
     expect(dato).toMatchObject({ accion: "ACTUALIZAR_PARAM", tabla: "asistencia_parametros", valores_previos: { dias_cierre: "3" }, valores_nuevos: { dias_cierre: "5" } });
     expect(dato.accion.length).toBeLessThanOrEqual(20);
+  });
+
+  it("comida_desde/comida_hasta: formato HH:MM y desde < hasta contra los valores vigentes", async () => {
+    Motor.leerParametros.mockResolvedValue({ comida_desde: "13:00", comida_hasta: "16:00" });
+    Motor.guardarParametros.mockResolvedValue({ previos: {}, nuevos: {} });
+    expect((await request(app).put("/api/asistencia/parametros").send({ comida_desde: "12:00", comida_hasta: "15:00" })).status).toBe(200);
+    expect(Motor.guardarParametros).toHaveBeenCalledWith({ comida_desde: "12:00", comida_hasta: "15:00" }, 5);
+    Motor.guardarParametros.mockClear();
+    for (const c of [{ comida_desde: "16:00" }, { comida_hasta: "12:00" }, { comida_desde: "15:00", comida_hasta: "14:00" }, { comida_desde: "25:00" }, { comida_hasta: "4pm" }, { comida_desde: 13 }]) {
+      expect((await request(app).put("/api/asistencia/parametros").send(c)).status).toBe(400);
+    }
+    expect(Motor.guardarParametros).not.toHaveBeenCalled();
   });
 
   it.each([

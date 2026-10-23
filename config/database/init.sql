@@ -1430,7 +1430,9 @@ INSERT INTO asistencia_parametros (clave, valor, descripcion) VALUES
   ('margen_dia_completo_min', '120', 'Minutos después de la salida programada a partir de los cuales el día se califica'),
   ('version_motor', '1', 'Versión de las reglas de cálculo; se guarda en cada día calculado'),
   ('ventana_seguridad_dias', '7', 'Cada ejecución recalcula además los últimos N días de todos los empleados'),
-  ('barrido_completo_horas', '24', 'Cada cuántas horas se recalculan por completo los periodos abiertos')
+  ('barrido_completo_horas', '24', 'Cada cuántas horas se recalculan por completo los periodos abiertos'),
+  ('comida_desde', '13:00', 'Inicio de la ventana de comida (HH:MM): las marcas dentro de ella son de comida, nunca entrada ni salida'),
+  ('comida_hasta', '16:00', 'Fin de la ventana de comida (HH:MM, inclusive); la salida es la última marca posterior')
 ON CONFLICT (clave) DO NOTHING;
 
 -- b) Periodos (quincenas 1-15 y 16-fin de mes). Un periodo cerrado no se recalcula: lo cierra el motor
@@ -1546,6 +1548,14 @@ CREATE INDEX IF NOT EXISTS idx_sol_vac_aprobadas_rango ON solicitudes_vacaciones
 CREATE INDEX IF NOT EXISTS idx_permisos_aprobados_rango ON permisos_ausencia(empleado_id, fecha_inicio, fecha_fin)
   WHERE estatus = 'aprobado';
 
+-- Si el build anterior dejó dos justificaciones ACTIVAS del mismo empleado y día, se conserva la más reciente y se anulan
+-- las demás (con una nota en el motivo) para que el índice único no haga fallar la migración. Idempotente: sin duplicados
+-- no toca nada, y una anulada deja de coincidir.
+UPDATE asistencia_incidencias i
+SET activa = false, fecha_actualizacion = NOW(), motivo = i.motivo || ' [anulada por la migración 014: había otra justificación más reciente del mismo día]'
+WHERE i.activa AND i.tipo = 'justificacion'
+  AND EXISTS (SELECT 1 FROM asistencia_incidencias o
+              WHERE o.empleado_id = i.empleado_id AND o.fecha = i.fecha AND o.activa AND o.tipo = 'justificacion' AND o.id > i.id);
 -- A lo más UNA justificación activa por empleado y día (anular una permite registrar otra)
 CREATE UNIQUE INDEX IF NOT EXISTS uq_asistencia_incidencias_justificacion_activa
   ON asistencia_incidencias(empleado_id, fecha) WHERE activa AND tipo = 'justificacion';

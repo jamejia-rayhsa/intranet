@@ -128,9 +128,9 @@ describe("motor: puntualidad y límites exactos", () => {
   });
 
   it.each([
-    ["15:00", 180], ["17:50", 10], ["14:01", 239], ["17:56", 4],
-  ])("salida a las %s (posterior al fin del descanso) = salida_anticipada de %i min", (hora, minutos) => {
-    const r = evaluar({ marcas: [marca(1, "08:00"), marca(2, hora)] });
+    ["17:50", 10], ["17:30", 30], ["16:01", 119], ["17:56", 4],
+  ])("salida a las %s (posterior a comida_hasta 16:00) = salida_anticipada de %i min", (hora, minutos) => {
+    const r = evaluar({ marcas: [marca(1, "08:02"), marca(2, hora)] });
     expect(r).toMatchObject({ estatus: "salida_anticipada", minutos_salida_anticipada: minutos });
     expect(r.marcas_usadas).toEqual([1, 2]);
   });
@@ -141,29 +141,121 @@ describe("motor: puntualidad y límites exactos", () => {
     expect(evaluar({ turno: { ...RAYHSA, tolerancia_salida_min: 10 }, marcas: [marca(1, "08:00"), marca(2, "17:49")] }).estatus).toBe("salida_anticipada");
   });
 
-  it("el corte es el fin del descanso (14:00): marcas durante el descanso o antes NO son salida (incompleta con bandera)", () => {
-    for (const hora of ["12:00", "13:00", "13:30", "14:00:59"]) {
-      const r = evaluar({ marcas: [marca(1, "08:00"), marca(2, hora)] });
+  describe("ventana de comida 13:00-16:00 (decisión del humano)", () => {
+    it("08:02 / 14:01 / 15:03 / 18:05: la comida son marcas de comida; puntual con minutos_comida 62", () => {
+      const r = evaluar({ marcas: [marca(1, "08:02"), marca(2, "14:01"), marca(3, "15:03"), marca(4, "18:05")] });
+      expect(r.estatus).toBe("puntual");
+      expect(r.marcas_usadas).toEqual([1, 4]);
+      expect(r.detalle).toMatchObject({ minutos_comida: 62, exceso_comida_min: 2 });
+      expect(r.banderas).toContain("exceso_comida"); // 62 > 60 min: solo informativo, el estatus no cambia
+      expect(r.banderas).not.toContain("marcas_fuera_de_ventana");
+    });
+
+    it("08:02 / 13:00 / 14:00 / 17:57 = puntual (60 min de comida no exceden descanso_min 60)", () => {
+      const r = evaluar({ marcas: [marca(1, "08:02"), marca(2, "13:00"), marca(3, "14:00"), marca(4, "17:57")] });
+      expect(r.estatus).toBe("puntual");
+      expect(r.detalle.minutos_comida).toBe(60);
+      expect(r.banderas).not.toContain("exceso_comida");
+    });
+
+    it("exceso de comida: solo informativo (bandera y minutos de exceso), el estatus no cambia", () => {
+      const r = evaluar({ marcas: [marca(1, "08:02"), marca(2, "13:00"), marca(3, "15:30"), marca(4, "18:00")] });
+      expect(r).toMatchObject({ estatus: "puntual", minutos_retardo: 0 });
+      expect(r.banderas).toContain("exceso_comida");
+      expect(r.detalle).toMatchObject({ minutos_comida: 150, exceso_comida_min: 90 });
+    });
+
+    it("una sola marca de comida no mide duración", () => {
+      const r = evaluar({ marcas: [marca(1, "08:02"), marca(2, "14:10"), marca(3, "18:00")] });
+      expect(r.estatus).toBe("puntual");
+      expect(r.detalle.minutos_comida).toBeUndefined();
+    });
+
+    it("08:02 / 14:10 (última): incompleta con ultima_marca_en_comida (RH decide)", () => {
+      const r = evaluar({ marcas: [marca(1, "08:02"), marca(2, "14:10")] });
+      expect(r.estatus).toBe("incompleta");
+      expect(r.banderas).toContain("ultima_marca_en_comida");
+      expect(r.banderas).not.toContain("marca_intermedia_sin_salida");
+      expect(r.marcas_usadas).toEqual([1]);
+    });
+
+    it("08:02 / 13:00 / 14:00 (última en la comida) = incompleta con la bandera y los minutos de comida", () => {
+      const r = evaluar({ marcas: [marca(1, "08:02"), marca(2, "13:00"), marca(3, "14:00")] });
+      expect(r.estatus).toBe("incompleta");
+      expect(r.banderas).toContain("ultima_marca_en_comida");
+      expect(r.detalle.minutos_comida).toBe(60);
+    });
+
+    it("FRONTERA: 16:00 exacto (también 16:00:59) pertenece a la ventana (inclusive) -> incompleta; 16:01 ya es salida", () => {
+      for (const hora of ["16:00", "16:00:59"]) {
+        const r = evaluar({ marcas: [marca(1, "08:02"), marca(2, hora)] });
+        expect(r.estatus).toBe("incompleta");
+        expect(r.banderas).toContain("ultima_marca_en_comida");
+      }
+      expect(evaluar({ marcas: [marca(1, "08:02"), marca(2, "16:01")] })).toMatchObject({ estatus: "salida_anticipada", minutos_salida_anticipada: 119 });
+      // 12:59 sigue siendo mañana (no es comida) y 13:00 sí lo es
+      expect(evaluar({ marcas: [marca(1, "08:02"), marca(2, "12:59")] }).banderas).toContain("marca_intermedia_sin_salida");
+      expect(evaluar({ marcas: [marca(1, "08:02"), marca(2, "13:00")] }).banderas).toContain("ultima_marca_en_comida");
+    });
+
+    it("marca de la mañana (11:00) sin salida: incompleta con marca_intermedia_sin_salida, no de comida", () => {
+      const r = evaluar({ marcas: [marca(1, "08:02"), marca(2, "11:00")] });
       expect(r.estatus).toBe("incompleta");
       expect(r.banderas).toContain("marca_intermedia_sin_salida");
-      expect(r.marcas_usadas).toEqual([1]);
-    }
-    expect(evaluar({ marcas: [marca(1, "08:00"), marca(2, "14:01")] }).estatus).toBe("salida_anticipada");
+      expect(r.banderas).not.toContain("ultima_marca_en_comida");
+    });
+
+    it("la primera marca del día dentro de la comida o después = llegada tardía: falta, nunca entrada", () => {
+      for (const hora of ["13:00", "14:30", "16:00"]) {
+        const r = evaluar({ marcas: [marca(1, hora)] });
+        expect(r.estatus).toBe("falta");
+        expect(r.marcas_usadas).toEqual([]);
+      }
+      expect(evaluar({ marcas: [marca(1, "17:00")] }).estatus).toBe("falta"); // 17:00 sería salida, pero sin entrada
+      const r = evaluar({ marcas: [marca(1, "14:00"), marca(2, "18:00")] });
+      expect(r.estatus).toBe("falta");
+      expect(r.banderas).toContain("salida_sin_entrada");
+    });
+
+    it("aunque la ventana de entrada sea enorme, una primera marca de la tarde (>= 13:00) nunca es la entrada", () => {
+      const ancha = { ...RAYHSA, ventana_entrada_despues_min: 700 };
+      for (const hora of ["13:00", "16:30", "17:00"]) expect(evaluar({ turno: ancha, marcas: [marca(1, hora)] }).estatus).toBe("falta");
+      // después de las 16:00 la única marca es una salida sin entrada, no una entrada tardía
+      expect(evaluar({ turno: ancha, marcas: [marca(1, "17:00")] }).banderas).toContain("salida_sin_entrada");
+    });
+
+    it("la ventana de comida es un parámetro (12:00-14:00): 14:30 deja de ser comida", () => {
+      const parametros = { ...PARAMETROS, comida_desde: "12:00", comida_hasta: "14:00" };
+      expect(evaluar({ parametros, marcas: [marca(1, "08:02"), marca(2, "14:30")] })).toMatchObject({ estatus: "salida_anticipada", minutos_salida_anticipada: 210 });
+      expect(evaluar({ parametros, marcas: [marca(1, "08:02"), marca(2, "13:30")] }).banderas).toContain("ultima_marca_en_comida");
+      // una ventana inválida (desde >= hasta) vuelve a 13:00-16:00
+      const mala = { ...PARAMETROS, comida_desde: "16:00", comida_hasta: "13:00" };
+      expect(evaluar({ parametros: mala, marcas: [marca(1, "08:02"), marca(2, "14:10")] }).banderas).toContain("ultima_marca_en_comida");
+    });
+
+    it("la comida no cambia días no laborables: sábado con marcas sigue siendo descanso", () => {
+      const r = evaluar({ fecha: "2026-10-17", marcas: [marca(1, "09:00", "2026-10-17"), marca(2, "14:00", "2026-10-17"), marca(3, "15:00", "2026-10-17")] });
+      expect(r.estatus).toBe("descanso");
+      expect(r.detalle.minutos_comida).toBeUndefined();
+    });
+
+    it("con retardo (08:20) la comida tampoco interfiere: retardo y salida anticipada de 30", () => {
+      const r = evaluar({ marcas: [marca(1, "08:20"), marca(2, "14:00"), marca(3, "15:00"), marca(4, "17:30")] });
+      expect(r).toMatchObject({ estatus: "retardo", minutos_retardo: 20, minutos_salida_anticipada: 30 });
+    });
+
+    it("el detalle guarda la ventana de comida usada", () => {
+      expect(evaluar({ marcas: [marca(1, "08:02")] }).detalle.comida).toMatchObject({ desde: "13:00", hasta: "16:00" });
+    });
   });
 
-  it("una sola marca (o todas antes del fin del descanso) es incompleta, nunca salida anticipada", () => {
+  it("una sola marca (o todas antes de la comida) es incompleta, nunca salida anticipada", () => {
     expect(evaluar({ marcas: [marca(1, "08:00")] }).estatus).toBe("incompleta");
     expect(evaluar({ marcas: [marca(1, "08:00"), marca(2, "08:30"), marca(3, "13:10")] }).estatus).toBe("incompleta");
   });
 
-  it("sin descanso el corte es entrada + ventana_entrada_despues (10:30)", () => {
-    const sin = { ...RAYHSA, descanso_inicio: null, descanso_min: 0 };
-    expect(evaluar({ turno: sin, marcas: [marca(1, "08:00"), marca(2, "10:30")] }).estatus).toBe("incompleta");
-    expect(evaluar({ turno: sin, marcas: [marca(1, "08:00"), marca(2, "10:31")] })).toMatchObject({ estatus: "salida_anticipada", minutos_salida_anticipada: 449 });
-  });
-
   it("retardo y salida temprana el mismo día conservan ambos minutos", () => {
-    expect(evaluar({ marcas: [marca(1, "08:20"), marca(2, "15:00")] })).toMatchObject({ estatus: "retardo", minutos_retardo: 20, minutos_salida_anticipada: 180 });
+    expect(evaluar({ marcas: [marca(1, "08:20"), marca(2, "16:30")] })).toMatchObject({ estatus: "retardo", minutos_retardo: 20, minutos_salida_anticipada: 90 });
   });
 
   it("23:59:59 después de la ventana (00:00) tampoco es salida", () => {

@@ -58,6 +58,7 @@ function crearPlanificador({ ejecutar, intervaloMs, tiempoMaxMs, timeoutMs, abor
   let temporizador = null;
   let detenido = true;
   let enCurso = null;
+  let controlEnCurso = null;
   const estado = { vueltas: 0, errores: 0, omitidas: 0, ultimaVuelta: null, ultimoError: null };
 
   const programar = (ms) => {
@@ -75,6 +76,7 @@ function crearPlanificador({ ejecutar, intervaloMs, tiempoMaxMs, timeoutMs, abor
     }
     let reloj;
     const control = {};
+    controlEnCurso = control;
     const limite = new Promise((resolver) => {
       reloj = setTimeoutFn(() => resolver("tiempo"), topeDuroMs);
       if (reloj && typeof reloj.unref === "function") reloj.unref();
@@ -117,7 +119,9 @@ function crearPlanificador({ ejecutar, intervaloMs, tiempoMaxMs, timeoutMs, abor
     }
     ejecucion.finally(() => {
       if (enCurso === ejecucion) enCurso = null;
+      if (controlEnCurso === control) controlEnCurso = null;
     });
+    if (!enCurso && controlEnCurso === control) controlEnCurso = null;
     programar(intervaloMs);
   }
 
@@ -134,14 +138,25 @@ function crearPlanificador({ ejecutar, intervaloMs, tiempoMaxMs, timeoutMs, abor
       temporizador = null;
       if (enCurso) {
         let reloj;
-        await Promise.race([
-          enCurso.catch(() => {}),
+        const venció = await Promise.race([
+          enCurso.then(() => false, () => false),
           new Promise((resolver) => {
-            reloj = setTimeoutFn(resolver, esperaMs);
+            reloj = setTimeoutFn(() => resolver(true), esperaMs);
             if (reloj && typeof reloj.unref === "function") reloj.unref();
           }),
         ]);
         clearTimeoutFn(reloj);
+        // La vuelta no terminó en el plazo del apagado (colgada): se destruye su conexión para liberar el candado 4501
+        // en vez de dejarlo tomado hasta que venza statement_timeout (F-M4-2)
+        if (venció && enCurso && abortar && controlEnCurso) {
+          log.error("[Asistencia] apagado con una vuelta sin terminar: se destruye su conexión para liberar el candado");
+          try {
+            await abortar(controlEnCurso);
+          } catch (error) {
+            log.error(`[Asistencia] no se pudo abortar la vuelta al apagar (${motivo(error)})`);
+          }
+          enCurso = null;
+        }
       }
     },
     activo: () => !detenido,

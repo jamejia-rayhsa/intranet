@@ -1,6 +1,6 @@
 /* eslint-env jest */
 const { quincenaDe, quincenasEntre, ultimoDiaDelMes } = require("../services/asistencia/periodos");
-const { validarParametro, interpretarParametros, DEFINICION, CLAVES } = require("../services/asistencia/parametros");
+const { validarParametro, validarVentanaComida, interpretarParametros, DEFINICION, CLAVES } = require("../services/asistencia/parametros");
 
 describe("periodos: quincenas", () => {
   it.each([
@@ -41,9 +41,9 @@ describe("parámetros: validación de rangos", () => {
   it("define los 7 parámetros con los valores iniciales de la decisión del humano", () => {
     expect(interpretarParametros([])).toEqual({
       analisis_desde: "2026-09-01", cierre_automatico_desde: "2026-10-16", dias_cierre: 3, margen_dia_completo_min: 120,
-      version_motor: 1, ventana_seguridad_dias: 7, barrido_completo_horas: 24,
+      version_motor: 1, ventana_seguridad_dias: 7, barrido_completo_horas: 24, comida_desde: "13:00", comida_hasta: "16:00",
     });
-    expect(CLAVES).toHaveLength(7);
+    expect(CLAVES).toHaveLength(9);
   });
 
   it.each([
@@ -58,6 +58,30 @@ describe("parámetros: validación de rangos", () => {
     ["cierre_automatico_desde", "2026-10-16", true], ["cierre_automatico_desde", "mañana", false],
   ])("%s = %p -> válido: %s", (clave, valor, ok) => {
     expect(validarParametro(clave, valor).ok).toBe(ok);
+  });
+
+  it.each([
+    ["comida_desde", "13:00", true], ["comida_desde", "00:00", true], ["comida_hasta", "23:59", true], ["comida_hasta", "24:00", false],
+    ["comida_desde", "7:00", false], ["comida_desde", "13:60", false], ["comida_desde", "13:00:00", false], ["comida_hasta", 1600, false],
+    ["comida_desde", "", false], ["comida_hasta", ["16:00"], false], ["comida_desde", "1pm", false],
+  ])("%s = %p -> válido: %s (formato HH:MM)", (clave, valor, ok) => {
+    expect(validarParametro(clave, valor).ok).toBe(ok);
+  });
+
+  it("la ventana de comida exige desde < hasta con los valores resultantes (enviados + vigentes)", () => {
+    const actuales = { comida_desde: "13:00", comida_hasta: "16:00" };
+    expect(validarVentanaComida({ comida_desde: "12:00" }, actuales)).toBeNull();
+    expect(validarVentanaComida({ comida_desde: "16:00" }, actuales)).toMatch(/anterior/); // igual a hasta
+    expect(validarVentanaComida({ comida_hasta: "12:59" }, actuales)).toMatch(/anterior/);
+    expect(validarVentanaComida({ comida_desde: "14:00", comida_hasta: "15:00" }, actuales)).toBeNull();
+    expect(validarVentanaComida({ comida_desde: "15:00", comida_hasta: "14:00" }, actuales)).toMatch(/anterior/);
+    expect(validarVentanaComida({ dias_cierre: 4 }, { comida_desde: "17:00", comida_hasta: "10:00" })).toBeNull(); // no la toca
+  });
+
+  it("una ventana corrupta en la BD (desde >= hasta o formato) vuelve a 13:00-16:00", () => {
+    expect(interpretarParametros([{ clave: "comida_desde", valor: "17:00" }, { clave: "comida_hasta", valor: "10:00" }])).toMatchObject({ comida_desde: "13:00", comida_hasta: "16:00" });
+    expect(interpretarParametros([{ clave: "comida_desde", valor: "x" }])).toMatchObject({ comida_desde: "13:00" });
+    expect(interpretarParametros([{ clave: "comida_desde", valor: "12:00" }, { clave: "comida_hasta", valor: "14:30" }])).toMatchObject({ comida_desde: "12:00", comida_hasta: "14:30" });
   });
 
   it("devuelve el valor tipado (entero o fecha)", () => {
