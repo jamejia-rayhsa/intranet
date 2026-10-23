@@ -6,6 +6,40 @@ type: project
 
 # Decisiones de Arquitectura
 
+### [2026-10-23] orquestador — Decisiones del humano para "Convenios de compra" (Comercial): autorización, catálogos, dashboard, modelo de datos
+
+**Contexto:** tras la investigación de [[research]] (entrada 2026-10-22 del investigador) se presentaron 4 preguntas abiertas antes de planear por fases. Respuestas del humano:
+
+1. **Autorización:** NO es un rol nuevo (`director_comercial`) ni una persona única fija. Es **una lista de personas** que pueden autorizar convenios, mantenible por un administrador (tabla propia de autorizadores con FK a `usuarios`, no un rol de RBAC). Cualquiera de esa lista puede autorizar; se registra quién y cuándo (mismo patrón que vacaciones).
+2. **Catálogos de Cliente/Producto:** **esperar la integración de lectura de MBA3** en vez de construir catálogos propios internos. Esto es un BLOQUEO real: ver [[blockers]] — el investigador confirmó que el canal de lectura de MBA3 (inventario, ventas, clientes, productos) **no está confirmado** en este repo (ni credenciales ni esquema; solo hay un canal de escritura confirmado, alta de cliente CODE_s=05). Antes de poder avanzar con catálogos reales hace falta resolver ese acceso.
+3. **Dashboard:** **registro real de consumo** (no solo estimado por tiempo transcurrido). Se necesita una tabla de movimientos/facturación real por convenio para comparar consumo real vs. plan. Esto es alcance adicional de desarrollo frente al MVP mínimo.
+4. **Modelo de datos:** **1 convenio = 1 Cliente + 1 Vendedor + 1 o más Productos** (líneas). Al cargar el CSV histórico, cada folio que agrupa varios clientes bajo el mismo producto (ej. folio 60, 124) se **separa en convenios independientes por cliente**; dentro de un mismo convenio sí pueden coexistir varias líneas de producto (ej. folio 27 con tallas T8/T9, folio 80 con T6-T10).
+
+**Pendiente de resolver antes de poder fijar las fases finales:** ~~cómo y cuándo se resuelve el acceso de lectura a MBA3 (punto 2) — es una dependencia externa (red, credenciales, a quién pedírselo) que puede tardar y que bloquea Cliente/Producto/Inventario reales.~~ RESUELTO el mismo día — ver siguiente entrada y [[blockers]].
+
+---
+
+### [2026-10-23] orquestador — MBA3 lectura: canal confirmado (API REST ODBC propia, distinta del web service de escritura)
+
+**Contexto:** el humano adjuntó `manual-conexion-api.md` (manual de conexión a la "API ODBC REST" de MBA3), resolviendo el bloqueo de [[blockers]] del mismo día. Pedido explícito: usarla para traer catálogo de **Vendedores, Clientes y Productos**.
+
+**Hallazgo clave — son DOS integraciones MBA3 distintas en este proyecto, no confundir:**
+1. **Escritura (ya existe, Solicitudes de Crédito):** `${MBA3_URL}/wsAPIS/api_wr`, alta/actualización de cliente (CODE_s=05). Ver `solicitudCredito.controller.js:233-313` y el ADR de corrección del 2026-10-22 más abajo.
+2. **Lectura (nueva, para Convenios):** `https://mba3api.rayhsa.net`, API REST propia (FastAPI/Uvicorn detrás de Cloudflare, que termina el TLS). **No tiene relación de código con el web service de escritura** — son sistemas distintos que ambos hablan con MBA3.
+
+**Contrato de la API de lectura (resumen del manual; el manual completo vive en esta conversación, no en el repo todavía — guardarlo en `docs/comercial/mba3-odbc-api-manual.md` cuando se implemente la Fase de integración):**
+- Auth JWT: `POST /v1/login` (usuario/password) → `access_token` (~15 min) + `refresh_token` (~7 días); `POST /v1/refresh` para renovar; `POST /v1/logout` revoca. 5 intentos fallidos → cuenta bloqueada 15 min; rate limit 5 req/min en login.
+- Catálogo: `POST /v1/api/{nombre_endpoint}?limit=&offset=` con `Authorization: Bearer <token>` y body JSON de parámetros. Respuesta `{ data: [...], pagination: { total, limit, offset, returned }, advertencias?: [...] }`.
+- **Endpoint confirmado por el manual:** `ficha-cliente` (body `{"codigo": "C00001"}`).
+- **NO confirmados todavía** (el manual es genérico, no lista el catálogo completo de endpoints): el equivalente para vendedor, producto, existencias/inventario e historial de ventas/consumo. Se descubren con `GET /openapi.json` o `/docs` (documentación interactiva, generada en vivo desde el catálogo real — nunca desactualizada) usando credenciales reales. Roles: `usuario` (ejecuta endpoints con `rol_requerido: usuario`) y `admin` (todo, incluida administración del catálogo).
+- Errores: JSON `{"detail": "mensaje"}` siempre (sin stack traces); 401 = reintentar con refresh o relogin; 403 = falta rol; 429 = rate limit o cuenta bloqueada.
+
+**Decisión:** la Fase de integración MBA3 de "Convenios de compra" usa esta API de lectura (no el web service de escritura, que sigue siendo exclusivo de Solicitudes de Crédito). Antes de implementarla, confirmar contra `/openapi.json` real: nombres de endpoint para vendedor, producto, existencias y ventas/consumo promedio, y decidir si Convenios cachea estos datos en tablas locales (necesario para el dashboard de consumo, que no puede depender de latencia/disponibilidad de una API externa en cada render) o los consulta en vivo. Recomendación a confirmar con el humano en la fase correspondiente: cachear un snapshot (cliente/vendedor/producto) al crear el convenio — mismo patrón que `solicitud_vacaciones` guarda datos desnormalizados del empleado — y refrescar existencias/ventas en un job periódico o al abrir el dashboard, nunca bloqueando la captura del convenio si MBA3 no responde.
+
+**Pendiente:** credenciales de esta API (quién las administra, si hay un usuario de servicio para la intranet o hay que crear uno), y si el host `mba3api.rayhsa.net` es alcanzable desde donde corren dev/staging/prod de la intranet (es un dominio público detrás de Cloudflare, así que probablemente sí, pero no verificado).
+
+---
+
 ### [2026-10-22] orquestador — Corrección: MBA3 en Solicitudes de Crédito ya no es stub (drift sin registrar)
 
 **Contexto:** al investigar el módulo Comercial para planear "Convenios de compra" (ver research.md, entrada del investigador del mismo día), se encontró que el ADR de Fase 1 de Comercial (más abajo, 2026-05-15) describe `POST /solicitudes/:id/sincronizar-mba3` como stub (501, no activa `enviada_mba3`). El código actual (`modules/comercial/backend/controllers/solicitudCredito.controller.js:233-313`) ya hace un GET real a `${MBA3_URL}/wsAPIS/api_wr` (CODE_s=05, alta/actualización de cliente) y sí activa `enviada_mba3` (líneas 290-292). No hay ningún ADR posterior que registre este cambio — quedó implementado sin documentar.
@@ -1152,3 +1186,6 @@ Al desactivar (o registrar inactiva/sábado/domingo/sobre festivo) una actividad
 **Revisor:** NO APROBADO para la carga real en modo actualizar (3 altos verificados: A1 CURP inválida sin nómina se inserta como empleado nuevo (duplicado silencioso) y la nómina con un cero de más duplica; A2 un NSS de 10 dígitos se completa con 0 y pisa el NSS válido; A3 la columna Estatus reactiva/da de baja sin control). **Tester:** F-IE-7 (alto) reprodujo A1-A3 con HTTP real (71 → 72 → 73 empleados); F-IE-1 deadlock entre importaciones simultáneas (60 de 90 respuestas 500, BD íntegra por ROLLBACK); F-IE-2 carrera de ciclos de jefes (28 de 40 rondas); F-IE-3 exportación con fechas desfasadas si el servidor corre al este de UTC; F-IE-4 fechas de 1939-1950 un día antes y CLABE numérica pierde dígitos; F-IE-5 un 403 marca todas las filas como no confirmadas; F-IE-6 el log imprime la fila completa (CURP/RFC/NSS). Lo demás pasó (3195/3195 comprobaciones de actualización de 71 empleados y 15 departamentos; formatos CSV/xlsx 33/33 en Chromium y Firefox; lotes y rollback; permisos y auditoría).
 **Decisiones del orquestador (en curso con el coder):** CURP inválida = error de fila; en modo actualizar sin identificador = error, nunca se inserta; nómina que coincide ignorando ceros = posible duplicado (error); coincidencia con varios empleados = error; NSS/CLABE no se completan (advertencia y se omite); en modo actualizar estatus/fecha_baja/motivo_baja se ignoran con advertencia; candado consultivo por importación y filas ordenadas (deadlocks), segunda pasada de jefes bajo el mismo candado con revalidación de ciclos y solo jefes activos; SAVEPOINT por fila; 403 detiene el proceso; fechas de Excel por aritmética de serial (sin Date/TZ); exportación con orden único, fechas en SQL, permiso de lectura y auditoría; log sin datos de la fila; ejemplos de plantilla obviamente ficticios (también CURP y nombres de departamentos).
 **Hasta que se corrija y se despliegue NO se debe cargar el archivo real de los 71 en modo actualizar.** Antes de usarlo: respaldo (`scripts/supabase/backup.sh`) y prueba con 5 filas.
+
+### [2026-10-23] orquestador — OK del humano: despliegue a staging del PR #17 y GO a la Fase 4 en paralelo
+**Autorización (humano, directa):** "OK para el despliegue y arranca en paralelo la Fase 4". (1) Despliegue **solo a staging** del PR #17 (plantilla de carga completa de empleados y departamentos), merge `ad838bd`; (2) **GO a la Fase 4** (motor de análisis de asistencia) en la rama `feat/asistencia-motor`, desde `main` ya con el PR #17. Los criterios del motor son los de las entradas del 2026-10-21/22 (snapshot de turno, quincenas, análisis desde el 2026-09-01, cierre automático desde la quincena 16-31 oct, `sin_identificador`, ejecución periódica en proceso con candado). Las quincenas anteriores quedan abiertas hasta que RH las cierre.

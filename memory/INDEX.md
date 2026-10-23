@@ -13,6 +13,13 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-23] orquestador → decisions.md — OK del humano: despliegue del PR #17 a staging y GO a la Fase 4 en paralelo
+- [2026-10-23] orquestador → roadmap.md#tarea-2026-10-23-convenios-de-compra-módulo-comercial — Plan PROPUESTO de 6 fases para Convenios de compra (módulo Comercial), pendiente de GO a la Fase 1
+- [2026-10-23] orquestador → decisions.md — MBA3 lectura: canal confirmado (API REST propia mba3api.rayhsa.net con JWT, distinta del web service de escritura); faltan endpoints exactos de vendedor/producto/existencias/ventas
+- [2026-10-23] orquestador → blockers.md#2026-10-23-bloqueo-activo--canal-de-lectura-de-mba3-no-confirmado-convenios-de-compra — Canal de lectura de MBA3 no confirmado: RESUELTO el mismo día (manual de la API adjuntado por el humano)
+- [2026-10-23] orquestador → decisions.md — Decisiones del humano para Convenios de compra: lista de autorizadores (no rol), esperar lectura MBA3 para catálogos, registro real de consumo, 1 convenio = 1 cliente + 1 vendedor + N productos
+- [2026-10-22] orquestador → decisions.md — Corrección: MBA3 en Solicitudes de Crédito ya no es stub (drift sin registrar desde el ADR de Fase 1)
+- [2026-10-22] [investigador] → research.md#2026-10-22-investigador--convenios-de-compra-estado-de-comercial-autorizacion-importador-dashboards-y-vigencias — Convenios de compra: Comercial solo tiene solicitudes de crédito (sin catálogos cliente/vendedor/producto), sin rol autorizador ni tipo de permiso "autorizar", importador y dashboard reutilizables parcialmente, sin convención de "tiempo estimado para consumir stock"
 - [2026-10-22] [coder] → code-notes.md — Una importación no congela la intranet (lock_timeout 3 s + 409, tope de 2 simultáneas, reintento del front), libros 1904, nómina con espacios, repetidos entre lotes (jest 2082, 23 mutantes, 15 importaciones simultáneas con la API en 200)
 - [2026-10-22] [revisor] → reviews.md#re-revisión-de-integridad-de-la-carga — Re-revisión de integridad de la carga: CON OBSERVACIONES, sin críticos (R-1 fechas 1904, R-2 nómina con espacio, R-3 pool y candado sin límite)
 - [2026-10-22] [coder] → code-notes.md — Correcciones de integridad del modo actualizar (CURP inválida/sin identificador/ceros = error, NSS y estatus sin pisar, candado advisory 4410 y SAVEPOINT por fila, fechas Excel como serial, exportación auditada; 195 importaciones simultáneas 0 errores, jest 2062, 37 mutantes)
