@@ -4,6 +4,8 @@ const {
 } = require("../utils/importarEmpleados");
 const { prepararFilaDepartamento } = require("../utils/importarDepartamentos");
 const TurnoAsignacion = require("./turnoAsignacion.model");
+const { tomarCandadoImportacion } = require("../utils/candadosImportacion");
+const { describirErrorSql } = require("../utils/logSeguro");
 const { ErrorAsistencia } = require("../utils/erroresAsistencia");
 
 // Día anterior a una fecha AAAA-MM-DD (aritmética UTC: sin desfase de zona horaria)
@@ -58,8 +60,17 @@ const Departamento = {
     ).rows[0];
   },
 
-  async obtenerTodos() {
-    // turno_actual: nombre del turno vigente hoy (America/Mexico_City) del departamento; solo lectura
+  // conTurno: agrega `turno_actual` (nombre del turno vigente hoy en America/Mexico_City; solo lectura). Solo se pide
+  // cuando el usuario tiene rh/Turnos consulta: quien solo ve Departamentos no ve los turnos.
+  async obtenerTodos({ conTurno = false } = {}) {
+    if (!conTurno) {
+      return (await grupo.query(`
+        SELECT d.*, a.nombre AS area_nombre
+        FROM departamentos d
+        LEFT JOIN areas a ON d.area_id = a.id
+        ORDER BY d.nombre
+      `)).rows;
+    }
     return (await grupo.query(`
       SELECT d.*, a.nombre AS area_nombre, ta.nombre AS turno_actual
       FROM departamentos d
@@ -136,24 +147,40 @@ const Departamento = {
     const nombreDe = (cruda) => (cruda && typeof textoSeguro(cruda.nombre) === "string" ? textoSeguro(cruda.nombre).slice(0, 300) : "");
     const error = (cruda, mensaje) => r.errores.push({ fila: numeroFila(cruda), nombre: nombreDe(cruda), error: mensaje });
 
+    // Orden determinista de escritura: por nombre normalizado y, a igualdad, por número de fila (así la primera aparición
+    // de un nombre repetido en el archivo sigue siendo la que se procesa primero)
+    const ordenadas = filas
+      .map((cruda, i) => ({ cruda, i, clave: normalizarClave(nombreDe(cruda)) }))
+      .sort((x, y) => (x.clave < y.clave ? -1 : x.clave > y.clave ? 1 : x.i - y.i));
+
     const cliente = await grupo.connect();
     let transaccion = false;
     try {
       await cliente.query("BEGIN");
       transaccion = true;
+      await tomarCandadoImportacion(cliente, "departamentos");
       const todos = (await cliente.query(
-        "SELECT id, nombre, descripcion, area_id, cupo_vacaciones FROM departamentos ORDER BY id"
+        "SELECT id, nombre, descripcion, area_id, cupo_vacaciones, activo FROM departamentos ORDER BY id"
       )).rows;
-      const porNombre = new Map();
-      for (const d of todos) { const k = normalizarClave(d.nombre); if (!porNombre.has(k)) porNombre.set(k, { ...d, enArchivo: false }); }
+      const porNombre = new Map(); // clave normalizada -> [departamentos]
+      for (const d of todos) {
+        const k = normalizarClave(d.nombre);
+        if (!porNombre.has(k)) porNombre.set(k, []);
+        porNombre.get(k).push({ ...d, enArchivo: false });
+      }
 
       let n = 0;
-      for (const cruda of filas) {
+      for (const { cruda } of ordenadas) {
         const { fila, advertencias, error: problema } = prepararFilaDepartamento(cruda);
         if (problema) { error(cruda, problema); continue; }
 
         const clave = normalizarClave(fila.nombre);
-        const existente = porNombre.get(clave) || null;
+        const coincidencias = porNombre.get(clave) || [];
+        if (coincidencias.length > 1) {
+          error(cruda, `El nombre coincide con ${coincidencias.length} departamentos existentes (difieren solo en acentos o mayúsculas); resuelve el duplicado antes de importar`);
+          continue;
+        }
+        const existente = coincidencias[0] || null;
         if (existente && (!actualizar || existente.enArchivo)) {
           r.duplicados++;
           if (r.duplicados_detalle.length < MAX_DUPLICADOS_DETALLE) {
@@ -166,18 +193,23 @@ const Departamento = {
         const areaId = fila.area ? (mapaAreas[normalizarClave(fila.area)] || null) : null;
         if (fila.area && !areaId) avisos.push({ campo: "area", valor_recibido: valorParaMostrar(fila.area), motivo: "El área no existe en el catálogo" });
 
-        // Turno solicitado: se ignora con advertencia si falta el permiso, el turno no existe o está inactivo
+        // Turno solicitado: se ignora con advertencia si falta el permiso, el turno no existe o está inactivo, o el
+        // departamento está inactivo
         let turno = null;
         if (fila.turno) {
           const t = mapaTurnos[normalizarClave(fila.turno)];
-          if (!puedeTurnos) avisos.push({ campo: "turno", valor_recibido: valorParaMostrar(fila.turno), motivo: "Sin permiso de edición de Turnos: la columna de turno se ignoró" });
-          else if (!t) avisos.push({ campo: "turno", valor_recibido: valorParaMostrar(fila.turno), motivo: "El turno no existe en el catálogo; no se asignó" });
-          else if (!t.activo) avisos.push({ campo: "turno", valor_recibido: valorParaMostrar(fila.turno), motivo: "El turno está inactivo; no se asignó" });
+          const mostrado = valorParaMostrar(fila.turno);
+          if (!puedeTurnos) avisos.push({ campo: "turno", valor_recibido: mostrado, motivo: "Sin permiso de edición de Turnos: la columna de turno se ignoró" });
+          else if (!t) avisos.push({ campo: "turno", valor_recibido: mostrado, motivo: "El turno no existe en el catálogo; no se asignó" });
+          else if (!t.activo) avisos.push({ campo: "turno", valor_recibido: mostrado, motivo: "El turno está inactivo; no se asignó" });
+          else if (existente && existente.activo === false) avisos.push({ campo: "turno", valor_recibido: mostrado, motivo: "El departamento está inactivo; no se asignó turno" });
           else turno = t;
         }
 
         const punto = `fila_${n++}`;
         await cliente.query(`SAVEPOINT ${punto}`);
+        const previo = existente ? { ...existente } : null; // para revertir la memoria si el SAVEPOINT se deshace
+        let creado = null;
         const local = { turnos_asignados: 0, turnos_cambiados: 0, turnos_sin_cambio: 0 };
         try {
           let departamento;
@@ -185,11 +217,12 @@ const Departamento = {
           let accion;
           if (!existente) {
             const ins = await cliente.query(
-              "INSERT INTO departamentos (nombre, descripcion, area_id, cupo_vacaciones) VALUES ($1, $2, $3, COALESCE($4, 1)) RETURNING id, nombre, descripcion, area_id, cupo_vacaciones",
+              "INSERT INTO departamentos (nombre, descripcion, area_id, cupo_vacaciones) VALUES ($1, $2, $3, COALESCE($4, 1)) RETURNING id, nombre, descripcion, area_id, cupo_vacaciones, activo",
               [fila.nombre, fila.descripcion || null, areaId, fila.cupo]
             );
             departamento = { ...ins.rows[0], enArchivo: true };
-            porNombre.set(clave, departamento);
+            creado = departamento;
+            porNombre.set(clave, [departamento]);
             accion = "insertado";
           } else {
             departamento = existente;
@@ -230,21 +263,24 @@ const Departamento = {
           }
         } catch (e) {
           await cliente.query(`ROLLBACK TO SAVEPOINT ${punto}`);
-          if (!existente) porNombre.delete(clave);
-          else existente.enArchivo = false;
+          // La BD volvió al estado previo: la memoria también (si no, filas siguientes verían cambios que ya no existen)
+          if (creado) porNombre.delete(clave);
+          else if (existente) Object.assign(existente, previo);
           const mensaje = mensajeSeguro(e);
-          if (!mensaje) console.error("[departamentos] importar", e);
+          if (!mensaje) console.error(`[departamentos] importar fila ${numeroFila(cruda)}: ${describirErrorSql(e)}`);
           error(cruda, mensaje || "No se pudo guardar la fila");
         }
       }
       await cliente.query("COMMIT");
       transaccion = false;
     } catch (e) {
-      if (transaccion) { try { await cliente.query("ROLLBACK"); } catch (e2) { console.error("[departamentos] rollback", e2); } }
+      if (transaccion) { try { await cliente.query("ROLLBACK"); } catch (e2) { console.error(`[departamentos] rollback: ${describirErrorSql(e2)}`); } }
       throw e;
     } finally {
       cliente.release();
     }
+    const porFila = (x, y) => (x.fila === null ? Infinity : x.fila) - (y.fila === null ? Infinity : y.fila);
+    for (const lista of [r.errores, r.advertencias, r.duplicados_detalle, r.actualizados_detalle]) lista.sort(porFila);
     return r;
   },
 };

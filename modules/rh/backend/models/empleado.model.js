@@ -1,4 +1,6 @@
 const { grupo } = require("../config/database");
+const { tomarCandadoImportacion } = require("../utils/candadosImportacion");
+const { describirErrorSql } = require("../utils/logSeguro");
 const {
   MAX_DUPLICADOS_DETALLE, MAX_SIN_CATALOGO, MAX_ADVERTENCIAS_LOTE, CAMPOS_DIRECTOS, CAMPOS_FECHA,
   numeroFila, nombreCompleto, prepararFilaEmpleado, normalizarClave, valorParaMostrar,
@@ -292,6 +294,26 @@ const Empleado = {
     return resultado.rows;
   },
 
+  // Todos los empleados en el formato de la plantilla de carga (para corregirlos y reimportarlos en modo actualizar).
+  // Orden ÚNICO (nombre, apellidos, id) y fechas con to_char en SQL: independiente de la zona horaria del servidor y del
+  // navegador. El jefe sale por número de nómina o, si no tiene, por CURP.
+  async listarParaExportar() {
+    const directas = CAMPOS_DIRECTOS.map((c) => (CAMPOS_FECHA.includes(c) ? `to_char(e.${c}, 'YYYY-MM-DD') AS ${c}` : `e.${c}`)).join(", ");
+    const r = await grupo.query(`
+      SELECT ${directas},
+        p.nombre AS puesto, d.nombre AS departamento, ub.nombre AS ubicacion,
+        CASE WHEN COALESCE(j.numero_nomina, '') <> '' THEN j.numero_nomina ELSE '' END AS jefe_nomina,
+        CASE WHEN COALESCE(j.numero_nomina, '') = '' THEN COALESCE(j.curp, '') ELSE '' END AS jefe_curp
+      FROM empleados e
+      LEFT JOIN puestos p ON p.id = e.puesto_id
+      LEFT JOIN departamentos d ON d.id = e.departamento_id
+      LEFT JOIN ubicaciones ub ON ub.id = e.ubicacion_id
+      LEFT JOIN empleados j ON j.id = e.jefe_inmediato_id
+      ORDER BY e.nombre, e.apellido_paterno, e.apellido_materno NULLS FIRST, e.id
+    `);
+    return r.rows;
+  },
+
   // Importación por lotes (modo 'omitir' por omisión o 'actualizar'). Cada fila se valida ANTES de tocar la BD.
   // catalogos: { puestos, departamentos, ubicaciones } con mapas { normalizarClave(nombre): id }.
   // Respuesta: { insertados, actualizados, sin_cambios, duplicados, duplicados_detalle:[{fila,nombre,motivo}] (máx. 200),
@@ -300,8 +322,15 @@ const Empleado = {
   //   sin_catalogo:{puestos,departamentos,ubicaciones:[{nombre,filas}]} (máx. 100 nombres c/u),
   //   jefes_pendientes:[{empleado_id,fila,jefe_nomina,jefe_curp}] (para asignarJefes), jefes:{pendientes} }.
   // `fila` es el número de fila del archivo (_fila). Nunca se devuelve texto de PostgreSQL.
-  // Modo 'actualizar': una transacción por lote (todo el lote o nada si falla el SQL); los errores de validación o
-  // de conflicto por fila no la abortan. Solo las celdas con valor sobrescriben; nunca se borra un dato; usuario_id no se toca.
+  //
+  // Integridad (se usa con datos reales): UNA transacción por lote en ambos modos que empieza con el candado de importación
+  // (serializa importaciones simultáneas) y lee el estado DESPUÉS del candado. Fase A (en memoria, en el orden del archivo):
+  // decide qué hace cada fila; fase B: ejecuta las escrituras en un orden determinista (actualizaciones por id, altas por
+  // clave) con un SAVEPOINT por fila: un error SQL inesperado revierte solo esa fila, que se reporta, y el lote sigue.
+  // Identificación: una CURP presente pero inválida es error de la fila (prepararFilaEmpleado); en modo actualizar una fila
+  // sin CURP ni nómina es error y NUNCA se inserta; una clave que coincide con varios empleados es error; una nómina que
+  // solo coincide ignorando ceros a la izquierda es posible duplicado (error). Solo las celdas con valor sobrescriben,
+  // nunca se borra un dato, usuario_id no se toca y en modo actualizar se ignoran estatus/fecha_baja/motivo_baja.
   async importarLote(filas, catalogos = {}, opciones = {}) {
     const actualizar = opciones.modo === "actualizar";
     const mapas = {
@@ -310,16 +339,10 @@ const Empleado = {
       ubicacion: catalogos.ubicaciones || {},
     };
 
-    let insertados = 0;
-    let actualizados = 0;
-    let sinCambios = 0;
-    let duplicados = 0;
-    let advertenciasOmitidas = 0;
-    const duplicadosDetalle = [];
-    const actualizadosDetalle = [];
-    const errores = [];
-    const advertencias = [];
-    const jefesPendientes = [];
+    const r = {
+      insertados: 0, actualizados: 0, sin_cambios: 0, duplicados: 0, duplicados_detalle: [], actualizados_detalle: [],
+      errores: [], advertencias: [], advertencias_omitidas: 0, jefes_pendientes: [],
+    };
     const faltantes = { puesto: new Map(), departamento: new Map(), ubicacion: new Map() };
     const anotarFaltante = (mapa, nombre) => {
       const k = normalizarClave(nombre);
@@ -327,208 +350,286 @@ const Empleado = {
       if (previo) previo.filas++;
       else if (mapa.size < MAX_SIN_CATALOGO) mapa.set(k, { nombre, filas: 1 });
     };
-    const registrarDuplicado = (cruda, fila, motivo) => {
-      duplicados++;
-      if (duplicadosDetalle.length < MAX_DUPLICADOS_DETALLE) {
-        duplicadosDetalle.push({ fila: numeroFila(cruda), nombre: nombreCompleto(fila || cruda), motivo });
+    const duplicado = (cruda, fila, motivo) => {
+      r.duplicados++;
+      if (r.duplicados_detalle.length < MAX_DUPLICADOS_DETALLE) {
+        r.duplicados_detalle.push({ fila: numeroFila(cruda), nombre: nombreCompleto(fila || cruda), motivo });
       }
     };
-    const registrarError = (cruda, fila, error) => errores.push({ fila: numeroFila(cruda), nombre: nombreCompleto(fila || cruda), error });
-    const aceptarAdvertencias = (cruda, fila, lista) => {
+    const error = (cruda, fila, mensaje) => r.errores.push({ fila: numeroFila(cruda), nombre: nombreCompleto(fila || cruda), error: mensaje });
+    const avisar = (cruda, fila, lista) => {
       for (const a of lista) {
-        if (advertencias.length >= MAX_ADVERTENCIAS_LOTE) { advertenciasOmitidas++; continue; }
-        advertencias.push({ fila: numeroFila(cruda), nombre: nombreCompleto(fila), ...a });
+        if (r.advertencias.length >= MAX_ADVERTENCIAS_LOTE) { r.advertencias_omitidas++; continue; }
+        r.advertencias.push({ fila: numeroFila(cruda), nombre: nombreCompleto(fila), ...a });
       }
     };
 
     // 1. Validación de todas las filas (sin tocar la BD)
     const validas = [];
     for (const cruda of filas) {
-      const { fila, advertencias: avisos, error } = prepararFilaEmpleado(cruda);
-      if (error) { errores.push({ fila: numeroFila(cruda), nombre: nombreCompleto(cruda), error }); continue; }
-      validas.push({ cruda, fila, avisos });
+      const { fila, advertencias: avisos, error: problema } = prepararFilaEmpleado(cruda);
+      if (problema) { error(cruda, null, problema); continue; }
+      validas.push({ cruda, fila, avisos: [...avisos] });
     }
 
-    // 2. Empleados que ya existen según las claves del lote (una consulta, sin recorrer toda la tabla)
+    const sinCeros = (t) => t.replace(/^0+/, "");
     const curps = [...new Set(validas.map((v) => v.fila.curp.toLowerCase()).filter(Boolean))];
     const nominas = [...new Set(validas.map((v) => v.fila.numero_nomina.toLowerCase()).filter(Boolean))];
+    const nominasSC = [...new Set(nominas.map(sinCeros).filter(Boolean))];
 
-    let cliente = grupo;
+    const cliente = await grupo.connect();
     let transaccion = false;
     try {
-      if (actualizar) {
-        cliente = await grupo.connect();
-        await cliente.query("BEGIN");
-        transaccion = true;
-      }
+      await cliente.query("BEGIN");
+      transaccion = true;
+      await tomarCandadoImportacion(cliente, "empleados");
 
+      // 2. Estado actual de los empleados con esas claves, leído con el candado ya tomado
       const porCurp = new Map();
       const porNomina = new Map();
+      const porNominaSC = new Map();
+      const agregar = (mapa, clave, entrada) => {
+        if (!clave) return;
+        if (!mapa.has(clave)) mapa.set(clave, []);
+        if (!mapa.get(clave).includes(entrada)) mapa.get(clave).push(entrada);
+      };
       if (curps.length || nominas.length) {
         const res = await cliente.query(
-          `SELECT ${SELECT_IMPORTACION} FROM empleados WHERE LOWER(curp) = ANY($1) OR LOWER(numero_nomina) = ANY($2) ORDER BY id`,
-          [curps, nominas]
+          `SELECT ${SELECT_IMPORTACION} FROM empleados
+           WHERE LOWER(curp) = ANY($1) OR LOWER(numero_nomina) = ANY($2) OR LTRIM(LOWER(numero_nomina), '0') = ANY($3)
+           ORDER BY id`,
+          [curps, nominas, nominasSC]
         );
-        for (const r of res.rows) {
-          const entrada = { id: r.id, valores: r, enArchivo: false };
-          if (r.curp_l && !porCurp.has(r.curp_l)) porCurp.set(r.curp_l, entrada);
-          if (r.nomina_l && !porNomina.has(r.nomina_l)) porNomina.set(r.nomina_l, entrada);
+        for (const row of res.rows) {
+          const entrada = { id: row.id, valores: row, enArchivo: false };
+          agregar(porCurp, row.curp_l, entrada);
+          agregar(porNomina, row.nomina_l, entrada);
+          agregar(porNominaSC, row.nomina_l ? sinCeros(row.nomina_l) : "", entrada);
         }
       }
-      const registrarClaves = (entrada, curpL, nominaL) => {
-        entrada.enArchivo = true;
-        if (curpL) porCurp.set(curpL, entrada);
-        if (nominaL) porNomina.set(nominaL, entrada);
-      };
 
+      // 3. Fase A: decisión de cada fila, en el orden del archivo
+      const ops = [];
       for (const { cruda, fila, avisos } of validas) {
         const curpL = fila.curp ? fila.curp.toLowerCase() : null;
         const nominaL = fila.numero_nomina ? fila.numero_nomina.toLowerCase() : null;
-        const porC = curpL ? porCurp.get(curpL) : null;
-        const porN = nominaL ? porNomina.get(nominaL) : null;
+        const candC = curpL ? porCurp.get(curpL) || [] : [];
+        const candN = nominaL ? porNomina.get(nominaL) || [] : [];
+
+        if (candC.length > 1) { error(cruda, fila, `La CURP coincide con ${candC.length} empleados; resuelve el duplicado antes de importar`); continue; }
+        if (candN.length > 1) { error(cruda, fila, `El número de nómina coincide con ${candN.length} empleados; resuelve el duplicado antes de importar`); continue; }
+        if (nominaL && candN.length === 0) {
+          const sc = sinCeros(nominaL);
+          if (sc && (porNominaSC.get(sc) || []).length) {
+            error(cruda, fila, "Posible duplicado: el número de nómina coincide con el de otro empleado ignorando los ceros a la izquierda; corrígelo en el archivo");
+            continue;
+          }
+        }
+        const porC = candC[0] || null;
+        const porN = candN[0] || null;
 
         let destino = null;
         if (!actualizar) {
-          if (porC) { registrarDuplicado(cruda, fila, porC.enArchivo ? "repetida en el archivo" : "CURP ya existe"); continue; }
-          if (porN) { registrarDuplicado(cruda, fila, porN.enArchivo ? "repetida en el archivo" : "Número de nómina ya existe"); continue; }
+          if (porC) { duplicado(cruda, fila, porC.enArchivo ? "repetida en el archivo" : "CURP ya existe"); continue; }
+          if (porN) { duplicado(cruda, fila, porN.enArchivo ? "repetida en el archivo" : "Número de nómina ya existe"); continue; }
+          if (!curpL && !nominaL) avisos.push({ campo: "numero_nomina", valor_recibido: null, motivo: "sin CURP ni número de nómina: reimportar el archivo duplicará a este empleado" });
         } else {
-          if (porC && porN && porC.id !== porN.id) {
-            registrarError(cruda, fila, "Conflicto: la CURP corresponde a un empleado y el número de nómina a otro; no se modificó ninguno");
+          if (!curpL && !nominaL) {
+            error(cruda, fila, "Sin identificador: la fila no trae CURP ni número de nómina; en modo actualizar no se puede identificar al empleado y no se crea");
+            continue;
+          }
+          if (porC && porN && porC !== porN) {
+            error(cruda, fila, "Conflicto: la CURP corresponde a un empleado y el número de nómina a otro; no se modificó ninguno");
             continue;
           }
           destino = porC || porN;
-          if (destino && destino.enArchivo) { registrarDuplicado(cruda, fila, "repetida en el archivo"); continue; }
+          if (destino && destino.enArchivo) { duplicado(cruda, fila, "repetida en el archivo"); continue; }
           if (destino) {
             const v = destino.valores;
             if (curpL && v.curp_l && v.curp_l !== curpL) {
-              registrarError(cruda, fila, "Conflicto: el empleado con ese número de nómina ya tiene otra CURP; no se sobrescribe");
+              error(cruda, fila, "Conflicto: el empleado con ese número de nómina ya tiene otra CURP; no se sobrescribe");
               continue;
             }
             if (nominaL && v.nomina_l && v.nomina_l !== nominaL) {
-              registrarError(cruda, fila, "Conflicto: el empleado con esa CURP ya tiene otro número de nómina; no se sobrescribe");
+              error(cruda, fila, "Conflicto: el empleado con esa CURP ya tiene otro número de nómina; no se sobrescribe");
               continue;
             }
           }
+        }
+
+        // Estatus y baja: al actualizar NO se tocan (reactivar o dar de baja se hace en la pantalla de Empleados);
+        // al crear se respetan, y una baja exige fecha de baja.
+        const datos = { ...fila };
+        if (destino) {
+          if (fila.estatus || fila.fecha_baja || fila.motivo_baja) {
+            avisos.push({ campo: "estatus", valor_recibido: null, motivo: "para dar de baja o reactivar usa la pantalla de Empleados: estatus, fecha de baja y motivo de baja se ignoraron" });
+          }
+          datos.estatus = ""; datos.fecha_baja = ""; datos.motivo_baja = "";
+        } else if (fila.estatus === "baja" && !fila.fecha_baja) {
+          avisos.push({ campo: "estatus", valor_recibido: null, motivo: "una baja necesita fecha de baja: el empleado se creó como activo" });
+          datos.estatus = ""; datos.motivo_baja = "";
+        } else if (fila.estatus !== "baja" && (fila.fecha_baja || fila.motivo_baja)) {
+          avisos.push({ campo: "fecha_baja", valor_recibido: null, motivo: "fecha y motivo de baja se ignoraron porque el estatus no es baja" });
+          datos.fecha_baja = ""; datos.motivo_baja = "";
         }
 
         // Referencias a catálogos por nombre (sin acentos ni mayúsculas)
         const ids = {};
+        const sinCatalogo = [];
         for (const [clave, columna] of REFERENCIAS) {
           if (!fila[clave]) continue;
           const id = mapas[clave][normalizarClave(fila[clave])] || null;
           if (id) ids[columna] = id;
-          else anotarFaltante(faltantes[clave], fila[clave]);
+          else sinCatalogo.push([clave, fila[clave]]);
         }
 
-        let empleadoId;
-        if (destino) {
-          const v = destino.valores;
-          const cambios = {};
-          for (const clave of CAMPOS_DIRECTOS) {
-            const nuevo = fila[clave];
-            if (!nuevo) continue;
-            const actual = v[clave] === null || v[clave] === undefined ? "" : String(v[clave]);
-            const igual = clave === "curp" || clave === "numero_nomina" ? actual.toLowerCase() === nuevo.toLowerCase() : actual === nuevo;
-            if (!igual) cambios[clave] = nuevo;
-          }
-          for (const [columna, id] of Object.entries(ids)) {
-            if (Number(v[columna]) !== Number(id)) cambios[columna] = id;
-          }
-          const claves = Object.keys(cambios);
-          if (claves.length === 0) {
-            sinCambios++;
+        const op = { cruda, fila: datos, avisos, ids, sinCatalogo, destino, curpL, nominaL };
+        ops.push(op);
+        // Las claves de esta fila cuentan para las siguientes (repetidas en el archivo)
+        const entrada = destino || { id: null, valores: { ...datos, curp_l: curpL, nomina_l: nominaL }, enArchivo: false };
+        entrada.enArchivo = true;
+        if (!destino || curpL) agregar(porCurp, curpL, entrada);
+        if (!destino || nominaL) agregar(porNomina, nominaL, entrada);
+        if (!destino && nominaL) agregar(porNominaSC, sinCeros(nominaL), entrada);
+        op.entrada = entrada;
+      }
+
+      // 4. Fase B: escrituras en orden determinista, un SAVEPOINT por fila
+      const clave = (op) => (op.destino ? [0, op.destino.id, ""] : [1, 0, `${op.curpL || ""}|${op.nominaL || ""}`]);
+      ops.sort((x, y) => {
+        const a = clave(x);
+        const b = clave(y);
+        return a[0] - b[0] || a[1] - b[1] || (a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : 0) || (numeroFila(x.cruda) || 0) - (numeroFila(y.cruda) || 0);
+      });
+      let n = 0;
+      for (const op of ops) {
+        const { cruda, fila: datos, avisos, ids, sinCatalogo, destino } = op;
+        const punto = `fila_${n++}`;
+        await cliente.query(`SAVEPOINT ${punto}`);
+        try {
+          let empleadoId;
+          let resultado; // 'insertado' | 'actualizado' | 'sin_cambios'
+          let campos = 0;
+          if (destino) {
+            const v = destino.valores;
+            const cambios = {};
+            for (const c of CAMPOS_DIRECTOS) {
+              const nuevo = datos[c];
+              if (!nuevo) continue;
+              const actual = v[c] === null || v[c] === undefined ? "" : String(v[c]);
+              const igual = c === "curp" || c === "numero_nomina" ? actual.toLowerCase() === nuevo.toLowerCase() : actual === nuevo;
+              if (!igual) cambios[c] = nuevo;
+            }
+            for (const [columna, id] of Object.entries(ids)) {
+              if (Number(v[columna]) !== Number(id)) cambios[columna] = id;
+            }
+            const claves = Object.keys(cambios);
+            if (claves.length) {
+              await cliente.query(
+                `UPDATE empleados SET ${claves.map((c, i) => `${c} = $${i + 1}`).join(", ")}, fecha_actualizacion = NOW() WHERE id = $${claves.length + 1}`,
+                [...claves.map((c) => cambios[c]), destino.id]
+              );
+            }
+            campos = claves.length;
+            empleadoId = destino.id;
+            resultado = campos ? "actualizado" : "sin_cambios";
           } else {
-            const sets = claves.map((c, i) => `${c} = $${i + 1}`);
-            await cliente.query(
-              `UPDATE empleados SET ${sets.join(", ")}, fecha_actualizacion = NOW() WHERE id = $${claves.length + 1}`,
-              [...claves.map((c) => cambios[c]), destino.id]
+            const columnas = [];
+            const valores = [];
+            for (const c of CAMPOS_DIRECTOS) {
+              if (datos[c]) { columnas.push(c); valores.push(datos[c]); }
+            }
+            for (const [columna, id] of Object.entries(ids)) { columnas.push(columna); valores.push(id); }
+            if (!datos.estatus) { columnas.push("estatus"); valores.push("activo"); }
+            const res = await cliente.query(
+              `INSERT INTO empleados (${columnas.join(", ")}) VALUES (${columnas.map((_, i) => `$${i + 1}`).join(", ")}) RETURNING id`,
+              valores
             );
-            actualizados++;
-            if (actualizadosDetalle.length < MAX_DUPLICADOS_DETALLE) {
-              actualizadosDetalle.push({ fila: numeroFila(cruda), nombre: nombreCompleto(fila), campos: claves.length });
-            }
+            empleadoId = res.rows[0].id;
+            op.entrada.id = empleadoId;
+            resultado = "insertado";
           }
-          empleadoId = destino.id;
-          registrarClaves(destino, curpL, nominaL);
-        } else {
-          const columnas = [];
-          const valores = [];
-          for (const clave of CAMPOS_DIRECTOS) {
-            if (fila[clave]) { columnas.push(clave); valores.push(fila[clave]); }
-          }
-          for (const [columna, id] of Object.entries(ids)) { columnas.push(columna); valores.push(id); }
-          if (!fila.estatus) { columnas.push("estatus"); valores.push("activo"); }
-          const sql = `INSERT INTO empleados (${columnas.join(", ")}) VALUES (${columnas.map((_, i) => `$${i + 1}`).join(", ")}) RETURNING id`;
-          let nuevoId;
-          if (actualizar) {
-            nuevoId = (await cliente.query(sql, valores)).rows[0].id;
-          } else {
-            try {
-              nuevoId = (await cliente.query(sql, valores)).rows[0].id;
-            } catch (e) {
-              console.error("[empleados] importar fila", numeroFila(cruda), e);
-              registrarError(cruda, fila, "No se pudo insertar la fila");
-              continue;
-            }
-          }
-          insertados++;
-          empleadoId = nuevoId;
-          registrarClaves({ id: nuevoId, valores: { ...fila, curp_l: curpL, nomina_l: nominaL }, enArchivo: true }, curpL, nominaL);
-        }
+          await cliente.query(`RELEASE SAVEPOINT ${punto}`);
 
-        aceptarAdvertencias(cruda, fila, avisos);
-        if (fila.jefe_nomina || fila.jefe_curp) {
-          jefesPendientes.push({ empleado_id: empleadoId, fila: numeroFila(cruda), jefe_nomina: fila.jefe_nomina, jefe_curp: fila.jefe_curp });
+          if (resultado === "insertado") r.insertados++;
+          else if (resultado === "sin_cambios") r.sin_cambios++;
+          else {
+            r.actualizados++;
+            if (r.actualizados_detalle.length < MAX_DUPLICADOS_DETALLE) {
+              r.actualizados_detalle.push({ fila: numeroFila(cruda), nombre: nombreCompleto(datos), campos });
+            }
+          }
+          for (const [c, nombre] of sinCatalogo) anotarFaltante(faltantes[c], nombre);
+          avisar(cruda, datos, avisos);
+          if (datos.jefe_nomina || datos.jefe_curp) {
+            r.jefes_pendientes.push({ empleado_id: empleadoId, fila: numeroFila(cruda), jefe_nomina: datos.jefe_nomina, jefe_curp: datos.jefe_curp });
+          }
+        } catch (e) {
+          await cliente.query(`ROLLBACK TO SAVEPOINT ${punto}`);
+          console.error(`[empleados] importar fila ${numeroFila(cruda)}: ${describirErrorSql(e)}`);
+          error(cruda, datos, "No se pudo guardar la fila");
         }
       }
 
-      if (transaccion) { await cliente.query("COMMIT"); transaccion = false; }
+      await cliente.query("COMMIT");
+      transaccion = false;
     } catch (e) {
       if (transaccion) {
-        try { await cliente.query("ROLLBACK"); } catch (e2) { console.error("[empleados] rollback de la importación", e2); }
+        try { await cliente.query("ROLLBACK"); } catch (e2) { console.error(`[empleados] rollback de la importación: ${describirErrorSql(e2)}`); }
       }
       throw e;
     } finally {
-      if (cliente !== grupo) cliente.release();
+      cliente.release();
     }
 
+    // Resultados en el orden del archivo (la fase B escribe en otro orden)
+    const porFila = (x, y) => (x.fila === null ? Infinity : x.fila) - (y.fila === null ? Infinity : y.fila);
+    for (const lista of [r.errores, r.advertencias, r.duplicados_detalle, r.actualizados_detalle, r.jefes_pendientes]) lista.sort(porFila);
     return {
-      insertados, actualizados, sin_cambios: sinCambios, duplicados,
-      duplicados_detalle: duplicadosDetalle, actualizados_detalle: actualizadosDetalle, errores,
-      advertencias, advertencias_omitidas: advertenciasOmitidas,
+      ...r,
       sin_catalogo: {
         puestos: [...faltantes.puesto.values()],
         departamentos: [...faltantes.departamento.values()],
         ubicaciones: [...faltantes.ubicacion.values()],
       },
-      jefes_pendientes: jefesPendientes,
-      jefes: { pendientes: jefesPendientes.length },
+      jefes: { pendientes: r.jefes_pendientes.length },
     };
   },
 
   // Segunda pasada: asigna jefe_inmediato_id a partir de los pares { empleado_id, fila, jefe_nomina, jefe_curp } que
-  // devolvió importarLote. Con TODOS los pares juntos detecta jefes inexistentes, autorreferencias y ciclos (también
+  // devolvió importarLote. Toma el MISMO candado que importarLote y relee todos los empleados DENTRO de él, así que los
+  // ciclos se validan contra el estado real (dos importaciones simultáneas no cierran un ciclo entre ellas). Con TODOS los
+  // pares juntos detecta jefes inexistentes o ambiguos, jefes que no están activos, autorreferencias y ciclos (también
   // contra los jefes que ya están en la BD) y no asigna ninguno de esos casos. Una transacción.
-  // Devuelve { asignados, sin_cambios, no_encontrados, ciclos, conflictos, advertencias:[{fila,nombre,campo,valor_recibido,motivo}] }.
+  // Devuelve { asignados, sin_cambios, no_encontrados, ciclos, conflictos, ambiguos, no_activos,
+  //   advertencias:[{fila,nombre,campo,valor_recibido,motivo}] }.
   async asignarJefes(pares) {
     const cliente = await grupo.connect();
     let transaccion = false;
     try {
       await cliente.query("BEGIN");
       transaccion = true;
+      await tomarCandadoImportacion(cliente, "empleados");
       const todos = (await cliente.query(
-        `SELECT id, nombre, apellido_paterno, apellido_materno, LOWER(curp) AS curp_l, LOWER(numero_nomina) AS nomina_l, jefe_inmediato_id FROM empleados`
+        `SELECT id, nombre, apellido_paterno, apellido_materno, LOWER(curp) AS curp_l, LOWER(numero_nomina) AS nomina_l,
+                jefe_inmediato_id, COALESCE(estatus, 'activo') AS estatus
+         FROM empleados ORDER BY id`
       )).rows;
       const porId = new Map();
       const porCurp = new Map();
       const porNomina = new Map();
+      const agregar = (mapa, clave, id) => {
+        if (!clave) return;
+        if (!mapa.has(clave)) mapa.set(clave, []);
+        mapa.get(clave).push(id);
+      };
       for (const e of todos) {
         porId.set(e.id, e);
-        if (e.curp_l && !porCurp.has(e.curp_l)) porCurp.set(e.curp_l, e.id);
-        if (e.nomina_l && !porNomina.has(e.nomina_l)) porNomina.set(e.nomina_l, e.id);
+        agregar(porCurp, e.curp_l, e.id);
+        agregar(porNomina, e.nomina_l, e.id);
       }
 
-      const resultado = { asignados: 0, sin_cambios: 0, no_encontrados: 0, ciclos: 0, conflictos: 0, advertencias: [] };
+      const resultado = { asignados: 0, sin_cambios: 0, no_encontrados: 0, ciclos: 0, conflictos: 0, ambiguos: 0, no_activos: 0, advertencias: [] };
       const nombreDe = (id) => nombreCompleto(porId.get(id) || {});
       const avisar = (par, campo, valor, motivo) => resultado.advertencias.push({
         fila: par.fila || null, nombre: nombreDe(par.empleado_id), campo, valor_recibido: valor === null ? null : valorParaMostrar(valor), motivo,
@@ -543,8 +644,15 @@ const Empleado = {
         }
         const jn = par.jefe_nomina ? par.jefe_nomina.toLowerCase() : "";
         const jc = par.jefe_curp ? par.jefe_curp.toLowerCase() : "";
-        const idN = jn ? porNomina.get(jn) : undefined;
-        const idC = jc ? porCurp.get(jc) : undefined;
+        const listaN = jn ? porNomina.get(jn) || [] : [];
+        const listaC = jc ? porCurp.get(jc) || [] : [];
+        if (listaN.length > 1 || listaC.length > 1) {
+          resultado.ambiguos++;
+          avisar(par, "jefe", null, "El número de nómina o la CURP del jefe coincide con varios empleados; no se asignó");
+          continue;
+        }
+        const idN = listaN[0];
+        const idC = listaC[0];
         if (idN !== undefined && idC !== undefined && idN !== idC) {
           resultado.conflictos++;
           avisar(par, "jefe", null, "Jefe (número de nómina) y Jefe (CURP) corresponden a empleados distintos; no se asignó");
@@ -560,6 +668,11 @@ const Empleado = {
         if (jefeId === par.empleado_id) {
           resultado.ciclos++;
           avisar(par, "jefe", null, "Un empleado no puede ser su propio jefe (auto-referencia); no se asignó");
+          continue;
+        }
+        if (porId.get(jefeId).estatus !== "activo") {
+          resultado.no_activos++;
+          avisar(par, "jefe", null, "El jefe indicado no está activo (baja o suspendido); no se asignó");
           continue;
         }
         candidatos.set(par.empleado_id, { jefeId, par });
@@ -605,7 +718,7 @@ const Empleado = {
       return resultado;
     } catch (e) {
       if (transaccion) {
-        try { await cliente.query("ROLLBACK"); } catch (e2) { console.error("[empleados] rollback de jefes", e2); }
+        try { await cliente.query("ROLLBACK"); } catch (e2) { console.error(`[empleados] rollback de jefes: ${describirErrorSql(e2)}`); }
       }
       throw e;
     } finally {

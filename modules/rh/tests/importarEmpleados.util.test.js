@@ -184,7 +184,8 @@ describe("resultados: actualizados, advertencias y jefes", () => {
   it("sumarJefes acumula los conteos de varias peticiones", () => {
     let j = U.sumarJefes(null, { asignados: 3, no_encontrados: 1, ciclos: 2 });
     j = U.sumarJefes(j, { asignados: 2, sin_cambios: 1, conflictos: 1 });
-    expect(j).toEqual({ asignados: 5, sin_cambios: 1, pendientes: 0, no_encontrados: 1, ciclos: 2, conflictos: 1 });
+    expect(j).toEqual({ asignados: 5, sin_cambios: 1, pendientes: 0, no_encontrados: 1, ciclos: 2, conflictos: 1, ambiguos: 0, no_activos: 0 });
+    expect(U.sumarJefes(j, { ambiguos: 2, no_activos: 3 })).toMatchObject({ ambiguos: 2, no_activos: 3 });
   });
 
   it("el CSV incluye advertencias (con etiqueta del campo) y actualizados (solo el número de campos)", () => {
@@ -212,7 +213,7 @@ describe("hojas de la plantilla", () => {
     expect(hojas.Empleados).toHaveLength(3);
     expect(hojas.Empleados[0]).toEqual(COL.map((c) => c.etiqueta));
     expect(hojas.Empleados[1]).toHaveLength(COL.length);
-    expect(hojas.Empleados[1][0]).toBe("Ana");
+    expect(hojas.Empleados[1][0]).toBe("Nombre de Ejemplo 1");
   });
 
   it("los encabezados de la plantilla se leen de vuelta sin ignoradas ni faltantes", () => {
@@ -241,19 +242,33 @@ describe("hojas de la plantilla", () => {
     expect(columna(9)).toHaveLength(23);
   });
 
-  it("empleados actuales en el mismo formato: jefe por nómina (o CURP), fechas AAAA-MM-DD", () => {
+  it("B4: los ejemplos son obviamente ficticios (sin CURP/RFC/nombres verosímiles) y válidos para el backend", () => {
+    const ej = U.FILAS_EJEMPLO_EMPLEADOS;
+    for (const f of ej) {
+      expect(f.curp).toMatch(/^XXXX/);
+      expect(f.rfc).toMatch(/^XXXX/);
+      expect(f.nombre).toMatch(/Ejemplo/);
+      expect(f.numero_nomina).toMatch(/^EJEMPLO-/);
+      expect(f.puesto + f.departamento + f.ubicacion).toMatch(/Ejemplo.*Ejemplo.*Ejemplo/);
+    }
+    expect(hojas.Instrucciones.map((f) => f[0]).join("\n")).toMatch(/EJEMPLO-001/);
+  });
+
+  it("empleados actuales: el servidor ya entrega fechas AAAA-MM-DD y jefe por nómina/CURP; la hoja solo respeta el orden de las columnas", () => {
     const h = U.hojaEmpleadosActuales([
-      { id: 1, nombre: "Ana", apellido_paterno: "P", numero_nomina: "N1", fecha_ingreso: "2024-01-15T06:00:00.000Z", jefe_inmediato_id: null },
-      { id: 2, nombre: "Beto", apellido_paterno: "Q", numero_nomina: "N2", jefe_inmediato_id: 1 },
-      { id: 3, nombre: "Carla", apellido_paterno: "R", curp: null, jefe_inmediato_id: 4 },
-      { id: 4, nombre: "Dora", apellido_paterno: "S", curp: "SADO900101MDFRRR01", jefe_inmediato_id: null },
+      { nombre: "Ana", apellido_paterno: "P", numero_nomina: "N1", fecha_ingreso: "2024-01-15", jefe_nomina: "", jefe_curp: "", curp: null },
+      { nombre: "Beto", apellido_paterno: "Q", numero_nomina: "N2", jefe_nomina: "N1", jefe_curp: "", fecha_nacimiento: "1939-02-28" },
+      { nombre: "Carla", apellido_paterno: "R", jefe_nomina: "", jefe_curp: "XXXX000103MXXXXXX2" },
     ]).Empleados;
     const idx = (clave) => COL.findIndex((c) => c.clave === clave);
+    expect(h[0]).toEqual(COL.map((c) => c.etiqueta));
+    expect(h).toHaveLength(4);
     expect(h[1][idx("fecha_ingreso")]).toBe("2024-01-15");
+    expect(h[2][idx("fecha_nacimiento")]).toBe("1939-02-28");
     expect(h[2][idx("jefe_nomina")]).toBe("N1");
-    expect(h[3][idx("jefe_curp")]).toBe("SADO900101MDFRRR01");
-    expect(h[3][idx("jefe_nomina")]).toBe("");
+    expect(h[3][idx("jefe_curp")]).toBe("XXXX000103MXXXXXX2");
     expect(h[1][idx("curp")]).toBe("");
+    expect(U.hojaEmpleadosActuales(null).Empleados).toHaveLength(1);
   });
 });
 

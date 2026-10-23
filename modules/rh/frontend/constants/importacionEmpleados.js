@@ -66,29 +66,29 @@ export const COLUMNAS_EMPLEADOS = [
 // Las dos filas de ejemplo son FICTICIAS. La segunda fila apunta a la primera como jefe (mismo archivo).
 export const FILAS_EJEMPLO_EMPLEADOS = [
   {
-    nombre: 'Ana', apellido_paterno: 'Prueba', apellido_materno: 'Ejemplo', fecha_nacimiento: '1990-01-31',
-    curp: 'PEEA900131MDFRJN01', rfc: 'PEEA900131AB1', nss: '01234567890', genero: 'Femenino', estado_civil: 'Casado',
+    nombre: 'Nombre de Ejemplo 1', apellido_paterno: 'Apellido de Ejemplo', apellido_materno: 'Ficticio', fecha_nacimiento: '1990-01-31',
+    curp: 'XXXX000101HXXXXXX0', rfc: 'XXXX000101XX1', nss: '00000000001', genero: 'Femenino', estado_civil: 'Casado',
     escolaridad: 'Licenciatura', estado_nacimiento: 'Jalisco',
-    celular_personal: '5512345678', correo_personal: 'ana.prueba@ejemplo.com', telefono_emergencia: '5587654321',
-    parentesco_emergencia: 'Hermano', contacto_emergencia: 'Luis Prueba',
-    calle: 'Calle Falsa 123', colonia: 'Centro', codigo_postal: '06000', municipio: 'Cuauhtémoc', estado_residencia: 'Ciudad de México',
-    numero_nomina: 'NOM-9001', fecha_imss: '2024-01-15', fecha_ingreso: '2024-01-15', fecha_renovacion: '2025-01-15',
+    celular_personal: '5512345678', correo_personal: 'ejemplo1@ejemplo.com', telefono_emergencia: '5587654321',
+    parentesco_emergencia: 'Hermano', contacto_emergencia: 'Contacto de Ejemplo',
+    calle: 'Calle de Ejemplo 1', colonia: 'Centro', codigo_postal: '06000', municipio: 'Cuauhtémoc', estado_residencia: 'Ciudad de México',
+    numero_nomina: 'EJEMPLO-001', fecha_imss: '2024-01-15', fecha_ingreso: '2024-01-15', fecha_renovacion: '2025-01-15',
     tipo_contrato: 'Indeterminado', celular_corporativo: '5511112222', infonavit: '', fonacot: '',
-    puesto: 'Analista', departamento: 'Sistemas', ubicacion: 'Matriz', jefe_nomina: '', jefe_curp: '',
-    banco: 'BBVA México', clabe: '012345678901234567', cp_fiscal: '06000',
+    puesto: 'Puesto de Ejemplo', departamento: 'Departamento de Ejemplo', ubicacion: 'Ubicación de Ejemplo', jefe_nomina: '', jefe_curp: '',
+    banco: 'BBVA México', clabe: '000000000000000001', cp_fiscal: '06000',
     estatus: 'activo', fecha_baja: '', motivo_baja: '',
   },
   {
-    nombre: 'Luis', apellido_paterno: 'Muestra', apellido_materno: 'Ficticio', fecha_nacimiento: '1985-12-05',
-    curp: 'MUFL851205HDFSCS02', rfc: 'MUFL851205CD2', nss: '09876543210', genero: 'Masculino', estado_civil: 'Soltero',
+    nombre: 'Nombre de Ejemplo 2', apellido_paterno: 'Apellido de Ejemplo', apellido_materno: 'Ficticio', fecha_nacimiento: '1985-12-05',
+    curp: 'XXXX000102MXXXXXX1', rfc: 'XXXX000102XX2', nss: '00000000002', genero: 'Masculino', estado_civil: 'Soltero',
     escolaridad: 'Preparatoria / Bachillerato', estado_nacimiento: 'México',
-    celular_personal: '5598765432', correo_personal: 'luis.muestra@ejemplo.com', telefono_emergencia: '5512341234',
-    parentesco_emergencia: 'Madre', contacto_emergencia: 'Rosa Ficticio',
-    calle: 'Avenida Inventada 45', colonia: 'Norte', codigo_postal: '01234', municipio: 'Álvaro Obregón', estado_residencia: 'Ciudad de México',
-    numero_nomina: 'NOM-9002', fecha_imss: '2023-06-01', fecha_ingreso: '2023-06-01', fecha_renovacion: '',
+    celular_personal: '5598765432', correo_personal: 'ejemplo2@ejemplo.com', telefono_emergencia: '5512341234',
+    parentesco_emergencia: 'Madre', contacto_emergencia: 'Contacto de Ejemplo',
+    calle: 'Calle de Ejemplo 2', colonia: 'Norte', codigo_postal: '01234', municipio: 'Álvaro Obregón', estado_residencia: 'Ciudad de México',
+    numero_nomina: 'EJEMPLO-002', fecha_imss: '2023-06-01', fecha_ingreso: '2023-06-01', fecha_renovacion: '',
     tipo_contrato: 'Determinado', celular_corporativo: '', infonavit: '', fonacot: '',
-    puesto: 'Auxiliar', departamento: 'Sistemas', ubicacion: 'Matriz', jefe_nomina: 'NOM-9001', jefe_curp: '',
-    banco: 'Banorte', clabe: '072345678901234568', cp_fiscal: '01234',
+    puesto: 'Puesto de Ejemplo', departamento: 'Departamento de Ejemplo', ubicacion: 'Ubicación de Ejemplo', jefe_nomina: 'EJEMPLO-001', jefe_curp: '',
+    banco: 'Banorte', clabe: '000000000000000002', cp_fiscal: '01234',
     estatus: 'activo', fecha_baja: '', motivo_baja: '',
   },
 ];
@@ -125,7 +125,7 @@ export const INSTRUCCIONES_EMPLEADOS = [
   [''],
   ['Límites'],
   ['El archivo se envía en lotes de 100 filas. No cubre hijos, documentos del expediente ni cuentas de usuario.'],
-  ['Las dos filas de ejemplo de la hoja "Empleados" son ficticias: bórralas antes de cargar tu archivo.'],
+  ['Las dos filas de ejemplo de la hoja "Empleados" son ficticias (nómina EJEMPLO-001 y EJEMPLO-002): bórralas antes de cargar tu archivo; subir la plantilla sin editar crearía esos dos empleados de ejemplo.'],
 ];
 
 // Nombres de la hoja "Catálogos": una columna por catálogo.
@@ -165,18 +165,9 @@ export function hojasPlantillaEmpleados(catalogos) {
   };
 }
 
-// Empleados actuales (respuesta de GET /empleados, con todas las páginas) en el mismo formato de la plantilla, para
-// corregirlos y reimportarlos en modo actualizar. El jefe se expresa por número de nómina (o CURP si no tiene nómina).
+// Empleados actuales en el mismo formato de la plantilla, para corregirlos y reimportarlos en modo actualizar. Vienen de
+// GET /empleados/exportar-importacion, que ya entrega las fechas como AAAA-MM-DD (to_char en SQL, sin depender de la zona
+// horaria) y el jefe por número de nómina (o CURP si no tiene), en orden único (nombre, apellidos, id).
 export function hojaEmpleadosActuales(empleados) {
-  const porId = new Map((empleados || []).map((e) => [e.id, e]));
-  const fecha = (v) => (v ? String(v).slice(0, 10) : '');
-  const filas = (empleados || []).map((e) => {
-    const jefe = e.jefe_inmediato_id ? porId.get(e.jefe_inmediato_id) : null;
-    const obj = { ...e };
-    COLUMNAS_EMPLEADOS.forEach((col) => { if (col.tipo === 'fecha') obj[col.clave] = fecha(e[col.clave]); });
-    obj.jefe_nomina = jefe && jefe.numero_nomina ? jefe.numero_nomina : '';
-    obj.jefe_curp = jefe && !jefe.numero_nomina && jefe.curp ? jefe.curp : '';
-    return filaDeObjeto(obj);
-  });
-  return { Empleados: [COLUMNAS_EMPLEADOS.map((col) => col.etiqueta), ...filas] };
+  return { Empleados: [COLUMNAS_EMPLEADOS.map((col) => col.etiqueta), ...(empleados || []).map(filaDeObjeto)] };
 }

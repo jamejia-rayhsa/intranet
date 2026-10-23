@@ -3042,3 +3042,131 @@ Hallazgos abiertos:
 - dist/ no está versionado (no hay riesgo de bundle desactualizado en el commit).
 
 **Veredicto:** NO APROBADO para staging. Un crítico (1) rompe la decisión de dejar abierta la vista de resultados en EmpleadoPage, que es la página donde se originó el incidente. Corregir (1) y (2) antes del despliegue; (3) es un aviso de negocio que conviene decidir antes de que la importación llegue a producción; el resto puede ir en la siguiente iteración.
+
+### [2026-10-22] [revisor] — Plantilla de carga completa y departamentos
+**Alcance:** commit 749fc02 (HEAD de feat/importador-expediente), 30 archivos. Lectura de decisions (2026-10-22: plantilla completa, petición de departamentos), code-notes ("Plantilla de carga completa…"), docs/rh/importacion-empleados.md y el hallazgo previo del importador (no repetido). Jest (importarEmpleados, importarEmpleados.util, importarFechas.util, departamentos.importar/cupo, acceso-empleados-permisos-vacaciones): 6 suites, 247/247 OK. Solo lectura: sin mutaciones, sin Postgres. Verificación puntual con node de prepararFilaEmpleado.
+
+**Veredicto: NO APROBADO para la carga real de los 71 empleados en modo actualizar** (hallazgos A1-A3). El despliegue a staging en sí no queda bloqueado si el archivo real no se sube hasta corregirlos o hasta aplicar la mitigación indicada. Ninguna violación literal de decisions.md: una celda vacía no borra, usuario_id no se toca, conflictos = error de fila, auditoría solo con conteos, "terminar solo acorta" se respeta.
+
+**A1. ALTO — Fila con CURP inválida y sin nómina se INSERTA como empleado nuevo en modo actualizar (duplicado silencioso)**
+**Archivo/línea:** modules/rh/backend/utils/importarEmpleados.js:152 (CURP mala -> `fila.curp = ""` + advertencia en :239); modules/rh/backend/models/empleado.model.js:385-391 (claves derivadas de la fila ya saneada) y :429/454 (sin destino -> INSERT).
+**Problema:** la coincidencia usa la fila DESPUÉS de sanearla: una CURP con un carácter de más o de menos (o nómina vacía) queda sin identificador y la fila entra como alta nueva, aunque el empleado exista. Verificado con node: `curp:"PEEA900131MDFRJN0"` sin nómina -> `curp:""`, `numero_nomina:""`, solo una advertencia. Lo mismo ocurre con una nómina que Excel convirtió en número (0123 -> 123 no coincide, la fila entra como nueva). Un lote de 71 con errores de captura puede crear decenas de duplicados.
+**Severidad:** alto.
+**Fix sugerido:** en modo actualizar, si la celda CURP o Número de nómina tiene contenido pero no pasó la validación, rechazar la fila como error ("CURP inválida: no se puede identificar al empleado; no se insertó") en vez de degradarla a "sin identificador". Insertar como nueva solo cuando ambas celdas estén vacías. Añadir prueba: CURP de 17 caracteres + modo actualizar -> errores, insertados = 0.
+
+**A2. ALTO — NSS de 10 dígitos se completa con 0 y SOBRESCRIBE el NSS válido del empleado en modo actualizar**
+**Archivo/línea:** modules/rh/backend/utils/importarEmpleados.js:160-161 (`return { valor: \`0${v}\`, aviso ... }`); modules/rh/backend/models/empleado.model.js:429-441 (la celda con valor sobrescribe).
+**Problema:** el relleno con 0 es una suposición (Excel quita el cero inicial), pero un NSS real de 10 dígitos o un NSS de 11 mal capturado se guarda como `0...` y reemplaza el valor existente sin confirmación; la advertencia es informativa y la actualización ocurre igual. Verificado con node: `nss:"1234567890"` -> `"01234567890"`.
+**Severidad:** alto (dato de IMSS; corrupción silenciosa de un valor válido en modo actualizar).
+**Fix sugerido:** en modo actualizar no sobrescribir un NSS existente con uno rellenado: si el empleado ya tiene NSS distinto del valor completado, registrar error de conflicto como con nómina/CURP. Alternativa: no completar NSS de 10 dígitos (rechazar con advertencia y dejar el campo vacío). Probar: NSS existente 11 dígitos + fila con 10 dígitos -> sin cambio.
+
+**A3. ALTO — Estatus y fecha de baja se escriben desde el archivo en modo actualizar: puede reactivar o dar de baja por error, y deja combinaciones incoherentes**
+**Archivo/línea:** modules/rh/backend/utils/importarEmpleados.js:62-63 (estatus y fecha_baja están en CAMPOS_DIRECTOS); modules/rh/backend/models/empleado.model.js:429 (un valor presente siempre sobrescribe, incluido "activo" sobre "baja"); :460 (el default "activo" solo aplica al insertar).
+**Problema:** una columna Estatus con "activo" (por ejemplo, una lista exportada o copiada de otra fuente) reactiva a un empleado dado de baja y no limpia su fecha/motivo de baja; un "baja" sin fecha deja `estatus='baja'` con `fecha_baja` NULL o anterior. No hay confirmación ni advertencia específica. La prueba de la línea 428 cubre el caso feliz, no la reactivación ni la incoherencia.
+**Severidad:** alto (estatus afecta nómina, acceso, jefes y el motor de asistencia).
+**Fix sugerido:** en modo actualizar, tratar el cambio de estatus como excepción: (a) si el empleado está en 'baja' y el archivo dice 'activo' -> error de la fila ("reactivar requiere confirmación en el formulario"); (b) 'baja' exige fecha_baja (si no, error); (c) fecha_baja con estatus distinto de 'baja' -> advertencia y no se guarda. Hasta corregirlo: en el archivo real, dejar vacía la columna Estatus de los empleados activos y revisar que no haya filas en baja.
+
+**M1. MEDIO — Sin bloqueo entre importaciones concurrentes: duplicados y ciclos de jefes por carrera**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js:519-520 (asignarJefes: lectura completa sin FOR UPDATE ni candado de aplicación); :368-372 y el SELECT de importarLote (sin candado); departamento.model.js:144-146 (lectura sin candado; los candados sí existen en turnoAsignacion.model.js:64 y :110).
+**Problema:** dos importaciones simultáneas (dos pestañas o dos usuarios) leen el mismo estado. En jefes, la comprobación de ciclo es correcta contra la BD en UNA petición, pero dos peticiones concurrentes pueden crear A→B y B→A a la vez. En empleados, pueden insertar la misma CURP (no hay UNIQUE). Del lado de turnos, el orden de bloqueos (departamento UPDATE -> FOR UPDATE de la asignación -> advisory 4301 -> FOR SHARE del turno) es consistente con asignar/terminar sueltos; no encontré ciclo de espera, pero el lote mantiene el bloqueo de la fila del departamento durante toda la transacción (hasta 100 filas), lo que bloquea aprobaciones de vacaciones de ese departamento (solicitudes_vacaciones usa FOR UPDATE en departamentos).
+**Severidad:** medio.
+**Fix sugerido:** candado de aplicación por importación (p. ej. pg_advisory_xact_lock de un espacio nuevo) al inicio de importarLote y de asignarJefes, para serializarlas; o índice único LOWER(curp)/LOWER(numero_nomina) (ya pendiente del humano). Documentar en la respuesta de jefes que ciclos concurrentes no están cubiertos hasta tener el candado.
+
+**M2. MEDIO — Duplicados ya existentes en la BD: se actualiza el de menor id sin avisar y la jefatura puede resolverse al azar**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js:368-372 (`if (r.curp_l && !porCurp.has(...))`, mismo patrón para nómina; SELECT ORDER BY id); asignarJefes (`SELECT ... FROM empleados` sin ORDER BY y `if (e.nomina_l && !porNomina.has(...))`, ~línea 519-524, uso en :546).
+**Problema:** sin UNIQUE, si ya hay dos empleados con la misma CURP o nómina, la fila del archivo se aplica al primero que aparezca y el otro no se marca. En asignarJefes el jefe por nómina queda asignado a un empleado indeterminado (el orden de la consulta no está fijado).
+**Severidad:** medio.
+**Fix sugerido:** antes de la carga real, ejecutar en staging: `SELECT LOWER(curp), COUNT(*) FROM empleados WHERE curp IS NOT NULL GROUP BY 1 HAVING COUNT(*)>1` (y lo mismo con numero_nomina). En código: si la clave tiene más de un empleado, error "clave duplicada en la BD" en vez de elegir uno; ORDER BY id explícito en asignarJefes.
+
+**M3. MEDIO — Si falla un lote, la segunda pasada de jefes se omite por completo, incluidos los lotes anteriores que sí se confirmaron**
+**Archivo/línea:** modules/portal/frontend/components/ImportadorArchivo.jsx:734 (`if (!fallo)`) y :736-752 (rama `else errorJefes = 'la importación se interrumpió antes'`).
+**Problema:** las filas de los lotes 1..N-1 ya quedaron insertadas/actualizadas, pero sus jefes no se asignan. El mensaje indica pendientes, pero no hay forma de completarlos desde la pantalla (el usuario tendría que reimportar el archivo).
+**Severidad:** medio.
+**Fix sugerido:** ejecutar la segunda pasada con los pares de los lotes confirmados aunque haya fallo posterior; mostrar "N jefes pendientes: reintentar" con botón que llame solo a `/empleados/importar/jefes`.
+
+**M4. MEDIO — Departamentos: estado en memoria no revertido tras ROLLBACK TO SAVEPOINT (sin_cambios silencioso)**
+**Archivo/línea:** modules/rh/backend/models/departamento.model.js:195-206 (`Object.assign(existente, cambios)` antes del turno) y :231-234 (en el catch solo se marca `enArchivo = false`).
+**Problema:** si la fila falla después del UPDATE (p. ej. conflicto de turno), la BD vuelve al estado anterior pero `existente.cupo_vacaciones`, `descripcion` y `area_id` quedan con los valores nuevos. Una segunda fila del mismo departamento en el archivo compara contra ese valor fantasma, puede concluir "sin cambios" y no escribir el cupo que pide. Caso raro (dos filas del mismo nombre en el archivo), pero silencioso.
+**Severidad:** medio.
+**Fix sugerido:** en el catch, restaurar `existente` desde una copia tomada antes de `Object.assign` (p. ej. `const previo = { ...existente }` y `Object.assign(existente, previo)`). Prueba: dos filas del mismo departamento, la primera con cupo nuevo y turno que se traslapa, la segunda con el mismo cupo nuevo -> debe actualizar.
+
+**M5. MEDIO — Nombres de departamento que coinciden tras normalizar: se actualiza el primero, sin ambigüedad**
+**Archivo/línea:** modules/rh/backend/models/departamento.model.js:148 (`if (!porNombre.has(k))`) y :155-157; normalización en modules/rh/backend/utils/catalogosEmpleado.js:34-41 (quita signos y acentos; "Ventas Industria" = "Ventas-Industria" = "ventas industria").
+**Problema:** en modo actualizar, una fila puede escribir cupo, área y turno en un departamento distinto del que nombra si existen dos nombres que colapsan a la misma clave (la BD solo tiene UNIQUE exacto). En modo omitir la fila se cuenta como duplicada (sin daño).
+**Severidad:** medio.
+**Fix sugerido:** al construir porNombre, si una clave ya existe con otro id, marcarla como ambigua y rechazar las filas que la usen ("nombre ambiguo: coincide con X y Y"). Verificar en staging que los 15 nombres no colapsan (la lista del humano parece no tener colisiones, pero no lo comprobé contra la BD real).
+
+**M6. MEDIO — "Descargar empleados actuales" puede omitir o repetir empleados: paginación con ORDER BY no único**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js:217 (`ORDER BY e.nombre, e.apellido_paterno` con LIMIT/OFFSET); modules/rh/frontend/pages/EmpleadoPage.jsx:182-192 (descarga página a página con `limite: 200`); el backend no tope `limite` (empleado.controller.js, listar, ~línea 259-267).
+**Problema:** dos empleados con el mismo nombre y apellido paterno (homónimos) pueden caer en páginas distintas en cada petición con orden no determinista: la exportación puede saltarse a uno y repetir a otro. Como el archivo es la base para reimportar en modo actualizar, el usuario cree tener la lista completa.
+**Severidad:** medio.
+**Fix sugerido:** añadir `e.id` como desempate en ORDER BY (en listar, sin cambiar el orden visible); en el front, comparar el total exportado con `total` de la respuesta y avisar si no coincide. Opcional: tope en el servidor para `limite`.
+
+**M7. MEDIO — Fechas de la exportación: depende de la zona horaria del servidor (riesgo de desplazar todas las fechas al reimportar)**
+**Archivo/línea:** modules/rh/frontend/constants/importacionEmpleados.js:172 (`String(v).slice(0, 10)`); sin `setTypeParser` en la conexión (config de pg devuelve DATE como Date a medianoche local del servidor).
+**Problema:** si el proceso Node corre en una zona al este de UTC, la medianoche local serializa al día anterior en UTC y la exportación trae fechas corridas un día; reimportado en modo actualizar, cambia la fecha de todos los empleados (el compare usa el valor del archivo). Con zona México (UTC-6) o UTC no ocurre.
+**Severidad:** medio (condicional a la TZ del contenedor de staging).
+**Fix sugerido:** que el backend devuelva las fechas DATE como texto (`to_char(...,'YYYY-MM-DD')` en listar o `pg.types.setTypeParser(1082, v => v)` en la configuración de la conexión). Antes de la carga: comprobar en staging `docker exec <backend> date` y `SELECT now()::text` y una fecha exportada.
+
+**M8. MEDIO — La exportación crea una copia de CURP, NSS, RFC y CLABE para cualquiera con consulta de Empleados**
+**Archivo/línea:** modules/rh/frontend/pages/EmpleadoPage.jsx:182-193 (descarga todas las páginas); modules/rh/backend/models/empleado.model.js:59-61 (`SELECT e.*`) y :194-217 (listar).
+**Problema:** el listado ya devuelve todos los campos a quien tiene consulta (preexistente); el botón nuevo los convierte en un archivo .xlsx descargable con todos los identificadores, sin registro de auditoría de exportación. Confirmar si el botón se muestra a roles solo de consulta (el importador se abre desde la misma página; el botón de importar no tiene su propio chequeo de permiso visible en el front).
+**Severidad:** medio.
+**Fix sugerido:** verificar el permiso de edición para mostrar "Descargar empleados actuales" y el de importar; auditar la descarga con conteos (acción corta, p. ej. EXPORTAR_EMP); valorar excluir CLABE/NSS del export o pedir confirmación.
+
+**M9. MEDIO — Modo actualizar: un solo error SQL no controlado revierte los 100 registros del lote (sin SAVEPOINT por fila)**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js:441-450 (UPDATE sin try por fila en actualizar) y :454-460 (INSERT en actualizar sin try); contraste con el modo omitir (try/catch) y con departamento.model.js:180-238 (SAVEPOINT).
+**Problema:** un CHECK o un deadlock (40P01) en una fila hace ROLLBACK de las 100 y la UI muestra "resultado no confirmado" para todo el lote. En omitir una fila mala solo se pierde ella. Es coherente con la decisión escrita, pero la diferencia de comportamiento entre modos es sorpresiva.
+**Severidad:** medio.
+**Fix sugerido:** SAVEPOINT por fila también en empleados (mismo patrón que departamentos) o documentar el contrato en docs/rh/importacion-empleados.md y en la UI.
+
+**M10. MEDIO — La segunda pasada de jefes no protege jefes dados de baja ni valida la vigencia del jefe**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js, asignarJefes (resolución de jefeId por nómina/CURP, sin filtro de estatus).
+**Problema:** un archivo puede asignar como jefe a un empleado en 'baja', o un jefe distinto del vigente, sin advertencia; afecta aprobación de vacaciones y permisos (el acceso por jefe se resuelve con jefe_inmediato_id).
+**Severidad:** medio.
+**Fix sugerido:** advertir (no asignar) si el jefe resuelto tiene estatus distinto de 'activo'; documentarlo en docs.
+
+**B1. BAJO — Pruebas que faltan para los casos de integridad**
+**Archivo/línea:** modules/rh/backend/tests/importarEmpleados.test.js:326-428 (actualizar cubierto en el caso feliz y en conflictos); sin pruebas de: CURP inválida en modo actualizar (A1), NSS de 10 dígitos sobre NSS existente (A2), reactivación desde 'baja' (A3), duplicados existentes en BD (M2), ciclo por concurrencia (M1), SAVEPOINT stale (M4), colisión de nombres (M5).
+**Severidad:** bajo (pero son exactamente los riesgos de la carga real).
+**Fix sugerido:** añadir esas pruebas junto con los fixes de A1-A3 y M4-M5. No hay pruebas de componente del importador (sigue el hallazgo previo #8).
+
+**B2. BAJO — Asignación de turno a departamentos inactivos no se valida**
+**Archivo/línea:** modules/rh/backend/models/departamento.model.js:213-217 (aplicarTurno sin comprobar `activo` del departamento).
+**Severidad:** bajo. **Fix sugerido:** advertir o rechazar si `activo = false` antes de asignar turno.
+
+**B3. BAJO — GET /departamentos muestra el turno vigente a quien solo tiene Departamentos:consulta**
+**Archivo/línea:** modules/rh/backend/models/departamento.model.js:61-78 (LATERAL; el turno se ve sin permiso de Turnos).
+**Severidad:** bajo. **Fix sugerido:** decidirlo explícitamente; si no es dato público, devolver `turno_actual` solo con Turnos:consulta. Rendimiento: el LATERAL usa el índice GiST de la exclusión en departamento_id; con 15 filas no hay N+1 problemático.
+
+**B4. BAJO — Ejemplos y pruebas con CURP en formato real**
+**Archivo/línea:** modules/rh/frontend/constants/importacionEmpleados.js:70 y :83 (PEEA900131MDFRJN01, MUFL851205HDFSCS02 con RFC y NSS de ejemplo); modules/rh/tests/importarEmpleados.util.test.js y backend tests (AAAA900101HDFRRR01, PRUA900101HDFRXX01, SADO900101MDFRRR01).
+**Problema:** no puedo comprobar desde aquí que no correspondan a personas reales; los nombres son ficticios ("Prueba", "Muestra") pero las CURP tienen formato válido. **Severidad:** bajo. **Fix sugerido:** usar CURP con dígito verificador inválido o claramente de prueba (p. ej. XXXX000000XXXXXX00) en ejemplos y fixtures; confirmar con el humano.
+
+**B5. BAJO — Índices de búsqueda por clave**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js:(SELECT_IMPORTACION, `LOWER(curp) = ANY($1)` y `LOWER(numero_nomina) = ANY($2)`); migración 001-crear-tablas-rh.sql:140 (índice plano sobre numero_nomina, no sobre LOWER).
+**Severidad:** bajo (tabla pequeña). **Fix sugerido:** índices funcionales LOWER(...) cuando se agregue el UNIQUE pendiente.
+
+**B6. BAJO — Cosmético en test**
+**Archivo/línea:** modules/rh/backend/tests/departamentos.cupo.test.js (final del último it: `});` sin sangría).
+**Severidad:** bajo. **Fix sugerido:** reindentar.
+
+**Revisado sin hallazgos (correcto):**
+- Auditoría: IMPORTAR_EMPLEADOS (18), IMPORTAR_EMP_JEFES (18) e IMPORTAR_DEPTOS (15) caben en VARCHAR(20); IMPORTAR_DEPARTAMENTOS (22) no cabe y no se usa. No encontré otras acciones con más de 20 caracteres en el módulo RH. Los conteos no incluyen datos personales.
+- usuario_id no está en CAMPOS_DIRECTOS ni en el UPDATE: no se toca.
+- Celdas vacías: nunca borran (todas las ramas usan `if (!nuevo) continue` o `fila.x !== null`); jefe vacío no quita jefe; cupo/turno vacíos no cambian.
+- Nómina/CURP rellenadas solo si el empleado no las tiene; conflictos CURP/nómina de dos personas -> error sin modificar (probado en código y en la prueba de la línea 366).
+- Jefes: resolución contra la BD completa; auto-referencia, ciclos directos y largos (también contra jefes existentes y entre lotes) se descartan; tope de 500 pares validado en servidor y en front.
+- Departamentos: turno vigente hoy/otro/fecha anterior/traslape: terminar solo acorta y la fecha debe ser posterior; el traslape lo corta el EXCLUDE de la BD (23P01) y se traduce a mensaje propio.
+- Departamento con turno: eliminar -> 409 con mensaje propio (FK sin cascada).
+- Lotes: 100 filas y 80 kb en el front; el servidor rechaza >200 filas; CSV de resultados: prefijo ' contra =,+,-,@ y tab/retorno (importarFilas.js:317-322), BOM UTF-8; plantilla y exportación .xlsx escriben texto como strings (aoa_to_sheet no interpreta fórmulas).
+- Pool: todas las consultas dentro de la transacción usan el cliente (TurnoAsignacion recibe cliente); sin consultas al pool dentro de BEGIN.
+- Accesibilidad: el diálogo ya tiene trampa de Tab, Escape respeta "procesando" y devuelve el foco (ImportadorArchivo.jsx:800-818); el hallazgo previo #11 queda parcialmente resuelto.
+- Alias de encabezados: ninguna colisión entre 35 columnas con alias (comprobado con script sobre importacionEmpleados.js; 5 columnas sin alias no colisionan).
+- Tests: 6 suites / 247 OK. Sin datos de personas reales en los fixtures salvo lo indicado en B4.
+
+**Mitigaciones recomendadas para la carga real de los 71 (antes de subir el archivo):**
+1. Consultas de duplicados de CURP y nómina en staging (M2) y que los 15 nombres de departamento no colisionan (M5).
+2. Revisar el archivo: CURP de 18 caracteres en todas las filas que la traigan (A1); columna Estatus vacía para activos y ninguna fila en baja sin fecha (A3); NSS de 11 dígitos (A2).
+3. Verificar la zona horaria del contenedor antes de usar un "empleados actuales" como base (M7).
+4. Probar primero con 5 filas en staging y revisar el CSV de resultados; respaldar la tabla empleados (scripts/supabase/backup.sh) antes de la carga.

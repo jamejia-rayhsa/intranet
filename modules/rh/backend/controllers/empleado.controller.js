@@ -1,5 +1,6 @@
 const Empleado = require("../models/empleado.model");
 const { auditarImportacion } = require("../utils/auditoriaImportacion");
+const { describirErrorSql } = require("../utils/logSeguro");
 const {
   validarCuerpoImportacion, validarParesJefes, normalizarClave,
 } = require("../utils/importarEmpleados");
@@ -470,8 +471,21 @@ const ControladorEmpleado = {
 
       res.json({ exito: true, datos: resultado });
     } catch (error) {
-      console.error('[empleados] importar', error);
+      console.error(`[empleados] importar: ${describirErrorSql(error)}`);
       res.status(500).json({ exito: false, mensaje: 'Error al importar empleados' });
+    }
+  },
+
+  // Lista completa en el formato de la plantilla ("Descargar empleados actuales"). Contiene CURP, NSS, RFC y CLABE:
+  // mismo permiso que el listado de empleados y queda auditado (solo el número de filas).
+  async exportarParaImportacion(req, res) {
+    try {
+      const empleados = await Empleado.listarParaExportar();
+      await auditarImportacion(req, "empleados", "EXPORTAR_EMPLEADOS", { filas: empleados.length });
+      res.json({ exito: true, datos: { empleados } });
+    } catch (error) {
+      console.error(`[empleados] exportar: ${describirErrorSql(error)}`);
+      res.status(500).json({ exito: false, mensaje: "Error al exportar empleados" });
     }
   },
 
@@ -495,7 +509,7 @@ const ControladorEmpleado = {
 
       res.json({ exito: true, datos: resultado });
     } catch (error) {
-      console.error('[empleados] importar jefes', error);
+      console.error(`[empleados] importar jefes: ${describirErrorSql(error)}`);
       res.status(500).json({ exito: false, mensaje: 'Error al asignar los jefes inmediatos' });
     }
   },

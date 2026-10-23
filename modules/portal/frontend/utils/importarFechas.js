@@ -7,6 +7,8 @@
 //     (toISOString desfasaría un día en zonas al este de UTC o con hora cercana a la medianoche).
 //   - número o texto numérico: serial de Excel (sistema 1900) con parte entera de 5 o 6 dígitos; se toma la parte
 //     entera y la hora se descarta. De 1 a 4 dígitos (un año suelto como 1990) -> 'fecha incompleta'.
+//   - { serialExcel: n } (celda numérica con formato de fecha, ver hojaAMatriz.js): serial de Excel desde 1 (1900-01-01),
+//     sin pasar por Date (el Date local desplaza un día fechas de 1939-1950 en zonas con horario histórico).
 //   - texto: AAAA-MM-DD, AAAA/MM/DD, DD/MM/AAAA y DD-MM-AAAA (día primero, formato de México).
 //   - lo inválido o ambiguo devuelve { valor: '', error } con un mensaje claro.
 
@@ -90,6 +92,8 @@ export function normalizarFecha(valor) {
   if (valor === null || valor === undefined) return { valor: '' };
   if (Object.prototype.toString.call(valor) === '[object Date]') return fechaDeDate(valor);
   if (typeof valor === 'number') return fechaDeNumero(valor);
+  // Celda numérica con formato de FECHA en Excel (la marca hojaAMatriz): serial exacto, aritmética pura sin Date local.
+  if (valor !== null && typeof valor === 'object' && typeof valor.serialExcel === 'number') return fechaDeSerialExcel(valor.serialExcel);
   if (typeof valor !== 'string') return { valor: '', error: 'Formato de fecha no reconocido' };
 
   const texto = valor.trim();

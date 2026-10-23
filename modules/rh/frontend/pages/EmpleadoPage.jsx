@@ -178,19 +178,12 @@ export default function EmpleadoPage() {
     }
   }
 
-  // Todos los empleados (páginas de 200) en el formato de la plantilla, para corregirlos y reimportarlos en modo actualizar.
+  // Todos los empleados en el formato de la plantilla, para corregirlos y reimportarlos en modo actualizar. Los ordena y
+  // formatea el servidor (orden único, fechas AAAA-MM-DD sin depender de la zona horaria).
   async function descargarActuales() {
-    const todos = [];
-    let paginaActual = 1;
-    let totalPaginas = 1;
-    do {
-      const respuesta = await obtenerEmpleados({ pagina: paginaActual, limite: 200 });
-      if (!respuesta.exito) throw new Error(respuesta.mensaje || "No se pudo obtener la lista de empleados");
-      todos.push(...respuesta.datos.empleados);
-      totalPaginas = respuesta.datos.paginas_totales || 1;
-      paginaActual++;
-    } while (paginaActual <= totalPaginas);
-    descargarEmpleadosActuales(todos);
+    const respuesta = await solicitar("/empleados/exportar-importacion");
+    if (!respuesta.exito) throw new Error(respuesta.mensaje || "No se pudo obtener la lista de empleados");
+    descargarEmpleadosActuales(respuesta.datos.empleados);
   }
 
   function manejarCambio(evento) {

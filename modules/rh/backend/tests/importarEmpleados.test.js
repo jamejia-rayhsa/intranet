@@ -22,7 +22,7 @@ app.use("/api/areas", require("../routes/areas.routes"));
 app.use("/api/departamentos", require("../routes/departamentos.routes"));
 
 const base = (i, extra = {}) => ({ _fila: i + 1, nombre: `Ana${i}`, apellido_paterno: "Prueba", ...extra });
-const CURP = (n) => `PRUA9001010000${String(n).padStart(4, "0")}`; // 18 caracteres ficticios
+const CURP = (n) => `XXXX0001010000${String(n).padStart(4, "0")}`; // 18 caracteres ficticios
 
 const CATALOGOS = {
   puestos: [{ id: 7, nombre: "Analista" }, { id: 8, nombre: "Jefe de Área" }],
@@ -77,18 +77,18 @@ describe("prepararFilaEmpleado / esFechaValida", () => {
 
   it("un valor inválido de un campo OPCIONAL no rechaza la fila: queda vacío y genera advertencia", () => {
     const r = prepararFilaEmpleado(base(1, {
-      curp: "CORTA", rfc: "123", nss: "12", clabe: "999", celular_personal: "555", codigo_postal: "ABC", cp_fiscal: "123456",
+      rfc: "123", nss: "12", clabe: "999", celular_personal: "555", codigo_postal: "ABC", cp_fiscal: "123456",
       genero: "Marciano", banco: "Banco Inventado", estado_nacimiento: "Atlantida", correo_personal: "no-es-correo",
       estatus: "volando", colonia: "c".repeat(101),
     }));
     expect(r.error).toBeUndefined();
-    for (const campo of ["curp", "rfc", "nss", "clabe", "celular_personal", "codigo_postal", "cp_fiscal", "genero", "banco", "estado_nacimiento", "correo_personal", "estatus", "colonia"]) {
+    for (const campo of ["rfc", "nss", "clabe", "celular_personal", "codigo_postal", "cp_fiscal", "genero", "banco", "estado_nacimiento", "correo_personal", "estatus", "colonia"]) {
       expect(r.fila[campo]).toBe("");
     }
     const porCampo = Object.fromEntries(r.advertencias.map((a) => [a.campo, a]));
-    expect(Object.keys(porCampo)).toHaveLength(13);
-    // CURP/NSS/RFC/CLABE: solo "formato inválido", sin el valor recibido
-    for (const campo of ["curp", "rfc", "nss", "clabe"]) {
+    expect(Object.keys(porCampo)).toHaveLength(12);
+    // NSS/RFC/CLABE: solo "formato inválido", sin el valor recibido
+    for (const campo of ["rfc", "nss", "clabe"]) {
       expect(porCampo[campo]).toEqual({ campo, valor_recibido: null, motivo: "formato inválido" });
     }
     expect(porCampo.celular_personal).toEqual({ campo: "celular_personal", valor_recibido: "555", motivo: "teléfono inválido (deben ser 10 dígitos)" });
@@ -97,22 +97,49 @@ describe("prepararFilaEmpleado / esFechaValida", () => {
     expect(porCampo.genero.motivo).toMatch(/no está entre las opciones/);
   });
 
-  it("CURP y RFC se pasan a mayúsculas; NSS de 10 dígitos se rellena con 0 y avisa sin mostrar el valor", () => {
-    const r = prepararFilaEmpleado(base(1, { curp: "prua900101hdfrxx01", rfc: "prua900101ab1", nss: "1234567890" }));
-    expect(r.fila).toMatchObject({ curp: "PRUA900101HDFRXX01", rfc: "PRUA900101AB1", nss: "01234567890" });
-    expect(r.advertencias).toEqual([{ campo: "nss", valor_recibido: null, motivo: expect.stringMatching(/10 dígitos.*0 a la izquierda/) }]);
-    expect(prepararFilaEmpleado(base(1, { rfc: "PRUA900101AB" })).fila.rfc).toBe("PRUA900101AB"); // 12 caracteres (persona moral)
+  it("CURP y RFC se pasan a mayúsculas; el NSS de 10 dígitos NO se completa con ceros: se omite con advertencia sin mostrar el valor (A2)", () => {
+    const r = prepararFilaEmpleado(base(1, { curp: "xxxx000101hxxxxxx0", rfc: "xxxx000101xx1", nss: "1234567890" }));
+    expect(r.fila).toMatchObject({ curp: "XXXX000101HXXXXXX0", rfc: "XXXX000101XX1", nss: "" });
+    expect(r.advertencias).toEqual([{ campo: "nss", valor_recibido: null, motivo: "NSS de 10 dígitos: verifica el 0 inicial (el campo se omitió)" }]);
+    expect(prepararFilaEmpleado(base(1, { rfc: "XXXX000101XX" })).fila.rfc).toBe("XXXX000101XX"); // 12 caracteres (persona moral)
     expect(prepararFilaEmpleado(base(1, { nss: 12345678901 })).fila.nss).toBe("12345678901");
+    expect(prepararFilaEmpleado(base(1, { nss: "1234567890123" })).fila.nss).toBe("");
   });
 
-  it("CURP: exactamente 18 caracteres alfanuméricos (17, 19 y con símbolos son formato inválido)", () => {
-    for (const mala of ["A".repeat(17), "A".repeat(19), "AAAA90010100000-01", "AAAA9001010000001!"]) {
+  it("CURP presente pero inválida = ERROR de la fila (nunca advertencia): 17, 19, símbolos, NUL, objeto (A1)", () => {
+    for (const mala of ["A".repeat(17), "A".repeat(19), "XXXX00010100000-01", "XXXX0001010000001!", "CORTA", "a\u0000b", { a: 1 }, [1]]) {
       const r = prepararFilaEmpleado(base(1, { curp: mala }));
-      expect(r.fila.curp).toBe("");
-      expect(r.advertencias).toEqual([{ campo: "curp", valor_recibido: null, motivo: "formato inválido" }]);
+      expect(r.error).toBe("CURP inválida: no se puede identificar al empleado");
+      expect(r.fila).toBeUndefined();
     }
-    expect(prepararFilaEmpleado(base(1, { curp: "AAAA900101HDFRRR01" })).fila.curp).toBe("AAAA900101HDFRRR01");
-    expect(prepararFilaEmpleado(base(1, { curp: " aaaa 900101 hdfrrr 01 " })).fila.curp).toBe("AAAA900101HDFRRR01");
+    expect(prepararFilaEmpleado(base(1, { curp: "XXXX000101HXXXXXX0" })).fila.curp).toBe("XXXX000101HXXXXXX0");
+    expect(prepararFilaEmpleado(base(1, { curp: " xxxx 000101 hxxxxxx 0 " })).fila.curp).toBe("XXXX000101HXXXXXX0");
+    expect(prepararFilaEmpleado(base(1, { curp: "" })).error).toBeUndefined();
+    expect(prepararFilaEmpleado(base(1, { curp: "   " })).fila.curp).toBe("");
+  });
+
+  it("número de nómina: se recorta, '101.0' de Excel pasa a '101', y NUL o más de 50 caracteres rechazan la fila (identificador)", () => {
+    expect(prepararFilaEmpleado(base(1, { numero_nomina: "  N-7 " })).fila.numero_nomina).toBe("N-7");
+    expect(prepararFilaEmpleado(base(1, { numero_nomina: "101.0" })).fila.numero_nomina).toBe("101");
+    expect(prepararFilaEmpleado(base(1, { numero_nomina: 101 })).fila.numero_nomina).toBe("101");
+    expect(prepararFilaEmpleado(base(1, { numero_nomina: "0101" })).fila.numero_nomina).toBe("0101"); // los ceros se conservan
+    expect(prepararFilaEmpleado(base(1, { numero_nomina: "10.5" })).fila.numero_nomina).toBe("10.5");
+    expect(prepararFilaEmpleado(base(1, { numero_nomina: "a\u0000" })).error).toMatch(/Número de nómina contiene caracteres no permitidos/);
+    expect(prepararFilaEmpleado(base(1, { numero_nomina: "x".repeat(51) })).error).toMatch(/Número de nómina excede 50/);
+    expect(prepararFilaEmpleado(base(1, { numero_nomina: { a: 1 } })).error).toMatch(/Número de nómina/);
+  });
+
+  it("celda numérica de 16+ dígitos (_precision): CLABE/NSS/otros se omiten con advertencia 'guarda la columna como Texto'; CURP y nómina rechazan la fila (F-IE-4)", () => {
+    const r = prepararFilaEmpleado(base(1, { clabe: "123456789012345000", nss: "12345678901", _precision: ["clabe", "calle", 5] }));
+    expect(r.fila.clabe).toBe("");
+    expect(r.fila.nss).toBe("12345678901");
+    expect(r.advertencias).toEqual(expect.arrayContaining([
+      { campo: "clabe", valor_recibido: null, motivo: expect.stringMatching(/16 o más dígitos.*Texto/) },
+      { campo: "calle", valor_recibido: null, motivo: expect.stringMatching(/Texto/) },
+    ]));
+    expect(prepararFilaEmpleado(base(1, { _precision: ["numero_nomina"], numero_nomina: "1" })).error).toMatch(/Texto/);
+    expect(prepararFilaEmpleado(base(1, { _precision: ["curp"], curp: "XXXX000101HXXXXXX0" })).error).toBe("CURP inválida: no se puede identificar al empleado");
+    expect(prepararFilaEmpleado(base(1, { _precision: "clabe" })).advertencias).toEqual([]); // formato no válido: se ignora
   });
 
   it.each([
@@ -143,7 +170,7 @@ describe("prepararFilaEmpleado / esFechaValida", () => {
   });
 
   it("NUL en un campo opcional (F-IMP-1) es advertencia, nunca error 500; también en puesto, departamento, ubicación y jefe", () => {
-    const campos = ["calle", "numero_nomina", "puesto", "departamento", "ubicacion", "jefe_nomina", "curp", "motivo_baja", "genero", "parentesco_emergencia"];
+    const campos = ["calle", "puesto", "departamento", "ubicacion", "jefe_nomina", "motivo_baja", "genero", "parentesco_emergencia"];
     const r = prepararFilaEmpleado(base(1, Object.fromEntries(campos.map((c) => [c, "a\u0000b"]))));
     expect(r.error).toBeUndefined();
     expect(r.advertencias.map((a) => a.campo).sort()).toEqual([...campos].sort());
@@ -153,9 +180,9 @@ describe("prepararFilaEmpleado / esFechaValida", () => {
   });
 
   it("valores no convertibles (objetos) en campos opcionales son advertencia", () => {
-    const r = prepararFilaEmpleado(base(1, { curp: { a: 1 }, calle: [1], puesto: {} }));
+    const r = prepararFilaEmpleado(base(1, { calle: [1], puesto: {} }));
     expect(r.error).toBeUndefined();
-    expect(r.advertencias.map((a) => a.campo).sort()).toEqual(["calle", "curp", "puesto"]);
+    expect(r.advertencias.map((a) => a.campo).sort()).toEqual(["calle", "puesto"]);
   });
 
   it("nombresUnicos no devuelve textos con NUL (no llegan a ninguna consulta)", () => {
@@ -167,21 +194,21 @@ describe("Empleado.importarLote - modo omitir", () => {
   it("inserta TODAS las columnas del expediente, resuelve puesto, departamento y ubicación por nombre sin acentos", async () => {
     const bd = simularBd();
     const completa = base(1, {
-      apellido_materno: "Muestra", fecha_nacimiento: "1990-01-01", curp: CURP(1), rfc: "PRUA900101AB1", nss: "01234567890",
+      apellido_materno: "Muestra", fecha_nacimiento: "1990-01-01", curp: CURP(1), rfc: "XXXX000101XX1", nss: "01234567890",
       genero: "Femenino", estado_civil: "Soltero", escolaridad: "Licenciatura", estado_nacimiento: "Jalisco",
       celular_personal: "5512345678", correo_personal: "ana@ejemplo.com", telefono_emergencia: "5587654321",
       parentesco_emergencia: "Madre", contacto_emergencia: "Rosa", calle: "Calle 1", colonia: "Centro", codigo_postal: "06000",
       municipio: "Cuauhtémoc", estado_residencia: "Ciudad de México", numero_nomina: "N-1", fecha_imss: "2024-01-01",
       fecha_ingreso: "2024-01-02", fecha_renovacion: "2025-01-02", tipo_contrato: "Determinado", celular_corporativo: "5511112222",
       infonavit: "INF1", fonacot: "FON1", puesto: "ANALISTA", departamento: "tecnologías de la información", ubicacion: "planta norte",
-      banco: "Banorte", clabe: "072345678901234568", cp_fiscal: "06000", estatus: "suspendido", fecha_baja: "2026-01-01", motivo_baja: "Prueba",
+      banco: "Banorte", clabe: "072345678901234568", cp_fiscal: "06000", estatus: "baja", fecha_baja: "2026-01-01", motivo_baja: "Prueba",
     });
     const r = await Empleado.importarLote([completa], mapas());
     expect(r).toMatchObject({ insertados: 1, actualizados: 0, errores: [], advertencias: [], duplicados: 0, jefes_pendientes: [] });
     const e = bd.estado.empleados[0];
     expect(e).toMatchObject({
       nombre: "Ana1", curp: CURP(1), estado_nacimiento: "Jalisco", calle: "Calle 1", cp_fiscal: "06000", banco: "Banorte",
-      puesto_id: 7, departamento_id: 3, ubicacion_id: 2, estatus: "suspendido", fecha_baja: "2026-01-01", fecha_imss: "2024-01-01",
+      puesto_id: 7, departamento_id: 3, ubicacion_id: 2, estatus: "baja", fecha_baja: "2026-01-01", fecha_imss: "2024-01-01",
     });
     expect(Object.keys(e)).not.toContain("usuario_id_modificado");
     expect(r.sin_catalogo).toEqual({ puestos: [], departamentos: [], ubicaciones: [] });
@@ -212,19 +239,19 @@ describe("Empleado.importarLote - modo omitir", () => {
 
   it("advertencias con fila y nombre; la fila entra sin el campo inválido", async () => {
     const bd = simularBd();
-    const r = await Empleado.importarLote([base(1, { curp: "mala", celular_personal: "123", genero: "Femenino" })], mapas());
+    const r = await Empleado.importarLote([base(1, { numero_nomina: "N-1", rfc: "mal", celular_personal: "123", genero: "Femenino" })], mapas());
     expect(r.insertados).toBe(1);
-    expect(bd.estado.empleados[0].curp).toBeUndefined();
+    expect(bd.estado.empleados[0].rfc).toBeUndefined();
     expect(bd.estado.empleados[0].genero).toBe("Femenino");
     expect(r.advertencias).toEqual([
-      { fila: 2, nombre: "Ana1 Prueba", campo: "curp", valor_recibido: null, motivo: "formato inválido" },
+      { fila: 2, nombre: "Ana1 Prueba", campo: "rfc", valor_recibido: null, motivo: "formato inválido" },
       { fila: 2, nombre: "Ana1 Prueba", campo: "celular_personal", valor_recibido: "123", motivo: "teléfono inválido (deben ser 10 dígitos)" },
     ]);
   });
 
   it("limita las advertencias devueltas a 1000 por lote pero cuenta las omitidas", async () => {
     simularBd();
-    const filas = Array.from({ length: 150 }, (_, i) => base(i, { celular_personal: "1", telefono_emergencia: "2", celular_corporativo: "3", codigo_postal: "x", cp_fiscal: "y", genero: "z", banco: "w", estatus: "v" }));
+    const filas = Array.from({ length: 150 }, (_, i) => base(i, { numero_nomina: `N${i}`, celular_personal: "1", telefono_emergencia: "2", celular_corporativo: "3", codigo_postal: "x", cp_fiscal: "y", genero: "z", banco: "w", estatus: "v" }));
     const r = await Empleado.importarLote(filas, mapas());
     expect(r.advertencias).toHaveLength(1000);
     expect(r.advertencias_omitidas).toBe(150 * 8 - 1000);
@@ -249,13 +276,16 @@ describe("Empleado.importarLote - modo omitir", () => {
     ]);
   });
 
-  it("sin N+1 de comprobación: UNA consulta de claves por lote (con ANY) y ninguna transacción", async () => {
+  it("sin N+1 de comprobación: UNA consulta de claves por lote (con ANY) y una transacción con candado", async () => {
     const bd = simularBd();
     await Empleado.importarLote(Array.from({ length: 50 }, (_, i) => base(i, { curp: CURP(i), numero_nomina: `N${i}` })), mapas());
     const busquedas = bd.estado.sentencias.filter((s) => /FROM empleados WHERE LOWER\(curp\) = ANY/.test(s.sql));
     expect(busquedas).toHaveLength(1);
     expect(busquedas[0].params[0]).toHaveLength(50);
-    expect(bd.estado.transacciones).toEqual({ begin: 0, commit: 0, rollback: 0 });
+    // la búsqueda incluye también la nómina sin ceros a la izquierda (posible duplicado '0101' vs '101')
+    expect(busquedas[0].sql).toMatch(/OR LTRIM\(LOWER\(numero_nomina\), '0'\) = ANY\(\$3\)\s*ORDER BY id$/);
+    expect(busquedas[0].params[2]).toHaveLength(50);
+    expect(bd.estado.transacciones).toEqual({ begin: 1, commit: 1, rollback: 0 });
     expect(bd.estado.sentencias.some((s) => /SELECT LOWER\(curp\) AS curp FROM empleados WHERE curp IS NOT NULL/.test(s.sql))).toBe(false);
   });
 
@@ -278,7 +308,7 @@ describe("Empleado.importarLote - modo omitir", () => {
     simularBd({ fallaEn: (q, p) => /^INSERT INTO empleados/.test(q) && p[0] === "Ana2" });
     const r = await Empleado.importarLote([base(1), base(2), base(3)], mapas());
     expect(r.insertados).toBe(2);
-    expect(r.errores).toEqual([{ fila: 3, nombre: "Ana2 Prueba", error: "No se pudo insertar la fila" }]);
+    expect(r.errores).toEqual([{ fila: 3, nombre: "Ana2 Prueba", error: "No se pudo guardar la fila" }]);
     expect(JSON.stringify(r)).not.toMatch(/PostgreSQL|invalid input|syntax/i);
     expect(console.error).toHaveBeenCalled();
   });
@@ -401,19 +431,30 @@ describe("Empleado.importarLote - modo actualizar", () => {
     expect(bd.estado.liberados).toBe(1);
   });
 
-  it("un SQL inesperado hace ROLLBACK de TODO el lote (nada queda a medias) y propaga el error", async () => {
+  it("un SQL inesperado revierte SOLO esa fila (SAVEPOINT), se reporta con texto genérico y el lote se confirma (M9)", async () => {
     const bd = simularBd({
       empleados: existentes(),
       fallaEn: (q, p) => /^UPDATE empleados SET/.test(q) && p.includes("Falla"),
     });
-    const antes = JSON.stringify(bd.estado.empleados);
-    await expect(actualizar([
-      base(1, { curp: CURP(60) }), // se inserta antes del fallo
+    const r = await actualizar([
+      base(1, { curp: CURP(60) }), // alta
       base(2, { curp: CURP(1), calle: "Cambio ok" }),
       base(3, { curp: CURP(2), calle: "Falla" }),
-    ])).rejects.toThrow();
+    ]);
+    expect(r).toMatchObject({ insertados: 1, actualizados: 1 });
+    expect(r.errores).toEqual([{ fila: 4, nombre: "Ana3 Prueba", error: "No se pudo guardar la fila" }]);
+    expect(JSON.stringify(r)).not.toMatch(/PostgreSQL|simulado/);
+    expect(bd.estado.empleados.find((e) => e.id === 1).calle).toBe("Cambio ok");
+    expect(bd.estado.empleados.find((e) => e.id === 2).calle).toBeUndefined();
+    expect(bd.estado.empleados.some((e) => e.curp === CURP(60))).toBe(true);
+    expect(bd.estado.transacciones).toEqual({ begin: 1, commit: 1, rollback: 0 });
+    expect(bd.estado.liberados).toBe(1);
+  });
+
+  it("si falla el BEGIN o el candado (no una fila) el lote entero se deshace y el error se propaga", async () => {
+    const bd = simularBd({ empleados: existentes(), fallaEn: (q) => /^SELECT .* FROM empleados WHERE LOWER\(curp\)/.test(q) });
+    await expect(actualizar([base(1, { curp: CURP(1), calle: "X" })])).rejects.toThrow();
     expect(bd.estado.transacciones).toEqual({ begin: 1, commit: 0, rollback: 1 });
-    expect(JSON.stringify(bd.estado.empleados)).toBe(antes);
     expect(bd.estado.liberados).toBe(1);
   });
 
@@ -425,14 +466,41 @@ describe("Empleado.importarLote - modo actualizar", () => {
     expect(bd.estado.transacciones.commit).toBe(1);
   });
 
-  it("estatus y fecha de baja se actualizan desde el archivo; un estatus inválido es advertencia", async () => {
-    const bd = simularBd({ empleados: existentes() });
+  it("A3: en modo actualizar se IGNORAN estatus, fecha_baja y motivo_baja con una advertencia por fila (no reactiva ni da de baja)", async () => {
+    const bd = simularBd({ empleados: [
+      { id: 1, nombre: "Ana", apellido_paterno: "A", curp: CURP(1), estatus: "baja", fecha_baja: "2026-01-01", motivo_baja: "Renuncia" },
+      { id: 2, nombre: "Beto", apellido_paterno: "B", curp: CURP(2), estatus: "activo" },
+    ] });
     const r = await actualizar([
-      base(1, { curp: CURP(1), estatus: "Baja", fecha_baja: "2026-03-01", motivo_baja: "Renuncia" }),
-      base(2, { curp: CURP(2), estatus: "volando" }),
+      { _fila: 2, nombre: "Ana", apellido_paterno: "A", curp: CURP(1), estatus: "Activo", calle: "Nueva" },
+      { _fila: 3, nombre: "Beto", apellido_paterno: "B", curp: CURP(2), estatus: "baja", fecha_baja: "2026-03-01", motivo_baja: "X" },
+      { _fila: 4, nombre: "Beto", apellido_paterno: "B", curp: CURP(2), calle: "otra" },
     ]);
-    expect(bd.estado.empleados[0]).toMatchObject({ estatus: "baja", fecha_baja: "2026-03-01", motivo_baja: "Renuncia" });
-    expect(r.advertencias.map((a) => a.campo)).toEqual(["estatus"]);
+    expect(bd.estado.empleados[0]).toMatchObject({ estatus: "baja", fecha_baja: "2026-01-01", motivo_baja: "Renuncia", calle: "Nueva" });
+    expect(bd.estado.empleados[1].estatus).toBe("activo");
+    expect(bd.estado.empleados[1].fecha_baja).toBeUndefined();
+    expect(r.actualizados).toBe(1);
+    expect(r.sin_cambios).toBe(1);
+    expect(r.advertencias.map((a) => [a.fila, a.campo, a.motivo])).toEqual([
+      [2, "estatus", expect.stringMatching(/pantalla de Empleados/)], [3, "estatus", expect.stringMatching(/pantalla de Empleados/)],
+    ]);
+  });
+
+  it("A3: al CREAR se respetan estatus y baja; una baja sin fecha se crea como activo con advertencia; fecha de baja sin estatus baja se ignora", async () => {
+    const bd = simularBd();
+    const r = await Empleado.importarLote([
+      base(1, { curp: CURP(1), estatus: "baja", fecha_baja: "2026-03-01", motivo_baja: "Renuncia" }),
+      base(2, { curp: CURP(2), estatus: "baja" }),
+      base(3, { curp: CURP(3), estatus: "suspendido" }),
+      base(4, { curp: CURP(4), fecha_baja: "2026-03-01", motivo_baja: "X" }),
+    ], mapas());
+    expect(r.insertados).toBe(4);
+    const por = (c) => bd.estado.empleados.find((e) => e.curp === c);
+    expect(por(CURP(1))).toMatchObject({ estatus: "baja", fecha_baja: "2026-03-01", motivo_baja: "Renuncia" });
+    expect(por(CURP(2)).estatus).toBe("activo");
+    expect(por(CURP(3)).estatus).toBe("suspendido");
+    expect(por(CURP(4)).fecha_baja).toBeUndefined();
+    expect(r.advertencias.map((a) => a.fila)).toEqual([3, 5]);
   });
 
   it("puesto no encontrado en una actualización: se conserva el anterior y se avisa en sin_catalogo", async () => {
@@ -443,6 +511,167 @@ describe("Empleado.importarLote - modo actualizar", () => {
     expect(bd.estado.empleados[0].puesto_id).toBe(7);
     expect(r.sin_catalogo.puestos).toEqual([{ nombre: "Inexistente", filas: 1 }]);
     expect(r.sin_catalogo.ubicaciones).toEqual([{ nombre: "Nada", filas: 1 }]);
+  });
+});
+
+describe("integridad del modo actualizar (carga real de empleados)", () => {
+  const nombre = { nombre: "Ana", apellido_paterno: "Vieja" };
+  const existentes = () => [
+    { id: 1, ...nombre, curp: CURP(1), numero_nomina: "101", nss: "11111111111", clabe: "000000000000000001", estatus: "activo" },
+    { id: 2, nombre: "Beto", apellido_paterno: "B", curp: CURP(2), numero_nomina: "7", estatus: "activo" },
+  ];
+  const actualizar = (filas) => Empleado.importarLote(filas, mapas(), { modo: "actualizar" });
+  const omitir = (filas) => Empleado.importarLote(filas, mapas(), { modo: "omitir" });
+  const sinTocar = (bd, antes) => expect(JSON.stringify(bd.estado.empleados)).toBe(antes);
+
+  it("A1: CURP de 17 caracteres o con un error NO inserta ni actualiza (71 se queda en 71) en ambos modos", async () => {
+    const bd = simularBd({ empleados: existentes() });
+    const antes = JSON.stringify(bd.estado.empleados);
+    for (const f of [actualizar, omitir]) {
+      const r = await f([{ _fila: 2, ...nombre, curp: CURP(1).slice(0, 17), calle: "X" }, { _fila: 3, ...nombre, curp: `${CURP(1)}Z`, numero_nomina: "101", calle: "X" }]);
+      expect(r).toMatchObject({ insertados: 0, actualizados: 0, duplicados: 0 });
+      expect(r.errores.map((e) => e.error)).toEqual(Array(2).fill("CURP inválida: no se puede identificar al empleado"));
+    }
+    sinTocar(bd, antes);
+    expect(bd.estado.sentencias.filter((s) => /^(INSERT|UPDATE)/.test(s.sql))).toHaveLength(0);
+  });
+
+  it("A1: en modo actualizar una fila sin CURP ni nómina es ERROR 'sin identificador' y NUNCA se inserta", async () => {
+    const bd = simularBd({ empleados: existentes() });
+    const r = await actualizar([{ _fila: 2, ...nombre, calle: "X" }, { _fila: 3, ...nombre, numero_nomina: "   ", curp: "  " }]);
+    expect(r).toMatchObject({ insertados: 0, actualizados: 0 });
+    expect(r.errores).toHaveLength(2);
+    expect(r.errores[0].error).toMatch(/^Sin identificador/);
+    expect(bd.estado.empleados).toHaveLength(2);
+  });
+
+  it("A1: en modo omitir/crear sin CURP ni nómina SÍ se crea, con la advertencia de que reimportar duplicará", async () => {
+    const bd = simularBd();
+    const r = await omitir([{ _fila: 2, ...nombre }]);
+    expect(r.insertados).toBe(1);
+    expect(bd.estado.empleados).toHaveLength(1);
+    expect(r.advertencias).toEqual([{ fila: 2, nombre: "Ana Vieja", campo: "numero_nomina", valor_recibido: null, motivo: expect.stringMatching(/sin CURP ni número de nómina.*duplicará/) }]);
+  });
+
+  it("A1: nómina con un cero de más o de menos ('0101' vs '101', '007' vs '7') = posible duplicado: ERROR, no inserta ni actualiza, en ambos modos", async () => {
+    const bd = simularBd({ empleados: existentes() });
+    const antes = JSON.stringify(bd.estado.empleados);
+    for (const f of [actualizar, omitir]) {
+      const r = await f([
+        { _fila: 2, ...nombre, numero_nomina: "0101", calle: "X" },
+        { _fila: 3, nombre: "Beto", apellido_paterno: "B", numero_nomina: "007", calle: "X" },
+        { _fila: 4, nombre: "Otro", apellido_paterno: "C", numero_nomina: "00101" },
+      ]);
+      expect(r).toMatchObject({ insertados: 0, actualizados: 0, duplicados: 0 });
+      expect(r.errores.map((e) => e.error)).toEqual(Array(3).fill(expect.stringMatching(/^Posible duplicado.*ceros a la izquierda/)));
+    }
+    sinTocar(bd, antes);
+  });
+
+  it("A1: la nómina exacta sigue funcionando (con espacios y con '.0' de Excel) y no es 'posible duplicado'", async () => {
+    const bd = simularBd({ empleados: existentes() });
+    const r = await actualizar([{ _fila: 2, ...nombre, numero_nomina: " 101.0 ", calle: "Nueva" }, { _fila: 3, nombre: "Beto", apellido_paterno: "B", numero_nomina: 7, calle: "Otra" }]);
+    expect(r).toMatchObject({ actualizados: 2, errores: [] });
+    expect(bd.estado.empleados[0].calle).toBe("Nueva");
+  });
+
+  it("A1: posible duplicado también entre filas del mismo lote ('N-1' no choca con 'N-01'; '0050' después de '50' sí)", async () => {
+    simularBd();
+    const r = await omitir([base(1, { numero_nomina: "50" }), base(2, { numero_nomina: "0050" }), base(3, { numero_nomina: "N-1" }), base(4, { numero_nomina: "N-01" })]);
+    expect(r.insertados).toBe(3);
+    expect(r.errores).toHaveLength(1);
+    expect(r.errores[0]).toMatchObject({ fila: 3, error: expect.stringMatching(/^Posible duplicado/) });
+  });
+
+  it("M2: una CURP o nómina que coincide con VARIOS empleados es ERROR (nunca se elige uno), en ambos modos", async () => {
+    const bd = simularBd({ empleados: [
+      ...existentes(),
+      { id: 3, nombre: "Dup", apellido_paterno: "A", curp: CURP(1), numero_nomina: "900" },
+      { id: 4, nombre: "Dup", apellido_paterno: "B", curp: CURP(4), numero_nomina: "7" },
+    ] });
+    const antes = JSON.stringify(bd.estado.empleados);
+    for (const f of [actualizar, omitir]) {
+      const r = await f([{ _fila: 2, ...nombre, curp: CURP(1), calle: "X" }, { _fila: 3, ...nombre, numero_nomina: "7", calle: "X" }]);
+      expect(r).toMatchObject({ actualizados: 0, duplicados: 0, insertados: 0 });
+      expect(r.errores.map((e) => e.error)).toEqual([
+        "La CURP coincide con 2 empleados; resuelve el duplicado antes de importar",
+        "El número de nómina coincide con 2 empleados; resuelve el duplicado antes de importar",
+      ]);
+    }
+    sinTocar(bd, antes);
+  });
+
+  it("A2: NSS de 10 dígitos o CLABE corta NO pisan el valor existente (se omiten con advertencia); uno válido sí actualiza", async () => {
+    const bd = simularBd({ empleados: existentes() });
+    const r = await actualizar([
+      { _fila: 2, ...nombre, curp: CURP(1), nss: "2222222222", clabe: "12345" },
+      { _fila: 3, ...nombre, curp: CURP(1), nss: "22222222222" },
+    ]);
+    expect(r.advertencias.map((a) => [a.fila, a.campo, a.valor_recibido])).toEqual([[2, "nss", null], [2, "clabe", null]]);
+    expect(r).toMatchObject({ actualizados: 0, sin_cambios: 1, duplicados: 1 }); // la 2.ª fila del mismo empleado es repetida
+    expect(bd.estado.empleados[0]).toMatchObject({ nss: "11111111111", clabe: "000000000000000001" });
+  });
+
+  it("A2: una celda numérica de 16+ dígitos (_precision) en clabe no pisa la CLABE existente", async () => {
+    const bd = simularBd({ empleados: existentes() });
+    const r = await actualizar([{ _fila: 2, ...nombre, curp: CURP(1), clabe: "123456789012345000", _precision: ["clabe"] }]);
+    expect(r.advertencias[0]).toMatchObject({ campo: "clabe", motivo: expect.stringMatching(/Texto/) });
+    expect(bd.estado.empleados[0].clabe).toBe("000000000000000001");
+  });
+
+  it("M1: cada transacción de lote (omitir y actualizar) toma el candado de importación ANTES de leer el estado", async () => {
+    for (const modo of ["omitir", "actualizar"]) {
+      const bd = simularBd({ empleados: existentes() });
+      await Empleado.importarLote([base(1, { curp: CURP(1) })], mapas(), { modo });
+      const sql = bd.estado.sentencias.map((s) => s.sql);
+      expect(sql[0]).toBe("BEGIN");
+      expect(sql[1]).toMatch(/^SELECT pg_advisory_xact_lock/);
+      expect(bd.estado.candados).toEqual([[4410, 1]]);
+      expect(sql.findIndex((x) => /FROM empleados WHERE LOWER\(curp\)/.test(x))).toBeGreaterThan(1);
+    }
+    const bd = simularBd({ empleados: [
+      { id: 1, nombre: "A", apellido_paterno: "A", curp: CURP(1), numero_nomina: "N1" },
+    ] });
+    await Empleado.asignarJefes([{ empleado_id: 1, fila: 2, jefe_nomina: "N1", jefe_curp: "" }]);
+    expect(bd.estado.candados).toEqual([[4410, 1]]); // la segunda pasada toma el MISMO candado
+  });
+
+  it("M1: las escrituras van en orden determinista (actualizaciones por id, altas por clave) sea cual sea el orden del archivo", async () => {
+    const filas = [
+      { _fila: 2, nombre: "Beto", apellido_paterno: "B", curp: CURP(2), calle: "b" },
+      { _fila: 3, nombre: "Ana", apellido_paterno: "Vieja", curp: CURP(1), calle: "a" },
+      base(7, { curp: CURP(70) }), base(5, { curp: CURP(50) }), base(6, { curp: CURP(60) }),
+    ];
+    const ordenes = [];
+    for (const lista of [filas, [...filas].reverse()]) {
+      const bd = simularBd({ empleados: existentes() });
+      const r = await actualizar(lista);
+      expect(r).toMatchObject({ actualizados: 2, insertados: 3, errores: [] });
+      ordenes.push(bd.estado.sentencias.filter((s) => /^(INSERT|UPDATE)/.test(s.sql)).map((s) => `${s.sql.slice(0, 6)}${JSON.stringify(s.params)}`));
+    }
+    expect(ordenes[0]).toEqual(ordenes[1]);
+    expect(ordenes[0][0]).toMatch(/^UPDATE.*"a",1\]/); // la actualización del id 1 va antes que la del id 2
+  });
+
+  it("los resultados salen en el orden del archivo aunque se escriba en otro orden", async () => {
+    simularBd({ empleados: existentes() });
+    const r = await actualizar([
+      { _fila: 9, nombre: "Beto", apellido_paterno: "B", curp: CURP(2), calle: "b" },
+      { _fila: 5, nombre: "Ana", apellido_paterno: "Vieja", curp: CURP(1), calle: "a" },
+      { _fila: 3, nombre: "Z", apellido_paterno: "Z", numero_nomina: "" },
+    ]);
+    expect(r.actualizados_detalle.map((d) => d.fila)).toEqual([5, 9]);
+    expect(r.errores[0].fila).toBe(3);
+  });
+
+  it("F-IE-6: el log de una fila con error SQL no imprime la fila: solo número, SQLSTATE y constraint", async () => {
+    simularBd({
+      fallaEn: (q) => { if (/^INSERT INTO empleados/.test(q)) { const e = new Error('invalid input syntax for type date: "SECRETO-PRIVADO"'); e.code = "22007"; e.constraint = "c_x"; e.detail = "Key (curp)=(XXXX000101HXXXXXX0) ya existe"; throw e; } return false; },
+    });
+    await omitir([base(1, { calle: "Calle Privada 99", curp: CURP(1) })]);
+    const log = console.error.mock.calls.map((c) => c.map(String).join(" ")).join("\n");
+    expect(log).toMatch(/fila 2: tipo=Error código=22007 constraint=c_x/);
+    expect(log).not.toMatch(/SECRETO|Privada|XXXX0001|Ana1|ya existe/);
   });
 });
 
@@ -540,6 +769,25 @@ describe("jefe inmediato: pares pendientes y segunda pasada", () => {
     expect(bd.estado.liberados).toBe(1);
   });
 
+  it("M10: un jefe con estatus distinto de activo (baja, suspendido) NO se asigna: advertencia", async () => {
+    const e = equipo();
+    e[0].estatus = "baja"; e[2].estatus = "suspendido";
+    const bd = simularBd({ empleados: e });
+    const r = await Empleado.asignarJefes([par(2, "N1"), par(4, "N3"), par(1, "N4")]);
+    expect(r).toMatchObject({ asignados: 1, no_activos: 2 });
+    expect([jefeDe(bd, 2), jefeDe(bd, 4), jefeDe(bd, 1)]).toEqual([null, null, 4]);
+    expect(r.advertencias.map((a) => a.motivo)).toEqual([expect.stringMatching(/no está activo/), expect.stringMatching(/no está activo/)]);
+  });
+
+  it("M2: un jefe por nómina o CURP que coincide con varios empleados es advertencia (ambiguo) y no se asigna", async () => {
+    const e = equipo();
+    e.push({ id: 5, nombre: "Eva", apellido_paterno: "E", curp: CURP(5), numero_nomina: "n1" }, { id: 6, nombre: "Fer", apellido_paterno: "F", curp: CURP(2), numero_nomina: "N6" });
+    const bd = simularBd({ empleados: e });
+    const r = await Empleado.asignarJefes([par(3, "N1"), par(4, "", CURP(2).toLowerCase()), par(1, "N6")]);
+    expect(r).toMatchObject({ asignados: 1, ambiguos: 2 });
+    expect([jefeDe(bd, 3), jefeDe(bd, 4), jefeDe(bd, 1)]).toEqual([null, null, 6]);
+  });
+
   it("validarParesJefes descarta pares malformados y topa en 500", () => {
     expect(validarParesJefes(null).error).toBeTruthy();
     expect(validarParesJefes(Array.from({ length: 501 }, () => ({}))).error).toMatch(/Máximo 500/);
@@ -572,15 +820,15 @@ describe("auditoría de la importación", () => {
     const registrarAccion = jest.fn().mockResolvedValue(null);
     const res = await conAuditoria(
       registrarAccion,
-      { filas: [base(1, { curp: CURP(1) }), base(2, { fecha_ingreso: "xx" }), base(3, { curp: "mala" })] },
+      { filas: [base(1, { curp: CURP(1) }), base(2, { fecha_ingreso: "xx" }), base(3, { curp: "mala", celular_personal: "1" })] },
       { headers: { "x-forwarded-for": "1.2.3.4, " + "9.9.9.9, ".repeat(20), "user-agent": "t" } }
     );
     expect(registrarAccion).toHaveBeenCalledTimes(1);
     const [rq, modulo, tabla, id, accion, previos, nuevos] = registrarAccion.mock.calls[0];
     expect([modulo, tabla, accion, previos, id]).toEqual(["rh", "empleados", "IMPORTAR_EMPLEADOS", null, "importacion"]);
     expect(accion.length).toBeLessThanOrEqual(20);
-    expect(nuevos).toEqual({ filas_recibidas: 3, modo: "omitir", insertados: 2, actualizados: 0, sin_cambios: 0, duplicados: 0, errores: 1, advertencias: 1 });
-    expect(JSON.stringify(nuevos)).not.toMatch(/Ana|PRUA/);
+    expect(nuevos).toEqual({ filas_recibidas: 3, modo: "omitir", insertados: 1, actualizados: 0, sin_cambios: 0, duplicados: 0, errores: 2, advertencias: 0 });
+    expect(JSON.stringify(nuevos)).not.toMatch(/Ana|XXXX/);
     expect(rq.headers["x-forwarded-for"].length).toBe(45);
     expect(res.json.mock.calls[0][0].exito).toBe(true);
   });
@@ -593,7 +841,7 @@ describe("auditoría de la importación", () => {
 
 describe("POST /empleados/importar (controlador)", () => {
   const filaCompleta = (i) => base(i, {
-    apellido_materno: "Muestra", curp: CURP(i), rfc: "PRUA900101AB1", nss: "12345678901", numero_nomina: `NOM-${i}`,
+    apellido_materno: "Muestra", curp: CURP(i), rfc: "XXXX000101XX1", nss: "12345678901", numero_nomina: `NOM-${i}`,
     genero: "Femenino", estado_civil: "Soltero", escolaridad: "Licenciatura", tipo_contrato: "Indeterminado",
     fecha_nacimiento: "1990-01-01", fecha_ingreso: "2024-01-15", puesto: "Analista", departamento: "Tecnologías de la Información",
     ubicacion: "Planta Norte", correo_personal: "ana.prueba@ejemplo.com", celular_personal: "5512345678", telefono_emergencia: "5587654321",
@@ -641,12 +889,12 @@ describe("POST /empleados/importar (controlador)", () => {
   it("NUL en puesto/departamento/ubicación/jefe/campos NO produce 500: advertencias (F-IMP-1)", async () => {
     simularBd();
     const res = await request(app).post("/api/empleados/importar").send({
-      filas: [base(1, { puesto: "A\u0000B", departamento: "\u0000", ubicacion: "x\u0000", jefe_nomina: "\u0000", calle: "a\u0000b", curp: "\u0000" }), base(2, { nombre: "A\u0000" })],
+      filas: [base(1, { numero_nomina: "N-1", puesto: "A\u0000B", departamento: "\u0000", ubicacion: "x\u0000", jefe_nomina: "\u0000", calle: "a\u0000b" }), base(2, { nombre: "A\u0000" }), base(3, { curp: "\u0000" }), base(4, { numero_nomina: "\u0000" })],
     });
     expect(res.status).toBe(200);
     expect(res.body.datos.insertados).toBe(1);
-    expect(res.body.datos.advertencias.map((a) => a.campo).sort()).toEqual(["calle", "curp", "departamento", "jefe_nomina", "puesto", "ubicacion"]);
-    expect(res.body.datos.errores).toHaveLength(1);
+    expect(res.body.datos.advertencias.map((a) => a.campo).sort()).toEqual(["calle", "departamento", "jefe_nomina", "puesto", "ubicacion"]);
+    expect(res.body.datos.errores).toHaveLength(3); // nombre, CURP y nómina con NUL: error de la fila, nunca 500
     const p = await request(app).post("/api/puestos/importar").send({ filas: [{ nombre: "A\u0000B" }] });
     expect(p.status).not.toBe(500);
   });
@@ -655,7 +903,7 @@ describe("POST /empleados/importar (controlador)", () => {
     simularBd();
     const todas = Array.from({ length: 1000 }, (_, i) => {
       if (i % 10 === 0) return base(i, { fecha_ingreso: "45305.7" }); // error
-      if (i % 10 === 1) return base(i, { curp: "X".repeat(25) }); // advertencia: entra sin CURP
+      if (i % 10 === 1) return base(i, { numero_nomina: `U${i}`, rfc: "X".repeat(25) }); // advertencia: entra sin RFC
       if (i % 10 === 2) return base(i, { numero_nomina: "REPE" }); // duplicada desde la 2.ª
       return base(i, { curp: CURP(i) });
     });
@@ -682,10 +930,17 @@ describe("POST /empleados/importar (controlador)", () => {
 
   it("en modo actualizar un SQL inesperado da 500 genérico y deshace el lote", async () => {
     const bd = simularBd({ fallaEn: (q) => /^INSERT INTO empleados/.test(q) });
-    const res = await request(app).post("/api/empleados/importar").send({ filas: [base(1)], modo: "actualizar" });
-    expect(res.status).toBe(500);
-    expect(res.body).toEqual({ exito: false, mensaje: "Error al importar empleados" });
-    expect(bd.estado.transacciones.rollback).toBe(1);
+    const res = await request(app).post("/api/empleados/importar").send({ filas: [base(1, { curp: CURP(1) })], modo: "actualizar" });
+    // el error SQL de UNA fila ya no tumba el lote (SAVEPOINT): 200 con el error de esa fila y texto genérico
+    expect(res.status).toBe(200);
+    expect(res.body.datos.errores).toEqual([{ fila: 2, nombre: "Ana1 Prueba", error: "No se pudo guardar la fila" }]);
+    expect(bd.estado.transacciones).toMatchObject({ begin: 1, commit: 1 });
+    // y un fallo del lote (la lectura de estado) sí da 500 genérico y ROLLBACK
+    const bd2 = simularBd({ fallaEn: (q) => /FROM empleados WHERE LOWER\(curp\)/.test(q) });
+    const r2 = await request(app).post("/api/empleados/importar").send({ filas: [base(1, { curp: CURP(1) })], modo: "actualizar" });
+    expect(r2.status).toBe(500);
+    expect(r2.body).toEqual({ exito: false, mensaje: "Error al importar empleados" });
+    expect(bd2.estado.transacciones.rollback).toBe(1);
   });
 
   it("filas no objeto o con puesto numérico no revientan el controlador", async () => {
@@ -738,6 +993,53 @@ describe("POST /empleados/importar/jefes (controlador)", () => {
   });
 });
 
+
+describe("Descargar empleados actuales (GET /empleados/exportar-importacion)", () => {
+  it("F-IE-3: orden ÚNICO (nombre, apellidos, id), fechas con to_char en SQL (sin depender de la zona horaria) y sin paginar", async () => {
+    grupo.query.mockResolvedValue({ rows: [] });
+    await Empleado.listarParaExportar();
+    const sql = grupo.query.mock.calls[0][0].replace(/\s+/g, " ");
+    expect(sql).toMatch(/ORDER BY e\.nombre, e\.apellido_paterno, e\.apellido_materno NULLS FIRST, e\.id\s*$/);
+    for (const c of ["fecha_nacimiento", "fecha_imss", "fecha_ingreso", "fecha_renovacion", "fecha_baja"]) {
+      expect(sql).toContain(`to_char(e.${c}, 'YYYY-MM-DD') AS ${c}`);
+    }
+    expect(sql).not.toMatch(/LIMIT|OFFSET/);
+    expect(sql).toMatch(/AS jefe_nomina/);
+    expect(sql).toMatch(/AS jefe_curp/);
+  });
+
+  it("M8: exige el mismo permiso que el listado (rh/Empleados/consulta) y la ruta va antes de /:id", () => {
+    const fuente = require("fs").readFileSync(require("path").join(__dirname, "../routes/empleados.routes.js"), "utf8");
+    expect(fuente).toMatch(/router\.get\("\/exportar-importacion", verificarPermiso\("rh", "Empleados", "consulta"\), ControladorEmpleado\.exportarParaImportacion\)/);
+    expect(fuente.indexOf("/exportar-importacion")).toBeLessThan(fuente.indexOf('"/:id"'));
+  });
+
+  it("responde con la lista y registra la auditoría EXPORTAR_EMPLEADOS (<= 20 caracteres) solo con el número de filas", async () => {
+    jest.resetModules();
+    const registrarAccion = jest.fn().mockResolvedValue(null);
+    jest.doMock("../../../auditoria/backend/services/auditoria.service", () => ({ registrarAccion }));
+    const C = require("../controllers/empleado.controller");
+    const g = require("../../../portal/backend/config/database").grupo;
+    g.query.mockResolvedValue({ rows: [{ nombre: "Ana", curp: "XXXX000101HXXXXXX0" }, { nombre: "Beto", curp: null }] });
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    await C.exportarParaImportacion({ user: { usuario_id: 5 }, headers: {}, socket: {} }, res);
+    expect(res.json.mock.calls[0][0]).toEqual({ exito: true, datos: { empleados: [{ nombre: "Ana", curp: "XXXX000101HXXXXXX0" }, { nombre: "Beto", curp: null }] } });
+    const [, modulo, tabla, , accion, previos, nuevos] = registrarAccion.mock.calls[0];
+    expect([modulo, tabla, accion, previos]).toEqual(["rh", "empleados", "EXPORTAR_EMPLEADOS", null]);
+    expect(accion.length).toBeLessThanOrEqual(20);
+    expect(nuevos).toEqual({ filas: 2 });
+    expect(JSON.stringify(nuevos)).not.toMatch(/Ana|XXXX/);
+    jest.dontMock("../../../auditoria/backend/services/auditoria.service");
+  });
+
+  it("un error de BD responde 500 genérico y el log solo trae el código (sin datos)", async () => {
+    grupo.query.mockRejectedValue(Object.assign(new Error('valor "SECRETO-PRIVADO"'), { code: "XX000" }));
+    const res = await request(app).get("/api/empleados/exportar-importacion");
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ exito: false, mensaje: "Error al exportar empleados" });
+    expect(console.error.mock.calls.map((c) => c.join(" ")).join("\n")).not.toMatch(/SECRETO/);
+  });
+});
 
 describe("importadores de catálogos: errores claros y sin texto de BD", () => {
   it("puestos: duplicado con detalle, error genérico por fila y 500 sin error.message", async () => {

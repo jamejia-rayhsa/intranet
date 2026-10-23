@@ -35,6 +35,20 @@ describe("Departamentos - cupo_vacaciones", () => {
     expect(grupo.query.mock.calls[0][0]).toMatch(/SELECT d\.\*/);
   });
 
+  it("B3: turno_actual solo se pide si el usuario tiene rh/Turnos consulta", async () => {
+    const { tienePermiso } = require("../../../portal/backend/middleware/permisos.middleware");
+    grupo.query.mockResolvedValue({ rows: [{ id: 1, nombre: "TI" }] });
+    tienePermiso.mockResolvedValueOnce(true);
+    await request(app).get("/api/departamentos");
+    expect(tienePermiso).toHaveBeenLastCalledWith(expect.objectContaining({ usuario_id: 5 }), "rh", "Turnos", "consulta");
+    expect(grupo.query.mock.calls[0][0]).toMatch(/turno_actual/);
+    grupo.query.mockClear();
+    tienePermiso.mockResolvedValueOnce(false);
+    const res = await request(app).get("/api/departamentos");
+    expect(res.status).toBe(200);
+    expect(grupo.query.mock.calls[0][0]).not.toMatch(/turno|LATERAL/);
+  });
+
   it("PUT actualiza el cupo con SQL parametrizado (acepta cadena numérica)", async () => {
     grupo.query.mockResolvedValue({ rows: [{ id: 1, cupo_vacaciones: 3 }] });
     const res = await request(app).put("/api/departamentos/1").send({ cupo_vacaciones: "3" });
@@ -104,7 +118,7 @@ describe("Departamentos - errores genéricos (sin error.message)", () => {
     expect(res.body.datos.errores).toEqual([{ fila: null, nombre: "X", error: "No se pudo guardar la fila" }]);
     expect(JSON.stringify(res.body)).not.toContain("duplicate key");
     expect(cliente.query).toHaveBeenCalledWith("COMMIT");
-});
+  });
 });
 
 describe("Departamentos - eliminar con restricciones", () => {

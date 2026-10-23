@@ -1,5 +1,6 @@
 const { validarCuerpoImportacion, normalizarClave } = require("../utils/importarEmpleados");
 const { auditarImportacion } = require("../utils/auditoriaImportacion");
+const { describirErrorSql } = require("../utils/logSeguro");
 const { tienePermiso } = require("../../../portal/backend/middleware/permisos.middleware");
 const Turno = require("../models/turno.model");
 const Departamento = require("../models/departamento.model");
@@ -18,7 +19,8 @@ const MENSAJE_CUPO = "cupo_vacaciones debe ser un entero mayor o igual a 1";
 const ControladorDepartamento = {
   async listar(req, res) {
     try {
-      const departamentos = await Departamento.obtenerTodos();
+      const conTurno = await tienePermiso(req.user, "rh", "Turnos", "consulta");
+      const departamentos = await Departamento.obtenerTodos({ conTurno: !!conTurno });
       res.json({ exito: true, datos: departamentos });
     } catch (error) {
       console.error("[departamentos]", error);
@@ -147,7 +149,7 @@ const ControladorDepartamento = {
 
       res.json({ exito: true, datos: resultado });
     } catch (error) {
-      console.error("[departamentos]", error);
+      console.error(`[departamentos] importar: ${describirErrorSql(error)}`);
       res.status(500).json({ exito: false, mensaje: "Error al importar departamentos" });
     }
   },

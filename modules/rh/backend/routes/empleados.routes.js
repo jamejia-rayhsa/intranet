@@ -11,6 +11,7 @@ const router = Router();
 router.use(authenticateJWT);
 
 router.get("/", verificarPermiso("rh", "Empleados", "consulta"), ControladorEmpleado.listar);
+router.get("/exportar-importacion", verificarPermiso("rh", "Empleados", "consulta"), ControladorEmpleado.exportarParaImportacion);
 router.post("/importar", verificarPermiso("rh", "Empleados", "edicion"), ControladorEmpleado.importar);
 router.post("/importar/jefes", verificarPermiso("rh", "Empleados", "edicion"), ControladorEmpleado.importarJefes);
 router.get("/mi-perfil", ControladorEmpleado.obtenerPorUsuario);

@@ -35,14 +35,17 @@ function simularBd({ departamentos = [], fallaEn } = {}) {
     query: jest.fn(async (sql, p = []) => {
       const q = sql.replace(/\s+/g, " ").trim();
       estado.log.push(q);
-      if (fallaEn && fallaEn(q, p)) throw new Error("fallo simulado de PostgreSQL");
+      // Como PostgreSQL: tras un error la transacción queda abortada hasta ROLLBACK [TO SAVEPOINT]
+      if (/^ROLLBACK/.test(q)) estado.abortada = false;
+      if (estado.abortada && !/^(ROLLBACK|COMMIT)/.test(q)) throw new Error("current transaction is aborted");
+      if (fallaEn && fallaEn(q, p)) { estado.abortada = true; throw new Error("fallo simulado de PostgreSQL"); }
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
       let m = /^SAVEPOINT (\w+)/.exec(q);
       if (m) { estado.respaldo.push([m[1], JSON.stringify(estado.departamentos)]); return { rows: [] }; }
       m = /^ROLLBACK TO SAVEPOINT (\w+)/.exec(q);
       if (m) { estado.departamentos = JSON.parse(estado.respaldo.find((r) => r[0] === m[1])[1]); return { rows: [] }; }
       if (/^RELEASE SAVEPOINT/.test(q)) return { rows: [] };
-      if (/^SELECT id, nombre, descripcion, area_id, cupo_vacaciones FROM departamentos/.test(q)) return { rows: estado.departamentos };
+      if (/^SELECT id, nombre, descripcion, area_id, cupo_vacaciones, activo FROM departamentos/.test(q)) return { rows: estado.departamentos };
       if (/^INSERT INTO departamentos/.test(q)) {
         const d = { id: estado.sig++, nombre: p[0], descripcion: p[1], area_id: p[2], cupo_vacaciones: p[3] === null ? 1 : p[3] };
         estado.departamentos.push(d);
@@ -287,6 +290,85 @@ describe("POST /departamentos/importar - turno", () => {
     const res = await importar([f(1)]);
     expect(res.status).toBe(500);
     expect(JSON.stringify(res.body)).not.toMatch(/secreto/);
+  });
+});
+
+describe("integridad de la importación de departamentos", () => {
+  const depto = { id: 1, nombre: "Contabilidad", descripcion: null, area_id: null, cupo_vacaciones: 1, activo: true };
+
+  it("M4: si un SAVEPOINT se deshace, la memoria vuelve al estado previo (la fila siguiente NO ve cambios que ya no existen)", async () => {
+    const bd = simularBd({ departamentos: [{ ...depto }] });
+    TurnoAsignacion.asignar.mockRejectedValueOnce(new ErrorAsistencia(409, "La vigencia se traslapa con otra asignación"));
+    const res = await importar([
+      { _fila: 2, nombre: "Contabilidad", cupo_vacaciones: "5", turno: "Nocturno" }, // el turno falla: el cupo 5 se deshace
+      { _fila: 3, nombre: "contabilidad", cupo_vacaciones: "5" },                     // debe escribirse (la BD sigue en 1)
+    ], "actualizar");
+    expect(res.body.datos).toMatchObject({ actualizados: 1, sin_cambios: 0, duplicados: 0 });
+    expect(res.body.datos.errores).toHaveLength(1);
+    expect(bd.estado.departamentos[0].cupo_vacaciones).toBe(5);
+  });
+
+  it("M4: un alta que se deshace (el INSERT fue bien pero el turno falló) deja el nombre libre para la fila siguiente", async () => {
+    const bd = simularBd();
+    TurnoAsignacion.asignar.mockRejectedValueOnce(new ErrorAsistencia(409, "La vigencia se traslapa con otra asignación"));
+    const res = await importar([{ _fila: 2, nombre: "Nuevo", descripcion: "uno", turno: "Rayhsa" }, { _fila: 3, nombre: "NUEVO", descripcion: "bien" }]);
+    expect(res.body.datos).toMatchObject({ insertados: 1, duplicados: 0 });
+    expect(res.body.datos.errores).toHaveLength(1);
+    expect(bd.estado.departamentos).toHaveLength(1);
+    expect(bd.estado.departamentos[0].descripcion).toBe("bien");
+  });
+
+  it("M5: nombres existentes que colapsan al normalizar (acentos/mayúsculas) -> ERROR de las filas, no se elige uno", async () => {
+    const bd = simularBd({ departamentos: [
+      { ...depto, id: 1, nombre: "Logística" }, { ...depto, id: 2, nombre: "LOGISTICA" }, { ...depto, id: 3, nombre: "Ventas" },
+    ] });
+    const antes = JSON.stringify(bd.estado.departamentos);
+    for (const modo of ["omitir", "actualizar"]) {
+      const res = await importar([{ _fila: 2, nombre: "logística", cupo_vacaciones: "9" }, { _fila: 3, nombre: "Ventas", cupo_vacaciones: modo === "omitir" ? "" : "4" }], modo);
+      expect(res.body.datos.errores).toEqual([{ fila: 2, nombre: "logística", error: expect.stringMatching(/coincide con 2 departamentos existentes.*resuelve el duplicado/) }]);
+    }
+    expect(bd.estado.departamentos.map((d) => d.id === 3 ? d.cupo_vacaciones : 0)).toEqual([0, 0, 4]);
+    expect(bd.estado.departamentos.slice(0, 2)).toEqual(JSON.parse(antes).slice(0, 2));
+  });
+
+  it("B2: turno a un departamento inactivo -> advertencia, no se asigna (el resto sí se aplica)", async () => {
+    const bd = simularBd({ departamentos: [{ ...depto, activo: false }] });
+    const res = await importar([{ _fila: 2, nombre: "Contabilidad", cupo_vacaciones: "3", turno: "Rayhsa" }], "actualizar");
+    expect(res.body.datos).toMatchObject({ actualizados: 1, turnos_asignados: 0 });
+    expect(res.body.datos.advertencias[0]).toMatchObject({ campo: "turno", motivo: "El departamento está inactivo; no se asignó turno" });
+    expect(TurnoAsignacion.asignar).not.toHaveBeenCalled();
+    expect(bd.estado.departamentos[0].cupo_vacaciones).toBe(3);
+  });
+
+  it("M1: la transacción del lote toma el candado de departamentos (4410, 2) justo después del BEGIN, antes de leer", async () => {
+    const bd = simularBd({ departamentos: [{ ...depto }] });
+    await importar([f(1)]);
+    const llamadas = bd.cliente.query.mock.calls.map((c) => [c[0].replace(/\s+/g, " ").trim(), c[1]]);
+    expect(llamadas[0][0]).toBe("BEGIN");
+    expect(llamadas[1][0]).toMatch(/^SELECT pg_advisory_xact_lock/);
+    expect(llamadas[1][1]).toEqual([4410, 2]);
+    expect(llamadas[2][0]).toMatch(/^SELECT id, nombre, descripcion/);
+  });
+
+  it("M1: el orden de escritura no depende del orden del archivo (y la primera aparición de un nombre repetido gana)", async () => {
+    const filas = [f(3, { cupo_vacaciones: "3" }), f(1, { cupo_vacaciones: "1" }), f(2, { cupo_vacaciones: "2" }), f(1, { cupo_vacaciones: "9" })];
+    const escritos = [];
+    for (const lista of [filas, [filas[1], filas[3], filas[2], filas[0]]]) {
+      const bd = simularBd();
+      const res = await importar(lista);
+      escritos.push(bd.estado.departamentos.map((d) => `${d.nombre}:${d.cupo_vacaciones}`));
+      expect(res.body.datos.duplicados).toBe(1);
+    }
+    expect(escritos[0]).toEqual(["Depto 1:1", "Depto 2:2", "Depto 3:3"]);
+    expect(escritos[1]).toEqual(["Depto 1:1", "Depto 2:2", "Depto 3:3"]);
+  });
+
+  it("F-IE-6: el log de una fila con error SQL no imprime la fila", async () => {
+    simularBd({ fallaEn: (q) => { if (/^INSERT INTO departamentos/.test(q)) { const e = new Error("duplicate key value (SECRETO-PRIVADO)"); e.code = "23505"; e.constraint = "departamentos_nombre_key"; throw e; } return false; } });
+    await importar([{ _fila: 2, nombre: "Depto Privado", descripcion: "texto privado" }]);
+    const log = console.error.mock.calls.map((c) => c.map(String).join(" ")).join("\n");
+    expect(log).toMatch(/fila 2: tipo=Error código=23505 constraint=departamentos_nombre_key/);
+    expect(log).not.toMatch(/SECRETO|Privado|privado/);
   });
 });
 

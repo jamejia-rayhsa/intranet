@@ -125,6 +125,7 @@ function nombreCompleto(fila) {
 }
 
 const CURP_RE = /^[A-ZÑ0-9]{18}$/;
+const ERROR_CURP = "CURP inválida: no se puede identificar al empleado";
 const RFC_RE = /^[A-ZÑ&0-9]{12,13}$/;
 const CORREO_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -158,7 +159,8 @@ function validarCampoOpcional(tipo, max, texto) {
     case "nss": {
       const v = texto.replace(/[\s-]/g, "");
       if (/^\d{11}$/.test(v)) return { valor: v };
-      if (/^\d{10}$/.test(v)) return { valor: `0${v}`, aviso: "NSS de 10 dígitos: se completó con 0 a la izquierda (Excel suele quitarlo)", sensible: true };
+      // No se completa con ceros: un NSS de 10 dígitos pudo perder cualquier cifra y pisaría el valor del expediente
+      if (/^\d{10}$/.test(v)) return { malo: "NSS de 10 dígitos: verifica el 0 inicial (el campo se omitió)", sensible: true };
       return { malo: "formato inválido", sensible: true };
     }
     case "clabe": {
@@ -204,6 +206,28 @@ function prepararFilaEmpleado(cruda) {
     });
   };
 
+  // Identificadores (CURP y número de nómina): un valor inválido NO se puede degradar a advertencia, porque la fila
+  // quedaría sin identificador y se insertaría como empleado nuevo (duplicado). Rechazan la fila.
+  const PRECISION = "celda numérica de 16 o más dígitos: Excel perdió la precisión; guarda la columna como Texto";
+  const perdioPrecision = new Set(Array.isArray(cruda._precision) ? cruda._precision.filter((k) => typeof k === "string") : []);
+  {
+    const t = textoSeguro(cruda.curp);
+    if (t === null || t.includes("\u0000")) return { error: ERROR_CURP };
+    if (t) {
+      const v = t.replace(/\s/g, "").toUpperCase();
+      if (perdioPrecision.has("curp") || !CURP_RE.test(v)) return { error: ERROR_CURP };
+      fila.curp = v;
+    } else fila.curp = "";
+    const n = textoSeguro(cruda.numero_nomina);
+    if (n === null) return { error: "Número de nómina tiene un valor no válido" };
+    if (n.includes("\u0000")) return { error: "Número de nómina contiene caracteres no permitidos" };
+    if (perdioPrecision.has("numero_nomina")) return { error: `Número de nómina: ${PRECISION}` };
+    // Excel entrega 101 como 101.0 en algunos orígenes: la nómina es texto sin decimales
+    const nomina = /^\d+\.0+$/.test(n) ? n.replace(/\.0+$/, "") : n;
+    if (nomina.length > 50) return { error: `Número de nómina excede 50 caracteres (tiene ${nomina.length})` };
+    fila.numero_nomina = nomina;
+  }
+
   // Requeridos
   for (const clave of CAMPOS_REQUERIDOS) {
     const etiqueta = CAMPOS_EMPLEADO.find((c) => c[0] === clave)[1];
@@ -231,7 +255,8 @@ function prepararFilaEmpleado(cruda) {
 
   // Resto de campos: opcionales
   for (const [clave, , tipo, max] of CAMPOS_EMPLEADO) {
-    if (CAMPOS_REQUERIDOS.includes(clave) || tipo === "fecha") continue;
+    if (CAMPOS_REQUERIDOS.includes(clave) || tipo === "fecha" || clave === "curp" || clave === "numero_nomina") continue;
+    if (perdioPrecision.has(clave)) { fila[clave] = ""; advertir(clave, null, PRECISION); continue; }
     const t = textoSeguro(cruda[clave]);
     if (t === null) { fila[clave] = ""; advertir(clave, null, "valor no válido"); continue; }
     if (t.includes("\u0000")) { fila[clave] = ""; advertir(clave, t, "contiene caracteres no permitidos"); continue; }

@@ -3,8 +3,11 @@
 Pantalla: RH > Empleados > **Importar** (y RH > Departamentos > **Importar**). Acepta `.xlsx`, `.xls` y `.csv`.
 La plantilla descargable (`.xlsx`) trae la hoja **Empleados** (encabezados en el orden del expediente y 2 filas de
 ejemplo FICTICIAS), **Instrucciones** y **Catálogos** (puestos, departamentos, ubicaciones y valores permitidos vigentes).
-Con el botón "Descargar empleados actuales en este formato" se baja la lista actual con las mismas columnas para
-corregirla y reimportarla en modo actualizar (la fecha sale como AAAA-MM-DD y el jefe como número de nómina, o CURP si no tiene).
+Con el botón "Descargar empleados actuales en este formato" (`GET /api/empleados/exportar-importacion`, mismo permiso que el listado
+de empleados, auditado como `EXPORTAR_EMPLEADOS` solo con el número de filas) se baja la lista actual con las mismas columnas,
+en orden único (nombre, apellidos, id), con las fechas AAAA-MM-DD formateadas en SQL (no dependen de la zona horaria) y el jefe
+como número de nómina (o CURP si no tiene), para corregirla y reimportarla en modo actualizar. Contiene CURP, NSS, RFC y CLABE:
+trátala como dato personal.
 
 ## Encabezados
 
@@ -20,9 +23,9 @@ importación si faltan Nombre o Apellido Paterno). Los 17 encabezados del layout
 | Personales | Nombre (`nombre`), Apellido Paterno (`apellido_paterno`) | **Obligatorios**, 100 caracteres |
 | | Apellido Materno | 100 caracteres |
 | | Fecha Nacimiento | fecha |
-| | CURP | 18 caracteres alfanuméricos (se pasa a mayúsculas) |
+| | CURP | 18 caracteres alfanuméricos (se pasa a mayúsculas). Si viene y es inválida, la **fila se rechaza** (no se puede identificar al empleado) |
 | | RFC | 12 o 13 caracteres (mayúsculas) |
-| | NSS | 11 dígitos; con 10 se completa con un 0 a la izquierda y se avisa |
+| | NSS | 11 dígitos; con 10 NO se completa con ceros: se omite con la advertencia "verifica el 0 inicial" |
 | | Género, Estado Civil, Escolaridad | valores de la hoja Catálogos |
 | | Estado de nacimiento | uno de los 32 estados |
 | Contacto | Celular Personal, Teléfono de emergencia | 10 dígitos (se quitan espacios, guiones, paréntesis, puntos y +52 / 52 inicial) |
@@ -31,7 +34,7 @@ importación si faltan Nombre o Apellido Paterno). Los 17 encabezados del layout
 | Domicilio | Calle (255), Colonia (100), Municipio (100) | texto |
 | | Código postal | 5 dígitos (con 4 se completa con 0) |
 | | Estado de residencia | uno de los 32 estados |
-| Laborales | Número de Nómina | texto, 50 |
+| Laborales | Número de Nómina | texto, 50; se recortan espacios y `101.0` de Excel pasa a `101` |
 | | Fecha de alta IMSS, Fecha Ingreso, Fecha de renovación | fecha |
 | | Tipo Contrato | valores de la hoja Catálogos |
 | | Celular corporativo | 10 dígitos |
@@ -41,8 +44,8 @@ importación si faltan Nombre o Apellido Paterno). Los 17 encabezados del layout
 | Financieros | Banco | uno de la hoja Catálogos |
 | | CLABE | 18 dígitos |
 | | CP fiscal | 5 dígitos |
-| Control | Estatus | `activo`, `baja` o `suspendido` (por omisión `activo` al crear) |
-| | Fecha de baja (fecha), Motivo de baja (500) | |
+| Control | Estatus | `activo`, `baja` o `suspendido` (por omisión `activo` al crear). **Solo al crear**: en modo actualizar se ignora |
+| | Fecha de baja (fecha), Motivo de baja (500) | Solo al crear (una baja exige fecha de baja; sin ella se crea activo con advertencia). En modo actualizar se ignoran |
 
 **Fechas.** `AAAA-MM-DD`, `DD/MM/AAAA` (día primero) o celdas con formato de fecha de Excel; año entre 1900 y 2100. Una fecha
 inválida **omite la fila**. **Ceros a la izquierda:** NSS, CP, nómina, CLABE y teléfonos deben ser TEXTO en Excel (la
@@ -52,7 +55,9 @@ reparan solos; la CLABE no).
 ## Qué rechaza una fila y qué solo avisa
 
 * **Error de la fila (no entra):** falta Nombre o Apellido Paterno, fecha inválida, nombre con caracteres no permitidos (NUL),
-  conflicto de CURP/nómina en modo actualizar.
+  **CURP presente pero inválida**, nómina con NUL o de más de 50 caracteres, **nómina que solo coincide con otra ignorando ceros a
+  la izquierda** (`0101` vs `101`: posible duplicado), CURP o nómina que coincide con **varios** empleados existentes (resuelve el
+  duplicado antes), conflicto de CURP/nómina y, en modo actualizar, **fila sin CURP ni nómina** (nunca se crea).
 * **Advertencia (la fila entra SIN ese campo):** cualquier valor inválido de un campo opcional (CURP, RFC, NSS, CLABE, teléfono,
   código postal, correo, catálogos cerrados, longitudes, NUL). El resultado lista `fila`, `nombre`, `campo`, `valor recibido`
   (máx. 40 caracteres; para CURP/NSS/RFC/CLABE solo "formato inválido") y `motivo`. Se devuelven hasta 1000 por lote.
@@ -66,22 +71,32 @@ reparan solos; la CLABE no).
   * Solo las celdas **con valor** sobrescriben; una celda vacía **nunca borra** datos. Nunca se cambia la cuenta de usuario.
   * La CURP y el número de nómina se **rellenan** si el empleado no los tiene (los empleados sin nómina se completan así).
     Si ya tiene un valor distinto, o si la CURP es de un empleado y la nómina de otro, la fila es un **error** (no se pisa).
-  * Una fila sin CURP ni nómina se inserta como nueva (no hay forma de identificarla). Dos filas del mismo empleado en el mismo
-    lote: la segunda se reporta como repetida.
+  * Una fila sin CURP ni nómina es un **error** ("Sin identificador") y nunca se inserta. En modo **omitir/crear** sí se crea,
+    con la advertencia de que reimportar el archivo la duplicará. Dos filas del mismo empleado en el mismo lote: la segunda se
+    reporta como repetida.
+  * **Estatus, fecha de baja y motivo de baja se ignoran** en los empleados existentes (una advertencia por fila): para dar de baja
+    o reactivar usa la pantalla de Empleados. Nunca se reactiva a nadie por una celda del archivo.
   * Respuesta: insertados, actualizados (con solo el **número** de campos modificados por fila), sin cambios, duplicados,
     errores, advertencias, avisos de catálogo y jefes.
-  * Cada lote de 100 filas va en **una transacción**: los errores de validación por fila no la abortan; un fallo inesperado
-    de SQL deshace todo el lote (error 500 genérico y el resultado del lote queda "no confirmado" en la pantalla).
+  * Cada lote de 100 filas va en **una transacción** (en ambos modos) con un **SAVEPOINT por fila**: un error de validación o un
+    error SQL inesperado de UNA fila revierte solo esa fila, que se reporta ("No se pudo guardar la fila"), y el lote sigue. Solo un
+    fallo del lote completo (conexión, lectura) lo deshace todo (500 genérico; la pantalla lo marca "no confirmado").
+  * **Concurrencia:** al empezar, cada transacción toma un candado de aplicación (`pg_advisory_xact_lock(4410, 1)` empleados y su
+    segunda pasada de jefes, `(4410, 2)` departamentos; no chocan con vacaciones 4217 ni turnos 4301/4302) y lee el estado DESPUÉS.
+    Dos importaciones simultáneas con las mismas filas, en el orden que sea, se serializan: sin deadlocks, sin duplicados y sin
+    ciclos de jefes. Las escrituras se hacen en orden determinista (actualizaciones por id, altas por clave).
 
 ## Jefe inmediato
 
 `Jefe (número de nómina)` y/o `Jefe (CURP)`. El jefe puede venir en el mismo archivo (incluso en un lote posterior) o ya
 existir. Como el archivo se envía en lotes, la asignación es una **segunda pasada** al final (`POST /api/empleados/importar/jefes`,
 hasta 500 pares por petición). Se avisa y **no se asigna** en estos casos: jefe no encontrado, nómina y CURP del jefe que apuntan a
-personas distintas, auto-referencia (A es jefe de A) y ciclos (A→B→A o más largos, incluso contra jefes que ya estaban en la BD;
-ningún miembro del ciclo recibe la asignación nueva). Una celda vacía nunca quita un jefe. Si hay más de 500 pares, la
+personas distintas, jefe ambiguo (la nómina o CURP del jefe coincide con varios empleados), jefe que no está activo (baja o
+suspendido), auto-referencia (A es jefe de A) y ciclos (A→B→A o más largos, incluso contra jefes que ya estaban en la BD;
+ningún miembro del ciclo recibe la asignación nueva). Una celda vacía nunca quita un jefe. La segunda pasada toma el mismo candado y revalida los ciclos contra la BD dentro de él. Si hay más de 500 pares, la
 detección de ciclos entre peticiones distintas protege igual (la segunda arista que cierra el ciclo se rechaza), pero las aristas de
-la primera petición ya quedaron asignadas.
+la primera petición ya quedaron asignadas. Si un lote falla, los jefes de los lotes ya guardados SÍ se asignan; un 401/403 detiene
+todo con el mensaje de permisos (no se marca "resultado no confirmado").
 
 ## Límites y qué NO cubre
 
@@ -108,5 +123,10 @@ Mismo selector "Omitirlos / Actualizarlos"; coincidencia por **nombre** sin acen
   * Requiere `Turnos: edición` además de `Departamentos: edición`; sin el permiso la columna de turno se ignora con una advertencia.
 * Respuesta: `insertados` (= `creados`), `actualizados`, `sin_cambios`, `duplicados`, `turnos_asignados`, `turnos_cambiados`,
   `turnos_sin_cambio`, `advertencias`, `errores`.
-* La tabla de Departamentos muestra el **Turno actual** (solo lectura; el vigente hoy).
+* La tabla de Departamentos muestra el **Turno actual** (solo lectura; el vigente hoy) únicamente a quien tiene `rh/Turnos` consulta.
+* Dos departamentos existentes cuyos nombres solo difieren en acentos o mayúsculas: la fila que coincide con ellos es un **error**
+  (no se elige uno). Un turno para un departamento **inactivo** es advertencia. Si una fila se revierte (SAVEPOINT), el estado en
+  memoria también, así que las filas siguientes no ven cambios que ya no existen.
+* Las filas de ejemplo de la plantilla son obviamente ficticias ("Departamento de Ejemplo 1", "Turno de Ejemplo"); no hay ninguna
+  protección especial contra subirlas: en modo actualizar un nombre real en el archivo actualiza ese departamento.
 * Auditoría `IMPORTAR_DEPTOS` (la columna `accion` admite 20 caracteres; `IMPORTAR_DEPARTAMENTOS` no cabe) solo con conteos.

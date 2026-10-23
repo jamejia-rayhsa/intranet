@@ -12,8 +12,8 @@ export const COLUMNAS_DEPARTAMENTOS = [
 
 // Ejemplos FICTICIOS
 export const FILAS_EJEMPLO_DEPARTAMENTOS = [
-  { nombre: 'Contabilidad', area: 'Administración', descripcion: 'Gestión financiera y contable', cupo_vacaciones: '2', turno: 'Rayhsa', turno_vigente_desde: '2026-01-01' },
-  { nombre: 'Logística', area: 'Operaciones', descripcion: 'Distribución y almacén', cupo_vacaciones: '3', turno: '', turno_vigente_desde: '' },
+  { nombre: 'Departamento de Ejemplo 1', area: 'Área de Ejemplo', descripcion: 'Fila de ejemplo: bórrala', cupo_vacaciones: '2', turno: 'Turno de Ejemplo', turno_vigente_desde: '2026-01-01' },
+  { nombre: 'Departamento de Ejemplo 2', area: 'Área de Ejemplo', descripcion: 'Fila de ejemplo: bórrala', cupo_vacaciones: '3', turno: '', turno_vigente_desde: '' },
 ];
 
 export const INSTRUCCIONES_DEPARTAMENTOS = [
@@ -33,7 +33,7 @@ export const INSTRUCCIONES_DEPARTAMENTOS = [
   ['Qué hacer con los departamentos que ya existen'],
   ['"Omitirlos" (por omisión): se cuentan como duplicados y no se tocan. "Actualizarlos con los datos del archivo": se buscan por nombre (sin acentos ni mayúsculas); solo las celdas CON valor sobrescriben y una celda vacía NUNCA borra datos.'],
   [''],
-  ['Las filas de ejemplo de la hoja "Departamentos" son ficticias: bórralas antes de cargar tu archivo.'],
+  ['Las filas de ejemplo de la hoja "Departamentos" son ficticias ("Departamento de Ejemplo 1" y "2"): bórralas antes de cargar tu archivo. Subir la plantilla sin editar crea esos dos departamentos (el turno "Turno de Ejemplo" no existe y solo genera una advertencia); no cambia departamentos reales, pero en modo actualizar no hay ninguna protección especial: si tu archivo conserva una fila con el nombre de un departamento real, ese departamento se actualiza.'],
 ];
 
 const ABREVIATURAS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];

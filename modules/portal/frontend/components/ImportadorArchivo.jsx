@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
+import { hojaAMatriz } from '../utils/hojaAMatriz';
 import {
   leerMatriz, separarFilas, dividirEnLotes, resultadoVacio, sumarResultados, sumarJefes, decodificarTextoCsv,
   construirCsvResultado, numeroFilaDeError, nombreDeError, avisosSinCatalogo, TAMANO_LOTE, MAX_PARES_JEFES, MAX_ADVERTENCIAS,
@@ -84,14 +85,15 @@ function parsearArchivo(archivo, columnas) {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        // cellDates: las fechas llegan como Date (no como serial); raw: los CSV no se reinterpretan (mes/día de EE. UU.)
+        // xlsx: cellDates:false + cellNF (formato de cada celda): hojaAMatriz entrega las fechas como serial exacto y
+        // sin pasar por Date local; raw: los CSV no se reinterpretan (mes/día de EE. UU.)
         const esCsv = /\.csv$/i.test(archivo.name);
         const wb = esCsv
           ? XLSX.read(decodificarTextoCsv(new Uint8Array(e.target.result)).texto, { type: 'string', raw: true })
-          : XLSX.read(e.target.result, { type: 'array', cellDates: true, raw: true });
+          : XLSX.read(e.target.result, { type: 'array', cellDates: false, cellNF: true, raw: true });
         const ws = wb.Sheets[wb.SheetNames[0]];
         if (!ws || !ws['!ref']) { resolve(leerMatriz([], columnas, 1)); return; }
-        const matriz = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true, blankrows: true });
+        const matriz = hojaAMatriz(XLSX, ws);
         const filaEncabezado = XLSX.utils.decode_range(ws['!ref']).s.r + 1;
         resolve(leerMatriz(matriz, columnas, filaEncabezado));
       } catch (err) {
@@ -475,6 +477,8 @@ function VistaResultado({ resultado, columnas, onNuevo, onCerrar }) {
             <strong>Jefes inmediatos:</strong> {jefes.asignados} asignados
             {jefes.sin_cambios ? `, ${jefes.sin_cambios} sin cambios` : ''}, {jefes.no_encontrados} no encontrados, {jefes.ciclos} con ciclo o auto-referencia
             {jefes.conflictos ? `, ${jefes.conflictos} con nómina y CURP contradictorias` : ''}
+            {jefes.ambiguos ? `, ${jefes.ambiguos} con jefe ambiguo (varios empleados)` : ''}
+            {jefes.no_activos ? `, ${jefes.no_activos} con jefe que no está activo` : ''}
             {jefes.pendientes ? `, ${jefes.pendientes} pendientes (no se pudieron asignar: ${jefes.error || 'importación interrumpida'})` : ''}.
           </p>
         )}
@@ -710,7 +714,8 @@ export default function ImportadorArchivo({
     let acumulado = resultadoVacio();
     let fallo = '';
     let loteFallido = -1;
-    let seguro = false; // true: el servidor respondió que NO procesó el lote (400/413 o exito:false)
+    let seguro = false; // true: el servidor respondió que NO procesó el lote (400/401/403/413 o exito:false)
+    let sinPermiso = false; // 401/403: se detiene todo (también la segunda pasada) con el mensaje de permisos
     for (let i = 0; i < lotes.length; i++) {
       setProgreso({ actual: i + 1, total: lotes.length });
       try {
@@ -719,7 +724,8 @@ export default function ImportadorArchivo({
         acumulado = sumarResultados(acumulado, resp.datos);
       } catch (err) {
         fallo = err && err.message ? err.message : 'Error de conexión';
-        seguro = !!err && (err.status === 400 || err.status === 413);
+        sinPermiso = !!err && (err.status === 401 || err.status === 403);
+        seguro = !!err && (err.status === 400 || err.status === 413 || sinPermiso);
         loteFallido = i;
         break;
       }
@@ -731,7 +737,8 @@ export default function ImportadorArchivo({
       let jefes = sumarJefes(null, null);
       let pendientes = pares.length;
       let errorJefes = '';
-      if (!fallo) {
+      // Los pares son SOLO de lotes confirmados: se asignan aunque otro lote haya fallado después (salvo sin permiso)
+      if (!sinPermiso) {
         for (let k = 0; k < pares.length; k += MAX_PARES_JEFES) {
           const trozo = pares.slice(k, k + MAX_PARES_JEFES);
           setProgreso({ actual: 1, total: 1, jefes: true });
@@ -750,7 +757,7 @@ export default function ImportadorArchivo({
           }
         }
       } else {
-        errorJefes = 'la importación se interrumpió antes';
+        errorJefes = fallo;
       }
       jefes.pendientes = pendientes;
       if (pendientes) jefes.error = errorJefes;

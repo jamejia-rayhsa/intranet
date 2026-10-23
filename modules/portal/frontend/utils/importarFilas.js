@@ -32,6 +32,7 @@ function fechaATexto(d) {
 // Valor crudo de una celda -> texto de una columna que NO es de fecha.
 export function valorATexto(valor) {
   if (valor === null || valor === undefined) return '';
+  if (typeof valor === 'object' && typeof valor.serialExcel === 'number') return normalizarFecha(valor).valor;
   if (typeof valor === 'number') return numeroATexto(valor);
   if (Object.prototype.toString.call(valor) === '[object Date]') return fechaATexto(valor);
   if (typeof valor === 'boolean') return valor ? 'VERDADERO' : 'FALSO';
@@ -97,9 +98,13 @@ export function leerMatriz(matriz, columnas, filaEncabezado) {
 
     const fila = { _fila: base + r };
     const problemas = [];
+    const precision = [];
     indices.forEach(function (it) {
       const cruda = celdas[it.indice];
       const col = it.columna;
+      // Número de 16 o más dígitos en una columna que no es de fecha: Excel guarda solo 15 cifras significativas, el valor ya
+      // se corrompió. El backend lo omite con advertencia ('guarda la columna como Texto').
+      if (col.tipo !== 'fecha' && typeof cruda === 'number' && isFinite(cruda) && Math.abs(cruda) >= 1e15) precision.push(col.clave);
       if (col.tipo === 'fecha') {
         const f = normalizarFecha(cruda);
         if (f.error) {
@@ -114,6 +119,7 @@ export function leerMatriz(matriz, columnas, filaEncabezado) {
     });
     columnas.forEach(function (c) { if (fila[c.clave] === undefined) fila[c.clave] = ''; });
     fila.__errores = problemas;
+    if (precision.length) fila._precision = precision;
     resultado.push(fila);
   }
   return { filas: resultado, encabezados: encabezados };
@@ -278,6 +284,8 @@ export function sumarJefes(jefes, parcial) {
     no_encontrados: (j.no_encontrados || 0) + (Number(p.no_encontrados) || 0),
     ciclos: (j.ciclos || 0) + (Number(p.ciclos) || 0),
     conflictos: (j.conflictos || 0) + (Number(p.conflictos) || 0),
+    ambiguos: (j.ambiguos || 0) + (Number(p.ambiguos) || 0),
+    no_activos: (j.no_activos || 0) + (Number(p.no_activos) || 0),
   };
 }
 
