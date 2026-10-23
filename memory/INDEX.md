@@ -13,6 +13,9 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-23] orquestador → decisions.md — Fase 4 (motor) y pantallas de administración listas para GO/NO-GO; plan de fusión y despliegue
+- [2026-10-23] [tester] → tests.md — Motor de análisis de asistencia (Fase 4), regla de comida: oráculo propio 0 diferencias en 4 028 días, 37/37 casos a mano, frontera 16:00 consistente, PUT /parametros y cambio de ventana sin tocar lo cerrado, tope duro/apagado/réplicas, API 189/189, jest 18/18, lint 0 errores; sin fallos del motor, 1 menor (F-M4-4)
+- [2026-10-23] [tester] → decisions.md — F-M4-1/2/3 verificados corregidos; PARA RESOLVER F-M4-4 (fila `tiempo_excedido` al apagar vs `interrumpida` en el doc)
 - [2026-10-23] [coder] → code-notes.md — Regla de comida (ventana 13:00-16:00 como parámetros), F-M4-1 (test de app.js aislado), F-M4-2 (apagado con vuelta colgada) y F-M4-3 (014 con justificaciones duplicadas); verificación 126/126 pg16+pg17
 - [2026-10-23] [tester] → tests.md — Motor de análisis de asistencia (Fase 4), parcial antes del cambio de regla de comida: oráculo propio 0 diferencias en 3 816 días (regla 14:00, obsoleta para salidas), zonas/DST, periodos/snapshot/trigger/cursor, tope duro, 409 inmediato, réplicas, SIGTERM, caída de BD, API 189/189, rendimiento; 3 FAIL (jest intermitente por una prueba del motor, candado tras SIGTERM, migración con duplicados)
 - [2026-10-23] [tester] → decisions.md — PARA RESOLVER F-M4-1 (jest intermitente por asistenciaPlanificador.test.js), F-M4-2 (candado 4501 tras apagar con vuelta colgada), F-M4-3 (migración 014 con justificaciones duplicadas)
