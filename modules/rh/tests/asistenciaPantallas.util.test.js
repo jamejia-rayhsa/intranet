@@ -120,6 +120,17 @@ describe("asistenciaFechas - antigüedad y retraso de la última comunicación",
     expect(ev("2026-10-25T08:00:00Z", "2026-10-24T15:00:00Z").estado).toBe("fuera_de_horario"); // dom 02:00
   });
 
+  it("el texto para lectores de pantalla depende solo del estado, no del tiempo transcurrido", () => {
+    const a = ev("2026-10-23T15:10:00Z", "2026-10-23T15:00:00Z");
+    const b = ev("2026-10-23T15:11:00Z", "2026-10-23T15:00:00Z");
+    expect(a.texto).not.toBe(b.texto); // el visual sí cambia
+    expect(F.mensajeEstadoRetraso(a.estado)).toBe(F.mensajeEstadoRetraso(b.estado));
+    const c = ev("2026-10-23T16:30:00Z", "2026-10-23T15:00:00Z");
+    expect(F.mensajeEstadoRetraso(c.estado)).not.toBe(F.mensajeEstadoRetraso(a.estado));
+    expect(F.mensajeEstadoRetraso("raro")).toBe(F.mensajeEstadoRetraso("sin_datos"));
+    expect(F.mensajeEstadoRetraso("retraso")).not.toMatch(/\d+ min\b(?! )|hace/);
+  });
+
   it("sin datos", () => {
     expect(ev("2026-10-23T15:00:00Z", null).estado).toBe("sin_datos");
     expect(ev(null, "2026-10-23T15:00:00Z").estado).toBe("sin_datos");

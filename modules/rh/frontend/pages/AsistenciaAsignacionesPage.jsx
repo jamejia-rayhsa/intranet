@@ -33,6 +33,9 @@ const PESTANAS = [
 export default function AsistenciaAsignacionesPage() {
   const nivel = useAccesoAsistencia(OPCION_TURNOS);
   const { ref: tituloRef, enfocarSiPerdido } = useFocoTitulo();
+  // La pestaña «Por departamento» lista /api/departamentos (Departamentos:consulta); «Por empleado» solo usa Turnos
+  const nivelDeptos = useAccesoAsistencia("Departamentos");
+  const puedeVerDeptos = nivelDeptos !== null;
   const puedeEditar = nivel === "edicion";
   const hoy = useMemo(() => fechaMexicoHoy(), []);
 
@@ -106,8 +109,12 @@ export default function AsistenciaAsignacionesPage() {
   }, []);
 
   useEffect(() => {
-    if (nivel) cargarDepartamentos();
-  }, [nivel, cargarDepartamentos]);
+    if (nivel && nivelDeptos) cargarDepartamentos();
+  }, [nivel, nivelDeptos, cargarDepartamentos]);
+  // Sin permiso de departamentos la pantalla abre directamente en «Por empleado»
+  useEffect(() => {
+    if (nivelDeptos === null) setPestana("empleado");
+  }, [nivelDeptos]);
 
   useEffect(() => {
     if (nivel && pestana === "empleado") cargarEmpleados();
@@ -195,7 +202,14 @@ export default function AsistenciaAsignacionesPage() {
         ))}
       </div>
 
-      {pestana === "departamento" && (
+      {pestana === "departamento" && !puedeVerDeptos && (
+        <div role="tabpanel" id="asig-panel-departamento" aria-labelledby="asig-tab-departamento">
+          <p className="asi__aviso asi__aviso--info" role="status">
+            Para ver y asignar turnos por departamento necesitas el permiso de consulta de Departamentos. Con tu acceso actual puedes asignar por empleado en la pestaña «Por empleado».
+          </p>
+        </div>
+      )}
+      {pestana === "departamento" && puedeVerDeptos && (
         <div role="tabpanel" id="asig-panel-departamento" aria-labelledby="asig-tab-departamento">
           <EstadoCarga
             cargando={cargandoDep || nivel === undefined}

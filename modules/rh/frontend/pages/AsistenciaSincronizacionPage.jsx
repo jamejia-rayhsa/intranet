@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { estadoSincronizacion, lotesSincronizacion, mensajeDeError } from "../services/asistencia.service";
-import { formatoLocal, instanteUtc, evaluarRetraso } from "../utils/asistenciaFechas";
+import { formatoLocal, instanteUtc, evaluarRetraso, mensajeEstadoRetraso } from "../utils/asistenciaFechas";
 import {
   INTERVALO_REFRESCO_MS,
   LOTES_POR_PAGINA,
@@ -118,11 +118,14 @@ export default function AsistenciaSincronizacionPage() {
       <EstadoCarga cargando={cargandoEstado || nivel === undefined} error={errorEstado} onReintentar={cargarEstado} />
 
       {estado && retraso && (
-        <div role="status" aria-live="polite">
+        <>
+          {/* Texto visual con el «hace N min» (cambia cada refresco): fuera de la región viva */}
           {retraso.estado === "retraso" && <p className="asi__aviso asi__aviso--advertencia"><span aria-hidden="true">⚠ </span>{retraso.texto}</p>}
           {retraso.estado === "ok" && <p className="asi__aviso asi__aviso--ok">{retraso.texto}</p>}
           {(retraso.estado === "fuera_de_horario" || retraso.estado === "sin_datos") && <p className="asi__aviso asi__aviso--info">{retraso.texto}</p>}
-        </div>
+          {/* Región viva: solo cambia (y se anuncia) cuando cambia el ESTADO */}
+          <div className="asi__sr" role="status" aria-live="polite">{mensajeEstadoRetraso(retraso.estado)}</div>
+        </>
       )}
 
       {estado && (

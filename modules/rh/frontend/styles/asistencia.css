@@ -183,8 +183,11 @@
 }
 
 /* Diálogos */
-.asi__overlay { padding: 2rem 1rem; }
-.asi__modal { padding: 1.25rem; overflow-y: auto; }
+.asi__overlay { padding: 2rem 1rem; box-sizing: border-box; align-items: flex-start; }
+/* El diálogo nunca pasa del viewport (el padding del overlay se descuenta) y su contenido se desplaza por dentro */
+.asi__modal { padding: 1.25rem; overflow-y: auto; height: auto; box-sizing: border-box; max-height: calc(100vh - 4rem); }
+@supports (height: 100svh) { .asi__modal { max-height: calc(100svh - 4rem); } }
+@supports (height: 100dvh) { .asi__modal { max-height: calc(100dvh - 4rem); } }
 .asi__modal-titulo { margin: 0 0 0.75rem; font-size: 1.15rem; color: var(--color-primario); }
 .asi__modal-cuerpo { min-width: 0; }
 .asi__acciones { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; }
@@ -200,9 +203,12 @@
   .asi__dia label.asi__dia-nombre { grid-column: span 2; }
   .asi__dia-nolab { grid-column: span 2; }
   .asi__overlay { padding: 0.5rem; }
+  .asi__modal { max-height: calc(100vh - 1rem); }
+  @supports (height: 100svh) { .asi__modal { max-height: calc(100svh - 1rem); } }
+  @supports (height: 100dvh) { .asi__modal { max-height: calc(100dvh - 1rem); } }
   .asi__acciones .asi__btn { flex: 1 1 auto; }
 }
 .asi__lista--plana { list-style: none; margin: 0 0 0.4rem; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
-.asi details summary { cursor: pointer; color: var(--color-primario); font-weight: 600; font-size: 0.84rem; }
+.asi details summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; color: var(--color-primario); font-weight: 600; font-size: 0.84rem; }
 .asi details summary:focus-visible { outline: 3px solid var(--color-acento); outline-offset: 1px; }
 .asi__bloque, .asi__lista, .asi__mono { overflow-wrap: anywhere; }

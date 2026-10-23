@@ -157,3 +157,13 @@ export function evaluarRetraso({ ahora, ultimaComunicacion, umbralMin = UMBRAL_R
   }
   return { estado: 'ok', antiguedadMin, texto: `Última comunicación ${textoAntiguedad(antiguedadMin)}` };
 }
+
+const MENSAJES_ESTADO = {
+  ok: 'La interfaz se comunica con normalidad',
+  retraso: 'Posible retraso: la interfaz no se ha comunicado en más de 45 minutos',
+  fuera_de_horario: 'Fuera del horario de sincronización',
+  sin_datos: 'Sin datos de comunicación de la interfaz',
+};
+
+/** Texto para lectores de pantalla (aria-live): solo depende del ESTADO, no del «hace N min», para no re-anunciarse cada refresco. */
+export const mensajeEstadoRetraso = (estado) => MENSAJES_ESTADO[estado] || MENSAJES_ESTADO.sin_datos;
