@@ -32,6 +32,40 @@ function usuario() {
 function password() {
   return process.env.MBA3_LECTURA_PASSWORD;
 }
+function cfAccessClientId() {
+  return process.env.MBA3_LECTURA_CF_ACCESS_CLIENT_ID;
+}
+function cfAccessClientSecret() {
+  return process.env.MBA3_LECTURA_CF_ACCESS_CLIENT_SECRET;
+}
+
+// `mba3api.rayhsa.net` está detrás de Cloudflare Access (Zero Trust) — ver blockers.md,
+// "BLOQUEO ACTIVO — mba3api.rayhsa.net está detrás de Cloudflare Access": Cloudflare intercepta
+// CUALQUIER petición al dominio (login, refresh, logout, catálogo) antes de que llegue al código
+// de MBA3, y responde 403 o un 302 a su pantalla de login SSO si no recibe un Service Token
+// válido. Estos 2 headers son ESE Service Token (mecanismo de Cloudflare, nada que ver con el
+// usuario/password de la API de MBA3 que ya maneja login()). Si falta cualquiera de las 2
+// variables, NO se manda ninguno de los 2 headers (igual que antes de este cambio, para no romper
+// entornos sin Cloudflare Access delante ni los tests con mocks), pero se avisa una vez por
+// proceso para que sea obvio en los logs por qué todo da 401/302 si a alguien se le olvida.
+let avisoCfAccessEmitido = false;
+function headersCfAccess() {
+  const id = cfAccessClientId();
+  const secret = cfAccessClientSecret();
+  if (id && secret) {
+    return { 'CF-Access-Client-Id': id, 'CF-Access-Client-Secret': secret };
+  }
+  if (!avisoCfAccessEmitido && process.env.MBA3_LECTURA_URL) {
+    avisoCfAccessEmitido = true;
+    console.warn(
+      'mba3Lectura: faltan MBA3_LECTURA_CF_ACCESS_CLIENT_ID/MBA3_LECTURA_CF_ACCESS_CLIENT_SECRET. ' +
+        'mba3api.rayhsa.net está detrás de Cloudflare Access: sin el Service Token, TODAS las peticiones ' +
+        '(login, refresh, catálogo) recibirán 403 o un 302 a la pantalla de login SSO de Cloudflare, nunca ' +
+        'llegarán al código de MBA3.',
+    );
+  }
+  return {};
+}
 
 // Tope de páginas por llamada para no colgar una petición si `pagination.total` viene mal o la API
 // responde páginas vacías en bucle (defensivo, no se espera llegar a esto en uso normal).
@@ -81,6 +115,7 @@ function _resetEstadoParaTests() {
   estado.loginEnCurso = null;
   estado.refrescarEnCurso = null;
   estado.cooldownLoginHasta = 0;
+  avisoCfAccessEmitido = false;
 }
 
 function clienteAxios() {
@@ -104,7 +139,11 @@ async function loginReal() {
   const usuarioActual = usuario();
   const passwordActual = password();
   if (!usuarioActual || !passwordActual) throw new ErrorMba3NoConfigurado();
-  const resp = await clienteAxios().post('/v1/login', { username: usuarioActual, password: passwordActual });
+  const resp = await clienteAxios().post(
+    '/v1/login',
+    { username: usuarioActual, password: passwordActual },
+    { headers: headersCfAccess() },
+  );
   estado.accessToken = resp.data?.access_token || null;
   estado.refreshToken = resp.data?.refresh_token || null;
   if (!estado.accessToken) throw new ErrorMba3('Login a MBA3 sin access_token en la respuesta');
@@ -112,7 +151,11 @@ async function loginReal() {
 
 async function refrescarReal() {
   if (!estado.refreshToken) throw new ErrorMba3('Sin refresh_token disponible para refrescar');
-  const resp = await clienteAxios().post('/v1/refresh', { refresh_token: estado.refreshToken });
+  const resp = await clienteAxios().post(
+    '/v1/refresh',
+    { refresh_token: estado.refreshToken },
+    { headers: headersCfAccess() },
+  );
   estado.accessToken = resp.data?.access_token || null;
   if (resp.data?.refresh_token) estado.refreshToken = resp.data.refresh_token;
   if (!estado.accessToken) throw new ErrorMba3('Refresh de MBA3 sin access_token en la respuesta');
@@ -158,7 +201,11 @@ async function logout() {
   estado.accessToken = null;
   estado.refreshToken = null;
   try {
-    await clienteAxios().post('/v1/logout', {}, { headers: { Authorization: `Bearer ${token}` } });
+    await clienteAxios().post(
+      '/v1/logout',
+      {},
+      { headers: { Authorization: `Bearer ${token}`, ...headersCfAccess() } },
+    );
   } catch (error) {
     // Best-effort: un logout fallido no es un problema (el token simplemente expira solo).
     console.error('mba3Lectura.logout: fallo al revocar sesión (ignorado):', detalleError(error));
@@ -171,7 +218,7 @@ async function peticion(endpoint, body, { limit, offset } = {}) {
   if (offset !== undefined) params.offset = offset;
   return clienteAxios().post(`/v1/api/${endpoint}`, body, {
     params,
-    headers: { Authorization: `Bearer ${estado.accessToken}` },
+    headers: { Authorization: `Bearer ${estado.accessToken}`, ...headersCfAccess() },
   });
 }
 

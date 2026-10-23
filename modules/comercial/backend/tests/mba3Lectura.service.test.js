@@ -21,6 +21,9 @@ beforeEach(() => {
   Mba3Lectura._resetEstadoParaTests();
   delete process.env.MBA3_LECTURA_USUARIO;
   delete process.env.MBA3_LECTURA_PASSWORD;
+  delete process.env.MBA3_LECTURA_URL;
+  delete process.env.MBA3_LECTURA_CF_ACCESS_CLIENT_ID;
+  delete process.env.MBA3_LECTURA_CF_ACCESS_CLIENT_SECRET;
 });
 
 describe("login", () => {
@@ -307,5 +310,93 @@ describe("single-flight y cooldown de login (R-F2-2)", () => {
 
     const datos = await Mba3Lectura.llamarEndpoint("ficha-cliente", { codigo: "C1" });
     expect(datos.data).toEqual([{ codigo: "C1" }]);
+  });
+});
+
+// Service Token de Cloudflare Access (ver blockers.md "Cloudflare Access"): headers que deben ir
+// en CADA petición cuando las 2 variables están configuradas, y que NO deben ir (sin romper nada)
+// cuando faltan.
+describe("headers de Cloudflare Access (Service Token)", () => {
+  beforeEach(() => {
+    process.env.MBA3_LECTURA_USUARIO = "svc";
+    process.env.MBA3_LECTURA_PASSWORD = "secreto";
+  });
+
+  it("manda CF-Access-Client-Id/Secret en login, catálogo y logout cuando ambas variables están configuradas", async () => {
+    process.env.MBA3_LECTURA_CF_ACCESS_CLIENT_ID = "abc123.access";
+    process.env.MBA3_LECTURA_CF_ACCESS_CLIENT_SECRET = "shh-secreto";
+    const post = montarClienteMock();
+    post
+      .mockResolvedValueOnce({ data: { access_token: "tok1", refresh_token: "ref1" } }) // login
+      .mockResolvedValueOnce({ data: { data: [{ codigo: "C1" }], pagination: { total: 1, returned: 1 } } }) // llamada
+      .mockResolvedValueOnce({ data: {} }); // logout
+
+    await Mba3Lectura.llamarEndpoint("ficha-cliente", { codigo: "C1" });
+    await Mba3Lectura.logout();
+
+    const headersEsperados = {
+      "CF-Access-Client-Id": "abc123.access",
+      "CF-Access-Client-Secret": "shh-secreto",
+    };
+    // login
+    expect(post.mock.calls[0][2].headers).toMatchObject(headersEsperados);
+    // catálogo (además lleva Authorization)
+    expect(post.mock.calls[1][2].headers).toMatchObject(headersEsperados);
+    expect(post.mock.calls[1][2].headers.Authorization).toBe("Bearer tok1");
+    // logout (además lleva Authorization)
+    expect(post.mock.calls[2][2].headers).toMatchObject(headersEsperados);
+  });
+
+  it("NO manda los headers de Cloudflare si falta MBA3_LECTURA_CF_ACCESS_CLIENT_SECRET (sigue funcionando igual que antes)", async () => {
+    process.env.MBA3_LECTURA_CF_ACCESS_CLIENT_ID = "abc123.access";
+    // sin MBA3_LECTURA_CF_ACCESS_CLIENT_SECRET
+    const post = montarClienteMock();
+    post
+      .mockResolvedValueOnce({ data: { access_token: "tok1", refresh_token: "ref1" } })
+      .mockResolvedValueOnce({ data: { data: [{ codigo: "C1" }], pagination: { total: 1, returned: 1 } } });
+
+    await Mba3Lectura.llamarEndpoint("ficha-cliente", { codigo: "C1" });
+
+    expect(post.mock.calls[0][2].headers).not.toHaveProperty("CF-Access-Client-Id");
+    expect(post.mock.calls[1][2].headers).not.toHaveProperty("CF-Access-Client-Id");
+  });
+
+  it("NO manda los headers de Cloudflare cuando ninguna de las 2 variables está configurada", async () => {
+    const post = montarClienteMock();
+    post
+      .mockResolvedValueOnce({ data: { access_token: "tok1", refresh_token: "ref1" } })
+      .mockResolvedValueOnce({ data: { data: [{ codigo: "C1" }], pagination: { total: 1, returned: 1 } } });
+
+    await Mba3Lectura.llamarEndpoint("ficha-cliente", { codigo: "C1" });
+
+    expect(post.mock.calls[0][2].headers).toEqual({});
+    expect(post.mock.calls[1][2].headers).toEqual({ Authorization: "Bearer tok1" });
+  });
+
+  it("avisa por consola si MBA3_LECTURA_URL está configurado pero faltan los 2 valores del Service Token", async () => {
+    process.env.MBA3_LECTURA_URL = "https://mba3api.rayhsa.net";
+    const post = montarClienteMock();
+    post
+      .mockResolvedValueOnce({ data: { access_token: "tok1", refresh_token: "ref1" } })
+      .mockResolvedValueOnce({ data: { data: [], pagination: { total: 0, returned: 0 } } });
+    const avisoSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    await Mba3Lectura.llamarEndpoint("ficha-cliente", { codigo: "C1" });
+
+    expect(avisoSpy).toHaveBeenCalledWith(expect.stringContaining("Cloudflare Access"));
+    avisoSpy.mockRestore();
+  });
+
+  it("no avisa si MBA3_LECTURA_URL no está configurado (entorno sin intención de hablar con MBA3 real)", async () => {
+    const post = montarClienteMock();
+    post
+      .mockResolvedValueOnce({ data: { access_token: "tok1", refresh_token: "ref1" } })
+      .mockResolvedValueOnce({ data: { data: [], pagination: { total: 0, returned: 0 } } });
+    const avisoSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    await Mba3Lectura.llamarEndpoint("ficha-cliente", { codigo: "C1" });
+
+    expect(avisoSpy).not.toHaveBeenCalled();
+    avisoSpy.mockRestore();
   });
 });

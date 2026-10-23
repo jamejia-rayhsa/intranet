@@ -13,6 +13,7 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-23] [coder] → code-notes.md#2026-10-23-coder--convenios-de-compra-fase-2-integración-de-lectura-mba3 — Soporte de Service Token de Cloudflare Access (headers CF-Access-Client-Id/Secret) en el cliente de lectura MBA3; el humano ya tiene el token
 - [2026-10-23] orquestador → decisions.md — Fase 2 de Convenios de compra CERRADA (commit en feat/comercial-convenios); MBA3 real sigue bloqueado por Cloudflare Access
 - [2026-10-23] [coder] → code-notes.md#2026-10-23-coder--convenios-de-compra-fase-2-integración-de-lectura-mba3 — Correcciones post-revisión Fase 2: coincidencia exacta de código, single-flight/cooldown de login, resolución en paralelo (~70s a ~1 llamada), namespace de caché separado, migración 002 agregada al compose
 - [2026-10-23] [tester] → tests.md#2026-10-23-tester--convenios-de-compra-fase-2-mba3 — Convenios de compra Fase 2: sin fallos bloqueantes nuevos; confirmó en vivo la latencia de R-F2-3 (~70s peor caso) y el bloqueo de Cloudflare Access de forma independiente
