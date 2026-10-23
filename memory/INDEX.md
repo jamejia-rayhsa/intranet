@@ -13,6 +13,8 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-22] [coder] → code-notes.md — Una importación no congela la intranet (lock_timeout 3 s + 409, tope de 2 simultáneas, reintento del front), libros 1904, nómina con espacios, repetidos entre lotes (jest 2082, 23 mutantes, 15 importaciones simultáneas con la API en 200)
+- [2026-10-22] [revisor] → reviews.md#re-revisión-de-integridad-de-la-carga — Re-revisión de integridad de la carga: CON OBSERVACIONES, sin críticos (R-1 fechas 1904, R-2 nómina con espacio, R-3 pool y candado sin límite)
 - [2026-10-22] [coder] → code-notes.md — Correcciones de integridad del modo actualizar (CURP inválida/sin identificador/ceros = error, NSS y estatus sin pisar, candado advisory 4410 y SAVEPOINT por fila, fechas Excel como serial, exportación auditada; 195 importaciones simultáneas 0 errores, jest 2062, 37 mutantes)
 - [2026-10-22] orquestador → decisions.md — Plantilla de carga completa: revisión NO APROBADA y 7 fallos de pruebas; ronda de correcciones de integridad en curso
 - [2026-10-22] [tester] → tests.md — Plantilla de carga completa y departamentos: prueba INTEGRADA con la pantalla real de Empleados y Departamentos (Chromium + Firefox) contra backend real y Postgres real (supabase 17 + pg16): actualizar los 71 (3 195/3 195), departamentos con turno y cupo, formatos, lotes de 80 kb/1 500 filas, red, permisos, auditoría, responsive/axe/teclado, jest 2022 x4 y eslint 0 errores; 7 FAIL (2 medios de concurrencia: deadlock en orden opuesto y ciclos de jefes por carrera; A1-A3 del revisor reproducidos; 4 menores), 0 bloqueados

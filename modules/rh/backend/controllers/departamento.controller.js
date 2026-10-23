@@ -1,6 +1,7 @@
 const { validarCuerpoImportacion, normalizarClave } = require("../utils/importarEmpleados");
 const { auditarImportacion } = require("../utils/auditoriaImportacion");
 const { describirErrorSql } = require("../utils/logSeguro");
+const { esImportacionEnCurso, responderImportacionEnCurso } = require("../utils/candadosImportacion");
 const { tienePermiso } = require("../../../portal/backend/middleware/permisos.middleware");
 const Turno = require("../models/turno.model");
 const Departamento = require("../models/departamento.model");
@@ -23,7 +24,7 @@ const ControladorDepartamento = {
       const departamentos = await Departamento.obtenerTodos({ conTurno: !!conTurno });
       res.json({ exito: true, datos: departamentos });
     } catch (error) {
-      console.error("[departamentos]", error);
+      console.error(`[departamentos] ${describirErrorSql(error)}`);
       res
         .status(500)
         .json({ exito: false, mensaje: "Error al listar departamentos" });
@@ -47,7 +48,7 @@ const ControladorDepartamento = {
           mensaje: "Departamento creado exitosamente",
         });
     } catch (error) {
-      console.error("[departamentos]", error);
+      console.error(`[departamentos] ${describirErrorSql(error)}`);
       res
         .status(400)
         .json({ exito: false, mensaje: "Error al crear departamento" });
@@ -73,7 +74,7 @@ const ControladorDepartamento = {
         mensaje: "Departamento actualizado exitosamente",
       });
     } catch (error) {
-      console.error("[departamentos]", error);
+      console.error(`[departamentos] ${describirErrorSql(error)}`);
       res
         .status(400)
         .json({ exito: false, mensaje: "Error al actualizar departamento" });
@@ -98,7 +99,7 @@ const ControladorDepartamento = {
             : "El departamento tiene empleados u otros registros relacionados y no se puede eliminar; reasígnalos o desactívalo",
         });
       }
-      console.error("[departamentos]", error);
+      console.error(`[departamentos] ${describirErrorSql(error)}`);
       res
         .status(500)
         .json({ exito: false, mensaje: "Error al eliminar departamento" });
@@ -149,6 +150,7 @@ const ControladorDepartamento = {
 
       res.json({ exito: true, datos: resultado });
     } catch (error) {
+      if (esImportacionEnCurso(error)) return responderImportacionEnCurso(res);
       console.error(`[departamentos] importar: ${describirErrorSql(error)}`);
       res.status(500).json({ exito: false, mensaje: "Error al importar departamentos" });
     }

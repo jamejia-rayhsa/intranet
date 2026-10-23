@@ -14,7 +14,7 @@ function leerFuente(nombre) {
   for (const i of imports) {
     if (!/from '\.\/importarFechas'/.test(i)) throw new Error(`${nombre}: import no soportado por el cargador: ${i}`);
   }
-  const nombres = [...fuente.matchAll(/^export\s+(?:const|let|function)\s+(\w+)/gm)].map((m) => m[1]);
+  const nombres = [...fuente.matchAll(/^export\s+(?:const|let|(?:async\s+)?function)\s+(\w+)/gm)].map((m) => m[1]);
   const total = (fuente.match(/^export\s/gm) || []).length;
   if (total !== nombres.length) throw new Error(`${nombre}: ${total} exports pero se reconocieron ${nombres.length}`);
   return { codigo: fuente.replace(/^import\s.*$/gm, "").replace(/^export\s+/gm, ""), nombres };

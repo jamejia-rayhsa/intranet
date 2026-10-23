@@ -7,7 +7,7 @@ const XLSX = require("xlsx");
 const raiz = path.join(__dirname, "../..");
 const leer = (...partes) => fs.readFileSync(path.join(raiz, ...partes), "utf8");
 const sinModulos = (fuente) => fuente.replace(/^import\s[\s\S]*?from\s+'[^']+';?\s*$/gm, "").replace(/^export\s+/gm, "");
-const nombresExportados = (fuente) => [...fuente.matchAll(/^export\s+(?:const|let|function)\s+(\w+)/gm)].map((m) => m[1]);
+const nombresExportados = (fuente) => [...fuente.matchAll(/^export\s+(?:const|let|(?:async\s+)?function)\s+(\w+)/gm)].map((m) => m[1]);
 
 const fuentes = [
   ["portal/frontend/utils/importarFechas.js"],
@@ -344,3 +344,58 @@ describe("layout de departamentos", () => {
     expect(r.advertencias).toEqual([]);
   });
 });
+
+describe("R-3c reintento de 409 y R-5 repetidos entre lotes", () => {
+  const err409 = () => Object.assign(new Error("Hay otra importación en curso"), { status: 409 });
+
+  it("ESPERAS_OCUPADO = 2 s, 5 s, 10 s y el mensaje final es 'No se aplicó: otra importación en curso'", () => {
+    expect(U.ESPERAS_OCUPADO).toEqual([2000, 5000, 10000]);
+    expect(U.MENSAJE_OCUPADO).toBe("No se aplicó: otra importación en curso");
+  });
+
+  it("409 y luego éxito: reintenta el MISMO lote con espera creciente y devuelve la respuesta", async () => {
+    const esperas = [];
+    let llamadas = 0;
+    const avisos = [];
+    const r = await U.enviarConReintento(async () => { llamadas++; if (llamadas < 3) throw err409(); return { exito: true }; }, async (ms) => { esperas.push(ms); }, undefined, (n, de) => avisos.push([n, de]));
+    expect(r).toEqual({ resp: { exito: true } });
+    expect(llamadas).toBe(3);
+    expect(esperas).toEqual([2000, 5000]);
+    expect(avisos).toEqual([[1, 3], [2, 3]]);
+  });
+
+  it("409 persistente: 1 intento + 3 reintentos y devuelve ocupado=true (no 'no confirmado')", async () => {
+    const esperas = [];
+    let llamadas = 0;
+    const r = await U.enviarConReintento(async () => { llamadas++; throw err409(); }, async (ms) => { esperas.push(ms); });
+    expect(llamadas).toBe(4);
+    expect(esperas).toEqual([2000, 5000, 10000]);
+    expect(r.ocupado).toBe(true);
+    expect(r.error.status).toBe(409);
+  });
+
+  it("otros errores (400, 403, 500, red) NO se reintentan", async () => {
+    for (const status of [400, 403, 413, 500, undefined]) {
+      let llamadas = 0;
+      const r = await U.enviarConReintento(async () => { llamadas++; throw Object.assign(new Error("x"), { status }); }, async () => { throw new Error("no debía esperar"); });
+      expect(llamadas).toBe(1);
+      expect(r.ocupado).toBe(false);
+    }
+  });
+
+  it("R-5: el mismo empleado (CURP o, sin CURP, nómina) en lotes distintos avisa en las apariciones que no son la última", () => {
+    const f = (n, ex) => ({ _fila: n, nombre: "N" + n, apellido_paterno: "A", ...ex });
+    const lotes = [
+      [f(2, { curp: "XXXX000101HXXXXXX0" }), f(3, { numero_nomina: "7" }), f(4, { curp: "XXXX000102HXXXXXX0" }), f(5, {})],
+      [f(102, { curp: "xxxx000101hxxxxxx0" }), f(103, { numero_nomina: "7.0" }), f(104, { curp: "XXXX000101HXXXXXX0" })],
+      [f(202, { numero_nomina: " 7 " })],
+    ];
+    const a = U.repeticionesEntreLotes(lotes);
+    expect(a.map((x) => x.fila)).toEqual([2, 3, 103]);
+    expect(a[0]).toEqual({ fila: 2, nombre: "N2 A", campo: "curp", valor_recibido: null, motivo: "repetido en el archivo: se aplicó la última fila" });
+    expect(a[1].campo).toBe("numero_nomina");
+    expect(U.repeticionesEntreLotes([[f(2, { curp: "XXXX000101HXXXXXX0" }), f(3, { curp: "XXXX000101HXXXXXX0" })]])).toEqual([]); // mismo lote: lo resuelve el servidor
+    expect(U.repeticionesEntreLotes([])).toEqual([]);
+  });
+});
+

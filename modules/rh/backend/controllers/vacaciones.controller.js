@@ -626,8 +626,12 @@ const ControladorVacaciones = {
         // Con la fila ya bloqueada: la ruta pudo decidir con datos anteriores. Autoriza el jefe VIGENTE
         // del empleado (SELECT con `cliente`, dentro de la transacción); el jefe guardado en la
         // solicitud es solo histórico. FOR SHARE sobre la fila del empleado: un cambio de jefe concurrente
-        // espera al COMMIT (orden: candado empleado -> solicitud -> fila empleado -> departamento; las
-        // demás rutas no bloquean la fila del empleado, así que no hay ciclo).
+        // espera al COMMIT (orden: candado empleado -> solicitud -> fila empleado -> departamento). La importación masiva de
+        // empleados (modo actualizar) SÍ hace UPDATE de esa fila dentro de su propia transacción: espera a que esta
+        // aprobación haga COMMIT (y viceversa) con lock_timeout de 3 s en la importación; no toma el candado 4217 de
+        // vacaciones, así que si coincidiera con un cambio de departamento PostgreSQL rompería un posible ciclo con 40P01
+        // (esta aprobación respondería 500 y la fila de la importación se revertiría con su SAVEPOINT). Es raro y sin
+        // pérdida de datos; no hay otra ruta que bloquee la fila del empleado.
         const jefeVigenteId = await SolicitudVacaciones.jefeVigenteDeEmpleado(
           actual.empleado_id,
           cliente,

@@ -124,6 +124,16 @@ function nombreCompleto(fila) {
     .slice(0, 300);
 }
 
+// Número de nómina: letras, dígitos, guion, guion bajo y punto. Un espacio interno ("700 002") dejaría la fila sin coincidencia
+// y se insertaría como empleado nuevo (duplicado), por eso es error y no se "limpia" en silencio.
+const NOMINA_RE = /^[\p{L}\p{N}._-]+$/u;
+function problemaNominaTexto(texto) {
+  if (!texto) return null;
+  if (/\s/.test(texto)) return "contiene espacios";
+  if (!NOMINA_RE.test(texto)) return "solo se permiten letras, dígitos, guion, guion bajo y punto";
+  return null;
+}
+
 const CURP_RE = /^[A-ZÑ0-9]{18}$/;
 const ERROR_CURP = "CURP inválida: no se puede identificar al empleado";
 const RFC_RE = /^[A-ZÑ&0-9]{12,13}$/;
@@ -225,6 +235,8 @@ function prepararFilaEmpleado(cruda) {
     // Excel entrega 101 como 101.0 en algunos orígenes: la nómina es texto sin decimales
     const nomina = /^\d+\.0+$/.test(n) ? n.replace(/\.0+$/, "") : n;
     if (nomina.length > 50) return { error: `Número de nómina excede 50 caracteres (tiene ${nomina.length})` };
+    const problemaNomina = problemaNominaTexto(nomina);
+    if (problemaNomina) return { error: `Número de nómina inválido: ${problemaNomina}` };
     fila.numero_nomina = nomina;
   }
 
@@ -272,6 +284,7 @@ function prepararFilaEmpleado(cruda) {
     if (t === null) { fila[clave] = ""; advertir(clave, null, "valor no válido"); continue; }
     if (t.includes("\u0000")) { fila[clave] = ""; advertir(clave, t, "contiene caracteres no permitidos"); continue; }
     if (t.length > max) { fila[clave] = ""; advertir(clave, t, `excede ${max} caracteres (tiene ${t.length})`); continue; }
+    if (clave === "jefe_nomina" && problemaNominaTexto(t)) { fila[clave] = ""; advertir(clave, t, `número de nómina del jefe inválido: ${problemaNominaTexto(t)}`); continue; }
     fila[clave] = t;
   }
   {
@@ -309,6 +322,7 @@ function validarParesJefes(pares) {
     const jn = textoSeguro(p.jefe_nomina);
     const jc = textoSeguro(p.jefe_curp);
     if (jn === null || jc === null || jn.includes("\u0000") || jc.includes("\u0000") || jn.length > 50 || jc.length > 18) continue;
+    if (problemaNominaTexto(jn)) continue;
     if (!jn && !jc) continue;
     validos.push({ empleado_id: p.empleado_id, fila: Number.isInteger(p.fila) && p.fila > 0 ? p.fila : null, jefe_nomina: jn, jefe_curp: jc });
   }
@@ -336,6 +350,7 @@ module.exports = {
   CAMPOS_DIRECTOS,
   CAMPOS_FECHA,
   normalizarClave,
+  problemaNominaTexto,
   normalizarTelefono,
   valorParaMostrar,
   esFechaValida,

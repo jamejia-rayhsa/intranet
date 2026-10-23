@@ -18,7 +18,8 @@ function crearBd({ empleados = [], puestos = [], departamentos = [], ubicaciones
     estado.sentencias.push({ sql: q, params });
     // Como PostgreSQL: tras un error la transacción queda abortada y solo ROLLBACK [TO SAVEPOINT] la rehabilita
     if (estado.abortada && !/^(ROLLBACK|COMMIT)/.test(q)) throw new Error("current transaction is aborted, commands ignored until end of transaction block");
-    if (fallaEn && fallaEn(q, params)) { estado.abortada = true; throw new Error("fallo simulado de PostgreSQL (detalle interno)"); }
+    const falla = fallaEn && fallaEn(q, params);
+    if (falla) { estado.abortada = true; throw falla instanceof Error ? falla : new Error("fallo simulado de PostgreSQL (detalle interno)"); }
     if (/^ROLLBACK/.test(q)) estado.abortada = false;
     if (q === "BEGIN") { estado.transacciones.begin++; respaldo = JSON.stringify(estado.empleados); return { rows: [] }; }
     if (q === "COMMIT") { estado.transacciones.commit++; respaldo = null; return { rows: [] }; }

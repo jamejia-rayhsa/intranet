@@ -575,6 +575,24 @@ describe("integridad del modo actualizar (carga real de empleados)", () => {
     expect(bd.estado.empleados[0].calle).toBe("Nueva");
   });
 
+  it("R-2: nómina con espacio interno o caracteres no permitidos = ERROR; '700 002' sin CURP NO crea un duplicado de '700002'", async () => {
+    const bd = simularBd({ empleados: [{ id: 1, nombre: "Ana", apellido_paterno: "Vieja", numero_nomina: "700002", estatus: "activo" }] });
+    for (const f of [actualizar, omitir]) {
+      const r = await f([{ _fila: 2, ...nombre, numero_nomina: "700 002", calle: "X" }, { _fila: 3, ...nombre, numero_nomina: "7000#2" }, { _fila: 4, ...nombre, numero_nomina: "70\t0002" }]);
+      expect(r).toMatchObject({ insertados: 0, actualizados: 0 });
+      expect(r.errores.map((e) => e.error)).toEqual([
+        "Número de nómina inválido: contiene espacios",
+        "Número de nómina inválido: solo se permiten letras, dígitos, guion, guion bajo y punto",
+        "Número de nómina inválido: contiene espacios",
+      ]);
+    }
+    expect(bd.estado.empleados).toHaveLength(1);
+    expect(prepararFilaEmpleado(base(1, { numero_nomina: "A-1_b.2" })).error).toBeUndefined();
+    expect(prepararFilaEmpleado(base(1, { jefe_nomina: "7 2" })).advertencias[0]).toMatchObject({ campo: "jefe_nomina", motivo: expect.stringMatching(/contiene espacios/) });
+    expect(prepararFilaEmpleado(base(1, { jefe_nomina: "7 2" })).fila.jefe_nomina).toBe("");
+    expect(validarParesJefes([{ empleado_id: 1, jefe_nomina: "7 2" }, { empleado_id: 2, jefe_nomina: "7-2" }]).validos).toEqual([{ empleado_id: 2, fila: null, jefe_nomina: "7-2", jefe_curp: "" }]);
+  });
+
   it("A1: posible duplicado también entre filas del mismo lote ('N-1' no choca con 'N-01'; '0050' después de '50' sí)", async () => {
     simularBd();
     const r = await omitir([base(1, { numero_nomina: "50" }), base(2, { numero_nomina: "0050" }), base(3, { numero_nomina: "N-1" }), base(4, { numero_nomina: "N-01" })]);
@@ -625,9 +643,10 @@ describe("integridad del modo actualizar (carga real de empleados)", () => {
       await Empleado.importarLote([base(1, { curp: CURP(1) })], mapas(), { modo });
       const sql = bd.estado.sentencias.map((s) => s.sql);
       expect(sql[0]).toBe("BEGIN");
-      expect(sql[1]).toMatch(/^SELECT pg_advisory_xact_lock/);
+      expect(sql[1]).toBe("SET LOCAL lock_timeout = '3s'"); // R-3: la espera por el candado tiene límite
+      expect(sql[2]).toMatch(/^SELECT pg_advisory_xact_lock/);
       expect(bd.estado.candados).toEqual([[4410, 1]]);
-      expect(sql.findIndex((x) => /FROM empleados WHERE LOWER\(curp\)/.test(x))).toBeGreaterThan(1);
+      expect(sql.findIndex((x) => /FROM empleados WHERE LOWER\(curp\)/.test(x))).toBeGreaterThan(2);
     }
     const bd = simularBd({ empleados: [
       { id: 1, nombre: "A", apellido_paterno: "A", curp: CURP(1), numero_nomina: "N1" },
@@ -798,6 +817,102 @@ describe("jefe inmediato: pares pendientes y segunda pasada", () => {
     expect(validos).toEqual([
       { empleado_id: 1, fila: 3, jefe_nomina: "N1", jefe_curp: "" }, { empleado_id: 5, fila: null, jefe_nomina: "", jefe_curp: "C" },
     ]);
+  });
+});
+
+describe("R-3: una importación no puede congelar la intranet (lock_timeout, 409 y tope de importaciones simultáneas)", () => {
+  const { MENSAJE_IMPORTACION_EN_CURSO, tomarCupoImportacion, MAX_IMPORTACIONES_SIMULTANEAS } = require("../utils/candadosImportacion");
+  const bloqueo = () => Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" });
+  const esCandado = (q) => /^SELECT pg_advisory_xact_lock/.test(q);
+  const cuerpo409 = { exito: false, mensaje: "Hay otra importación en curso; el lote no se aplicó. Espera unos segundos y reintenta" };
+
+  it("el mensaje 409 es el acordado", () => {
+    expect(MENSAJE_IMPORTACION_EN_CURSO).toBe(cuerpo409.mensaje);
+    expect(MAX_IMPORTACIONES_SIMULTANEAS).toBe(2);
+  });
+
+  it("lock_timeout vencido (55P03) en un lote de empleados: 409 con el mensaje, ROLLBACK, nada a medias y la conexión se libera", async () => {
+    const bd = simularBd({ fallaEn: (q) => esCandado(q) && bloqueo() });
+    const res = await request(app).post("/api/empleados/importar").send({ filas: [base(1, { curp: CURP(1) })], modo: "actualizar" });
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual(cuerpo409);
+    expect(bd.estado.transacciones).toMatchObject({ begin: 1, commit: 0, rollback: 1 });
+    expect(bd.estado.empleados).toHaveLength(0);
+    expect(bd.estado.liberados).toBe(1);
+    expect(bd.estado.sentencias.filter((s) => /^(INSERT|UPDATE)/.test(s.sql))).toHaveLength(0);
+  });
+
+  it("lo mismo en la segunda pasada de jefes y también cuando el bloqueo vence después (p. ej. al escribir una fila)... solo el candado", async () => {
+    simularBd({ empleados: [{ id: 1, nombre: "A", apellido_paterno: "A", numero_nomina: "N1" }], fallaEn: (q) => esCandado(q) && bloqueo() });
+    const res = await request(app).post("/api/empleados/importar/jefes").send({ pares: [{ empleado_id: 1, jefe_nomina: "N1" }] });
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual(cuerpo409);
+  });
+
+  it("el SET LOCAL va antes del candado en la segunda pasada de jefes", async () => {
+    const bd = simularBd({ empleados: [{ id: 1, nombre: "A", apellido_paterno: "A", numero_nomina: "N1" }] });
+    await Empleado.asignarJefes([{ empleado_id: 1, fila: 2, jefe_nomina: "N1", jefe_curp: "" }]);
+    const sql = bd.estado.sentencias.map((x) => x.sql);
+    expect(sql.slice(0, 3)).toEqual(["BEGIN", "SET LOCAL lock_timeout = '3s'", expect.stringMatching(/^SELECT pg_advisory_xact_lock/)]);
+  });
+
+  it("tomarCupoImportacion: el tercer lote simultáneo falla al instante y liberar es idempotente", () => {
+    const a = tomarCupoImportacion();
+    const b = tomarCupoImportacion();
+    expect(() => tomarCupoImportacion()).toThrow(MENSAJE_IMPORTACION_EN_CURSO);
+    a(); a(); // idempotente: no libera dos cupos
+    const c = tomarCupoImportacion();
+    expect(() => tomarCupoImportacion()).toThrow();
+    b(); c();
+    tomarCupoImportacion()();
+  });
+
+  it("15 importaciones simultáneas: solo 2 piden conexión al pool, las otras 13 reciben 409 inmediato sin tocarlo; luego todo se libera", async () => {
+    const bd = simularBd();
+    let abrir;
+    const compuerta = new Promise((r) => { abrir = r; });
+    const conectar = bd.estado && grupo.connect.getMockImplementation();
+    grupo.connect.mockImplementation(async () => { await compuerta; return conectar(); });
+    const peticiones = Array.from({ length: 15 }, (_, i) => request(app).post("/api/empleados/importar").send({ filas: [base(i, { curp: CURP(i) })] }).then((r) => r)); // .then arranca la petición (superagent es perezoso)
+    // las 13 sin cupo responden mientras las 2 primeras siguen esperando su conexión
+    await new Promise((r) => setTimeout(r, 300));
+    expect(grupo.connect).toHaveBeenCalledTimes(2);
+    abrir();
+    const respuestas = await Promise.all(peticiones);
+    const estados = respuestas.map((r) => r.status).sort();
+    expect(estados.filter((e) => e === 200)).toHaveLength(2);
+    expect(estados.filter((e) => e === 409)).toHaveLength(13);
+    expect(estados.filter((e) => e >= 500)).toHaveLength(0);
+    respuestas.filter((r) => r.status === 409).forEach((r) => expect(r.body).toEqual(cuerpo409));
+    expect(grupo.connect).toHaveBeenCalledTimes(2);
+    // el cupo se liberó: otra importación normal funciona
+    grupo.connect.mockImplementation(conectar);
+    expect((await request(app).post("/api/empleados/importar").send({ filas: [base(99, { curp: CURP(99) })] })).status).toBe(200);
+  });
+
+  it("si la conexión al pool falla, el cupo se libera (no se queda ocupado) y responde 500 genérico", async () => {
+    simularBd(); // catálogos disponibles: la falla es solo la conexión del pool
+    grupo.connect.mockRejectedValue(new Error("pool agotado"));
+    for (let i = 0; i < 4; i++) {
+      const res = await request(app).post("/api/empleados/importar").send({ filas: [base(1, { curp: CURP(1) })] });
+      expect(res.status).toBe(500); // 4 > 2: si el cupo se filtrara, saldría 409
+    }
+  });
+
+  it("las rutas de departamentos también devuelven 409 (lock_timeout)", async () => {
+    jest.resetModules();
+    jest.doMock("../../../portal/backend/middleware/permisos.middleware", () => ({ verificarPermiso: () => (_a, _b, n) => n(), tienePermiso: async () => true }));
+    const C = require("../controllers/departamento.controller");
+    const g = require("../../../portal/backend/config/database").grupo;
+    const { crearBd: nuevaBd } = require("./fakeEmpleadosImportacion");
+    const fake = nuevaBd({ ...CATALOGOS, fallaEn: (q) => esCandado(q) && bloqueo() });
+    g.query.mockImplementation(async (sql) => (/FROM areas|FROM turnos/.test(sql) ? { rows: [] } : { rows: [{ hoy: "2026-10-22" }] }));
+    g.connect.mockImplementation(fake.connect);
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    await C.importar({ body: { filas: [{ nombre: "X" }] }, user: { usuario_id: 5 }, headers: {}, socket: {} }, res);
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith(cuerpo409);
+    expect(fake.estado.transacciones.rollback).toBe(1);
   });
 });
 

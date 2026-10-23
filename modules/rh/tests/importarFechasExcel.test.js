@@ -9,7 +9,7 @@ const dir = path.join(__dirname, "../../portal/frontend/utils");
 const fuente = ["importarFechas.js", "importarFilas.js", "hojaAMatriz.js"]
   .map((n) => fs.readFileSync(path.join(dir, n), "utf8").replace(/^import\s.*$/gm, "").replace(/^export\s+/gm, ""))
   .join("\n");
-const nombres = [...fuente.matchAll(/^(?:const|let|function)\s+(\w+)/gm)].map((m) => m[1]);
+const nombres = [...fuente.matchAll(/^(?:const|let|(?:async\s+)?function)\s+(\w+)/gm)].map((m) => m[1]);
 const U = new Function("XLSX", `${fuente}\nreturn { ${nombres.join(", ")} };`)(require("xlsx"));
 
 const COL = [
@@ -102,5 +102,41 @@ describe("fechas de Excel como serial exacto (sin Date local)", () => {
     expect(f[1]._precision).toEqual(["calle"]);
     expect(U.leerMatriz([["Nombre", "Apellido Paterno", "Calle"], ["Ana", "P", 99999999999999]], COL).filas[0]._precision).toBeUndefined();
     expect(U.separarFilas(f, COL).enviar[0]._precision).toEqual(["clabe"]); // sale hacia el servidor
+  });
+
+  it("R-1: libro con sistema de fechas 1904: el serial se convierte con la época correcta (1462 -> 1908-01-02); el libro normal no cambia", () => {
+    const XLSX = require("xlsx");
+    const construir = (date1904) => {
+      const ws = XLSX.utils.aoa_to_sheet([["Nombre", "Apellido Paterno", "Fecha Nacimiento"], ["Ana", "P", null], ["Beto", "Q", null]]);
+      ws.C2 = { t: "n", v: 1462, z: "dd/mm/yyyy" };
+      ws.C3 = { t: "n", v: 0, z: "dd/mm/yyyy" };
+      const wb = { SheetNames: ["H"], Sheets: { H: ws } };
+      if (date1904) wb.Workbook = { WBProps: { date1904: true } };
+      const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx", cellStyles: true });
+      const leido = XLSX.read(buf, { type: "buffer", cellDates: false, cellNF: true, raw: true });
+      return { leido, filas: U.leerMatriz(U.hojaAMatriz(XLSX, leido.Sheets.H, U.libroEs1904(leido)), COL).filas };
+    };
+    const l1904 = construir(true);
+    expect(U.libroEs1904(l1904.leido)).toBe(true);
+    expect(l1904.filas.map((f) => f.fecha_nacimiento)).toEqual(["1908-01-02", "1904-01-01"]);
+    const l1900 = construir(false);
+    expect(U.libroEs1904(l1900.leido)).toBe(false);
+    expect(l1900.filas[0].fecha_nacimiento).toBe("1904-01-01"); // el mismo serial 1462 en el sistema 1900 (y 0 no es fecha válida)
+    expect(l1900.filas[1].__errores[0]).toMatch(/fuera de rango/);
+    expect(U.libroEs1904(undefined)).toBe(false);
+    expect(U.libroEs1904({ Workbook: { WBProps: {} } })).toBe(false);
+    expect(U.libroEs1904({ Workbook: { WBProps: { date1904: "1" } } })).toBe(true);
+  });
+
+  it("R-7: serial desbordado o NaN = 'fuera de rango', nunca 'NaN-NaN-NaN'", () => {
+    for (const n of [1e15, 1e20, 2958466, Number.MAX_SAFE_INTEGER]) {
+      const r = U.normalizarFecha({ serialExcel: n });
+      expect(r.valor).toBe("");
+      expect(r.error).toMatch(/fuera de rango/);
+    }
+    expect(U.normalizarFecha({ serialExcel: NaN }).error).toBeTruthy();
+    expect(U.normalizarFecha({ serialExcel: 2958465 }).error).toMatch(/entre 1900 y 2100/); // 9999: fuera del rango 1900-2100
+    expect(U.normalizarFecha(1e15).valor).toBe("");
+    expect(U.fechaDeSerialExcel(1e20).valor).not.toMatch(/NaN/);
   });
 });

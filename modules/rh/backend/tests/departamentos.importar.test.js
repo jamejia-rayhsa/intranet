@@ -345,9 +345,10 @@ describe("integridad de la importación de departamentos", () => {
     await importar([f(1)]);
     const llamadas = bd.cliente.query.mock.calls.map((c) => [c[0].replace(/\s+/g, " ").trim(), c[1]]);
     expect(llamadas[0][0]).toBe("BEGIN");
-    expect(llamadas[1][0]).toMatch(/^SELECT pg_advisory_xact_lock/);
-    expect(llamadas[1][1]).toEqual([4410, 2]);
-    expect(llamadas[2][0]).toMatch(/^SELECT id, nombre, descripcion/);
+    expect(llamadas[1][0]).toBe("SET LOCAL lock_timeout = '3s'"); // R-3
+    expect(llamadas[2][0]).toMatch(/^SELECT pg_advisory_xact_lock/);
+    expect(llamadas[2][1]).toEqual([4410, 2]);
+    expect(llamadas[3][0]).toMatch(/^SELECT id, nombre, descripcion/);
   });
 
   it("M1: el orden de escritura no depende del orden del archivo (y la primera aparición de un nombre repetido gana)", async () => {

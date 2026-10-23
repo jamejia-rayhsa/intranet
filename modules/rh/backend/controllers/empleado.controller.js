@@ -1,6 +1,7 @@
 const Empleado = require("../models/empleado.model");
 const { auditarImportacion } = require("../utils/auditoriaImportacion");
 const { describirErrorSql } = require("../utils/logSeguro");
+const { esImportacionEnCurso, responderImportacionEnCurso } = require("../utils/candadosImportacion");
 const {
   validarCuerpoImportacion, validarParesJefes, normalizarClave,
 } = require("../utils/importarEmpleados");
@@ -471,6 +472,7 @@ const ControladorEmpleado = {
 
       res.json({ exito: true, datos: resultado });
     } catch (error) {
+      if (esImportacionEnCurso(error)) return responderImportacionEnCurso(res);
       console.error(`[empleados] importar: ${describirErrorSql(error)}`);
       res.status(500).json({ exito: false, mensaje: 'Error al importar empleados' });
     }
@@ -509,6 +511,7 @@ const ControladorEmpleado = {
 
       res.json({ exito: true, datos: resultado });
     } catch (error) {
+      if (esImportacionEnCurso(error)) return responderImportacionEnCurso(res);
       console.error(`[empleados] importar jefes: ${describirErrorSql(error)}`);
       res.status(500).json({ exito: false, mensaje: 'Error al asignar los jefes inmediatos' });
     }

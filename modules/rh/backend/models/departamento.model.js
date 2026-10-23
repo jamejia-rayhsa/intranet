@@ -4,7 +4,7 @@ const {
 } = require("../utils/importarEmpleados");
 const { prepararFilaDepartamento } = require("../utils/importarDepartamentos");
 const TurnoAsignacion = require("./turnoAsignacion.model");
-const { tomarCandadoImportacion } = require("../utils/candadosImportacion");
+const { tomarCandadoImportacion, tomarCupoImportacion } = require("../utils/candadosImportacion");
 const { describirErrorSql } = require("../utils/logSeguro");
 const { ErrorAsistencia } = require("../utils/erroresAsistencia");
 
@@ -153,7 +153,14 @@ const Departamento = {
       .map((cruda, i) => ({ cruda, i, clave: normalizarClave(nombreDe(cruda)) }))
       .sort((x, y) => (x.clave < y.clave ? -1 : x.clave > y.clave ? 1 : x.i - y.i));
 
-    const cliente = await grupo.connect();
+    const liberarCupo = tomarCupoImportacion();
+    let cliente;
+    try {
+      cliente = await grupo.connect();
+    } catch (e) {
+      liberarCupo();
+      throw e;
+    }
     let transaccion = false;
     try {
       await cliente.query("BEGIN");
@@ -278,6 +285,7 @@ const Departamento = {
       throw e;
     } finally {
       cliente.release();
+      liberarCupo();
     }
     const porFila = (x, y) => (x.fila === null ? Infinity : x.fila) - (y.fila === null ? Infinity : y.fila);
     for (const lista of [r.errores, r.advertencias, r.duplicados_detalle, r.actualizados_detalle]) lista.sort(porFila);

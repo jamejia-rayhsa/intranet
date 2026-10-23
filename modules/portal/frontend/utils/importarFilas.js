@@ -349,3 +349,52 @@ export function construirCsvResultado(errores, duplicadosDetalle, sinCatalogo, e
   avisosSinCatalogo(sinCatalogo).forEach(function (a) { linea('Aviso', '', a.nombre, '', '', a.motivo); });
   return '\uFEFF' + lineas.join('\r\n') + '\r\n';
 }
+
+// ─── Reintento de "otra importación en curso" (409) y repetidos entre lotes ──────────────────────────────────────────
+
+// Esperas (ms) antes de reintentar un lote que el servidor rechazó con 409 (no se aplicó nada: reintentar es seguro).
+export const ESPERAS_OCUPADO = [2000, 5000, 10000];
+export const MENSAJE_OCUPADO = 'No se aplicó: otra importación en curso';
+
+// Ejecuta `operacion` (una petición que lanza Error con .status). Con 409 espera y reintenta el MISMO lote hasta
+// esperas.length veces. Devuelve { resp } si hubo respuesta, o { error, ocupado } si falló (ocupado=true: 409 persistente).
+export async function enviarConReintento(operacion, esperar, esperas, alReintentar) {
+  const tiempos = esperas || ESPERAS_OCUPADO;
+  for (let i = 0; ; i++) {
+    try {
+      return { resp: await operacion() };
+    } catch (err) {
+      const ocupado = !!err && err.status === 409;
+      if (!ocupado || i >= tiempos.length) return { error: err, ocupado: ocupado };
+      if (alReintentar) alReintentar(i + 1, tiempos.length);
+      await esperar(tiempos[i]);
+    }
+  }
+}
+
+function claveEmpleado(fila) {
+  const curp = String(fila.curp || '').replace(/\s/g, '').toUpperCase();
+  if (curp) return 'c:' + curp;
+  const nomina = String(fila.numero_nomina || '').trim().replace(/\.0+$/, '').toLowerCase();
+  return nomina ? 'n:' + nomina : '';
+}
+
+// Modo actualizar: el mismo empleado (misma CURP o, sin CURP, misma nómina) en lotes DISTINTOS se aplica una vez por lote y gana
+// la última fila (dentro de un lote el servidor aplica la primera y reporta la otra como repetida). Devuelve advertencias
+// { fila, nombre, campo, valor_recibido, motivo } para las apariciones que no son la última.
+export function repeticionesEntreLotes(lotes) {
+  const ultimo = {};
+  lotes.forEach(function (lote, i) {
+    lote.forEach(function (f) { const k = claveEmpleado(f); if (k) ultimo[k] = i; });
+  });
+  const avisos = [];
+  lotes.forEach(function (lote, i) {
+    lote.forEach(function (f) {
+      const k = claveEmpleado(f);
+      if (k && ultimo[k] > i) {
+        avisos.push({ fila: f._fila, nombre: nombreDeFila(f), campo: f.curp ? 'curp' : 'numero_nomina', valor_recibido: null, motivo: 'repetido en el archivo: se aplicó la última fila' });
+      }
+    });
+  });
+  return avisos;
+}

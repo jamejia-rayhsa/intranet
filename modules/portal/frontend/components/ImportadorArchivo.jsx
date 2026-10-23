@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
-import { hojaAMatriz } from '../utils/hojaAMatriz';
+import { hojaAMatriz, libroEs1904 } from '../utils/hojaAMatriz';
 import {
   leerMatriz, separarFilas, dividirEnLotes, resultadoVacio, sumarResultados, sumarJefes, decodificarTextoCsv,
   construirCsvResultado, numeroFilaDeError, nombreDeError, avisosSinCatalogo, TAMANO_LOTE, MAX_PARES_JEFES, MAX_ADVERTENCIAS,
+  enviarConReintento, repeticionesEntreLotes, MENSAJE_OCUPADO,
 } from '../utils/importarFilas';
 
 const estilos = {
@@ -93,7 +94,7 @@ function parsearArchivo(archivo, columnas) {
           : XLSX.read(e.target.result, { type: 'array', cellDates: false, cellNF: true, raw: true });
         const ws = wb.Sheets[wb.SheetNames[0]];
         if (!ws || !ws['!ref']) { resolve(leerMatriz([], columnas, 1)); return; }
-        const matriz = hojaAMatriz(XLSX, ws);
+        const matriz = hojaAMatriz(XLSX, ws, !esCsv && libroEs1904(wb));
         const filaEncabezado = XLSX.utils.decode_range(ws['!ref']).s.r + 1;
         resolve(leerMatriz(matriz, columnas, filaEncabezado));
       } catch (err) {
@@ -381,7 +382,9 @@ function VistaPreview({ columnas, filas, encabezados, permiteActualizar, textosM
 
         {procesando && progreso && (
           <p role="status" style={{ fontSize: '0.85rem', color: 'var(--color-texto-medio)', marginTop: '0.75rem' }}>
-            {progreso.jefes ? 'Asignando jefes inmediatos…' : `Importando… lote ${progreso.actual} de ${progreso.total}`}
+            {progreso.reintento
+              ? `Otra importación en curso: reintentando el mismo lote (${progreso.reintento} de ${progreso.de})…`
+              : progreso.jefes ? 'Asignando jefes inmediatos…' : `Importando… lote ${progreso.actual} de ${progreso.total}`}
           </p>
         )}
       </div>
@@ -673,6 +676,9 @@ const TEXTOS_MODO_POR_OMISION = {
  *                  resultados se queda abierta hasta que el usuario pulse Cerrar (onCancelar).
  *   onCancelar   — () => void
  */
+// Espera para el reintento de un 409 (otra importación en curso)
+const esperar = (ms) => new Promise((resolver) => setTimeout(resolver, ms));
+
 export default function ImportadorArchivo({
   titulo, columnas, filasEjemplo, nombreArchivo, onImportar, onImportarJefes, permiteActualizar, textosModo, accionesDescarga,
   onExito, onCancelar,
@@ -716,19 +722,26 @@ export default function ImportadorArchivo({
     let loteFallido = -1;
     let seguro = false; // true: el servidor respondió que NO procesó el lote (400/401/403/413 o exito:false)
     let sinPermiso = false; // 401/403: se detiene todo (también la segunda pasada) con el mensaje de permisos
+    let porOcupado = false; // 409 persistente: otra importación en curso; el lote NO se aplicó
+    // Modo actualizar: el mismo empleado en lotes distintos se aplica una vez por lote y gana la última fila
+    if (permiteActualizar && modo === 'actualizar') acumulado.advertencias = repeticionesEntreLotes(lotes).slice(0, MAX_ADVERTENCIAS);
     for (let i = 0; i < lotes.length; i++) {
       setProgreso({ actual: i + 1, total: lotes.length });
-      try {
-        const resp = await onImportar(lotes[i], { modo: permiteActualizar ? modo : 'omitir' });
-        if (!resp || !resp.exito) { fallo = (resp && resp.mensaje) || 'Error al importar'; seguro = true; loteFallido = i; break; }
-        acumulado = sumarResultados(acumulado, resp.datos);
-      } catch (err) {
-        fallo = err && err.message ? err.message : 'Error de conexión';
+      // 409 = otra importación en curso (no se aplicó nada): se reintenta el MISMO lote tras 2 s, 5 s y 10 s
+      const { resp, error: err, ocupado } = await enviarConReintento(
+        () => onImportar(lotes[i], { modo: permiteActualizar ? modo : 'omitir' }),
+        esperar, undefined, (n, de) => setProgreso({ actual: i + 1, total: lotes.length, reintento: n, de })
+      );
+      if (err) {
+        porOcupado = ocupado;
+        fallo = ocupado ? MENSAJE_OCUPADO : (err && err.message ? err.message : 'Error de conexión');
         sinPermiso = !!err && (err.status === 401 || err.status === 403);
-        seguro = !!err && (err.status === 400 || err.status === 413 || sinPermiso);
+        seguro = ocupado || (!!err && (err.status === 400 || err.status === 413 || sinPermiso));
         loteFallido = i;
         break;
       }
+      if (!resp || !resp.exito) { fallo = (resp && resp.mensaje) || 'Error al importar'; seguro = true; loteFallido = i; break; }
+      acumulado = sumarResultados(acumulado, resp.datos);
     }
 
     // Segunda pasada: jefe inmediato (el jefe puede venir en el mismo archivo, incluso en un lote posterior).
@@ -742,8 +755,11 @@ export default function ImportadorArchivo({
         for (let k = 0; k < pares.length; k += MAX_PARES_JEFES) {
           const trozo = pares.slice(k, k + MAX_PARES_JEFES);
           setProgreso({ actual: 1, total: 1, jefes: true });
-          try {
-            const resp = await onImportarJefes(trozo);
+          {
+            const { resp, error: errJefes, ocupado: ocupadoJefes } = await enviarConReintento(
+              () => onImportarJefes(trozo), esperar, undefined, (n, de) => setProgreso({ actual: 1, total: 1, jefes: true, reintento: n, de })
+            );
+            if (errJefes) { errorJefes = ocupadoJefes ? MENSAJE_OCUPADO : (errJefes.message || 'Error de conexión'); break; }
             if (!resp || !resp.exito) { errorJefes = (resp && resp.mensaje) || 'Error al asignar jefes'; break; }
             jefes = sumarJefes(jefes, resp.datos);
             pendientes -= trozo.length;
@@ -751,9 +767,6 @@ export default function ImportadorArchivo({
             const cupo = Math.max(0, MAX_ADVERTENCIAS - acumulado.advertencias.length);
             acumulado.advertencias = acumulado.advertencias.concat(nuevas.slice(0, cupo));
             acumulado.advertencias_omitidas += nuevas.length - Math.min(nuevas.length, cupo);
-          } catch (err) {
-            errorJefes = err && err.message ? err.message : 'Error de conexión';
-            break;
           }
         }
       } else {
@@ -778,7 +791,7 @@ export default function ImportadorArchivo({
         lote.forEach(f => acumulado.errores.push({
           fila: f._fila, nombre: nombreDe(f),
           error: i === loteFallido
-            ? (seguro ? `No se envió: ${fallo}` : `Resultado no confirmado (lote ${i + 1} de ${lotes.length}): revisa la lista antes de reintentar`)
+            ? (porOcupado ? MENSAJE_OCUPADO : seguro ? `No se envió: ${fallo}` : `Resultado no confirmado (lote ${i + 1} de ${lotes.length}): revisa la lista antes de reintentar`)
             : 'No se envió: la importación se interrumpió antes de este lote',
         }));
       });

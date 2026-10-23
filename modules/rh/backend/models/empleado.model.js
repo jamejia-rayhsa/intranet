@@ -1,5 +1,5 @@
 const { grupo } = require("../config/database");
-const { tomarCandadoImportacion } = require("../utils/candadosImportacion");
+const { tomarCandadoImportacion, tomarCupoImportacion } = require("../utils/candadosImportacion");
 const { describirErrorSql } = require("../utils/logSeguro");
 const {
   MAX_DUPLICADOS_DETALLE, MAX_SIN_CATALOGO, MAX_ADVERTENCIAS_LOTE, CAMPOS_DIRECTOS, CAMPOS_FECHA,
@@ -377,7 +377,14 @@ const Empleado = {
     const nominas = [...new Set(validas.map((v) => v.fila.numero_nomina.toLowerCase()).filter(Boolean))];
     const nominasSC = [...new Set(nominas.map(sinCeros).filter(Boolean))];
 
-    const cliente = await grupo.connect();
+    const liberarCupo = tomarCupoImportacion();
+    let cliente;
+    try {
+      cliente = await grupo.connect();
+    } catch (e) {
+      liberarCupo();
+      throw e;
+    }
     let transaccion = false;
     try {
       await cliente.query("BEGIN");
@@ -580,6 +587,7 @@ const Empleado = {
       throw e;
     } finally {
       cliente.release();
+      liberarCupo();
     }
 
     // Resultados en el orden del archivo (la fase B escribe en otro orden)
@@ -604,7 +612,14 @@ const Empleado = {
   // Devuelve { asignados, sin_cambios, no_encontrados, ciclos, conflictos, ambiguos, no_activos,
   //   advertencias:[{fila,nombre,campo,valor_recibido,motivo}] }.
   async asignarJefes(pares) {
-    const cliente = await grupo.connect();
+    const liberarCupo = tomarCupoImportacion();
+    let cliente;
+    try {
+      cliente = await grupo.connect();
+    } catch (e) {
+      liberarCupo();
+      throw e;
+    }
     let transaccion = false;
     try {
       await cliente.query("BEGIN");
@@ -723,6 +738,7 @@ const Empleado = {
       throw e;
     } finally {
       cliente.release();
+      liberarCupo();
     }
   },
 };

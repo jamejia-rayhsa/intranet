@@ -49,10 +49,12 @@ function construir(anio, mes, dia) {
 export function fechaDeSerialExcel(serial) {
   if (typeof serial !== 'number' || !isFinite(serial)) return { valor: '', error: 'Número de fecha inválido' };
   const entero = Math.floor(serial);
-  if (entero < 1) return { valor: '', error: 'Número de fecha de Excel fuera de rango' };
+  // 2958465 = 31-dic-9999: más allá el Date no es válido y saldría 'NaN-NaN-NaN'
+  if (entero < 1 || entero > 2958465) return { valor: '', error: 'Número de fecha de Excel fuera de rango' };
   if (entero === 60) return { valor: '', error: 'El 29 de febrero de 1900 no existe (error histórico de Excel)' };
   const base = entero < 60 ? Date.UTC(1899, 11, 31) : Date.UTC(1899, 11, 30);
   const d = new Date(base + entero * MS_DIA);
+  if (isNaN(d.getTime())) return { valor: '', error: 'Número de fecha de Excel fuera de rango' };
   return construir(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
 }
 

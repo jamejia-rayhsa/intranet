@@ -9,6 +9,24 @@ en orden único (nombre, apellidos, id), con las fechas AAAA-MM-DD formateadas e
 como número de nómina (o CURP si no tiene), para corregirla y reimportarla en modo actualizar. Contiene CURP, NSS, RFC y CLABE:
 trátala como dato personal.
 
+## Antes de la carga real
+
+* **Una sola importación a la vez.** Las importaciones se serializan con un candado y el servidor admite como máximo **2 lotes
+  ejecutándose a la vez**. Si hay otra en curso (u otra persona importando), el lote responde **409 "Hay otra importación en curso;
+  el lote no se aplicó. Espera unos segundos y reintenta"**: no se aplicó nada de ese lote. La pantalla reintenta el mismo lote hasta
+  3 veces (a los 2, 5 y 10 s) y, si persiste, lo marca "No se aplicó: otra importación en curso" (no "resultado no confirmado");
+  basta volver a importar. La espera por el candado vence a los 3 s (`lock_timeout`), así que una importación atorada nunca congela
+  el resto de la intranet.
+* **Revisa el archivo a mano** antes de cargarlo: nombres, CURP, nóminas y fechas. En **modo actualizar comprueba que "insertados" sea 0**
+  (todos los empleados del archivo ya existen): un "insertado" significa que una fila no coincidió con nadie y se creó un empleado nuevo.
+* **Libros de Excel con sistema de fechas 1904** (Mac antiguo; Archivo > Opciones > Avanzadas > "Usar el sistema de fechas 1904"):
+  se detecta y los números de serie se convierten con la época correcta (el mismo serial es 1462 días posterior que en un libro normal).
+* **Número de nómina:** solo letras, dígitos, guion, guion bajo y punto. Con espacios (`700 002`) o con otros caracteres la **fila se
+  rechaza** (sería un empleado distinto para el sistema y se duplicaría). `101.0` de Excel pasa a `101`.
+* Si el mismo empleado aparece en dos lotes (más de 100 filas entre una y otra), en modo actualizar gana la última fila y la pantalla
+  avisa "repetido en el archivo: se aplicó la última fila"; dentro de un mismo lote se aplica la primera y la otra se reporta repetida.
+* No guardes la hoja de empleados actuales como CSV para reabrirla en Excel: una celda que empieza con `=`, `+`, `-` o `@` se evaluaría.
+
 ## Encabezados
 
 Se reconocen sin importar acentos, mayúsculas, espacios ni puntuación y aceptan alias (`No. Nómina`, `Numero de Nomina`,

@@ -121,6 +121,25 @@ describe("Departamentos - errores genéricos (sin error.message)", () => {
   });
 });
 
+describe("R-10: los logs del CRUD de departamentos no imprimen el error completo ni datos de la fila", () => {
+  it.each([
+    ["get", "/api/departamentos", undefined],
+    ["post", "/api/departamentos", { nombre: "X" }],
+    ["put", "/api/departamentos/1", { nombre: "X" }],
+    ["delete", "/api/departamentos/1", undefined],
+  ])("%s %s", async (metodo, url, cuerpo) => {
+    const e = Object.assign(new Error('duplicate key value violates unique constraint "departamentos_nombre_key"'), {
+      code: "23505", constraint: "departamentos_nombre_key", detail: "Key (nombre)=(Nombre Privado) already exists.",
+    });
+    grupo.query.mockRejectedValue(e);
+    await request(app)[metodo](url).send(cuerpo);
+    const log = console.error.mock.calls.map((c) => c.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ")).join("\n");
+    expect(log).toMatch(/código=23505 constraint=departamentos_nombre_key/);
+    expect(log).not.toMatch(/Privado|duplicate key|detail/);
+    console.error.mockClear();
+  });
+});
+
 describe("Departamentos - eliminar con restricciones", () => {
   it("con turno asignado (FK turno_departamento) -> 409 con mensaje claro, no 500", async () => {
     grupo.query.mockRejectedValue(

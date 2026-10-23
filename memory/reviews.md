@@ -3170,3 +3170,89 @@ Hallazgos abiertos:
 2. Revisar el archivo: CURP de 18 caracteres en todas las filas que la traigan (A1); columna Estatus vacía para activos y ninguna fila en baja sin fecha (A3); NSS de 11 dígitos (A2).
 3. Verificar la zona horaria del contenedor antes de usar un "empleados actuales" como base (M7).
 4. Probar primero con 5 filas en staging y revisar el CSV de resultados; respaldar la tabla empleados (scripts/supabase/backup.sh) antes de la carga.
+
+### [2026-10-22] [revisor] — Re-revisión de integridad de la carga
+**Alcance:** `git diff 749fc02..HEAD` (23 archivos, sin memory/). Leídos: reviews.md (A1-A3, M1-M10), tests.md (F-IE-1..7), code-notes "Correcciones de integridad del modo actualizar", decisions.md 2026-10-22. Ejecutado: jest de 7 suites rh (291/291 OK) y 4 suites de utilidades de importación del frontend (129/129 OK); 14 mutaciones sobre una copia de HEAD en el scratchpad (14/14 detectadas, repo intacto); probes con node sobre prepararFilaEmpleado, normalizarFecha, hojaAMatriz y SheetJS 0.18.5. No hay Postgres en esta sesión: candados y deadlocks, por lectura del SQL y del orden de bloqueos.
+
+**Veredicto: CON OBSERVACIONES.** Sin críticos. Ninguna violación de decisions.md. A1, A2, A3, M2, M4, M5, M9, M1, F-IE-1, F-IE-2, F-IE-4, F-IE-5, F-IE-6 y F-IE-7 quedan resueltos en código y verificados. No bloquea el despliegue, pero antes de subir el archivo de 71 hacer las comprobaciones de "Mitigaciones" (R-1, R-2, R-3).
+
+**Verificado sin hallazgos:**
+- A1: CURP presente e inválida = error en ambos modos (importarEmpleados.js:218; 17 caracteres probado). Modo actualizar sin CURP ni nómina = error y no inserta (empleado.model.js:437-440). Coincidencia con varios = error (:419-420). "101.0" -> "101" (importarEmpleados.js:226), espacios de los extremos y mayúsculas (comparación en minúsculas). Nómina "0700002" frente a "700002" = error de posible duplicado (empleado.model.js:421-427), en ambos modos y dentro del lote.
+- A2: NSS de 10 no se completa (importarEmpleados.js:163); CLABE corta se omite (:168); numérico de 16+ dígitos marcado en _precision (importarFilas.js, umbral 1e15); CP de 4 -> 5 (:177); +52 normalizado (probado); RFC 13 con guiones -> 12-13 sin guiones.
+- A3: estatus, fecha_baja y motivo_baja se ignoran en actualizar (empleado.model.js:464-467); al crear, baja sin fecha -> activo con advertencia (:468-470). Ninguna otra ruta de la importación escribe empleados.estatus.
+- Candados: 4410/1 (empleados y jefes), 4410/2 (departamentos), 4217 (solicitudes) y 4301/4302 (turnos) no colisionan; no hay otros pg_advisory en el repo. La importación de departamentos toma 4410 antes que 4301, y ningún flujo toma 4301 y luego 4410: sin ciclo de espera por candados. Se liberan en COMMIT/ROLLBACK (xact).
+- SAVEPOINT por fila en ambos modos; departamentos restaura la memoria (departamento.model.js:268). Segunda pasada: ciclos recalculados dentro del candado (empleado.model.js:681-706), jefe no activo (:673), ambiguo (:649), permiso Empleados:edicion.
+- Exportación: consulta de Empleados, ORDER BY único (empleado.model.js:312), to_char en las 5 fechas, auditoría EXPORTAR_EMPLEADOS (18 caracteres).
+- Logs: todas las rutas de importación usan describirErrorSql (empleado.controller.js:474/487/512; departamento.model.js:270/277).
+- Fixtures: en el diff, solo CURP/NSS/RFC ficticios (XXXX..., 1234...).
+
+**R-1. MEDIO — Libro con sistema de fechas 1904: todas las fechas se importan 1462 días antes (silencioso)**
+**Archivo/línea:** modules/portal/frontend/components/ImportadorArchivo.jsx:93 (XLSX.read sin consultar date1904); modules/portal/frontend/utils/importarFechas.js:49-56; modules/portal/frontend/utils/hojaAMatriz.js:16.
+**Problema:** con cellDates:false SheetJS 0.18.5 devuelve el serial crudo del libro 1904. Probado de extremo a extremo: una celda que Excel muestra como 02/01/1908 (serial 1462) se importa como 1904-01-01. Afecta a todas las fechas del archivo y la vista previa ya muestra la fecha desplazada.
+**Severidad:** medio (condicional al origen del archivo; no avisa).
+**Fix sugerido:** leer wb.Workbook.WBProps.date1904; si es true, sumar 1462 al serialExcel antes de fechaDeSerialExcel, o rechazar el archivo con "guárdalo con el sistema de fechas 1900". Prueba: .xlsx con date1904 y celda 1462 -> 1908-01-02.
+
+**R-2. MEDIO — Nómina con espacio o guion interno: en actualizar sin CURP crea un duplicado (también en omitir)**
+**Archivo/línea:** modules/rh/backend/utils/importarEmpleados.js:225-228 (solo recorte de extremos y "101.0"); modules/rh/backend/models/empleado.model.js:421-427 (la comprobación solo quita ceros).
+**Problema:** prepararFilaEmpleado({numero_nomina:"700 002"}) devuelve "700 002" sin advertencia. Con "700002" existente y fila sin CURP no hay coincidencia exacta ni por ceros: destino null, se inserta. Con CURP, el conflicto de nómina sí se detecta (:453-456), así que el riesgo es solo sin CURP.
+**Severidad:** medio.
+**Fix sugerido:** normalizar la nómina para comparar (quitar espacios y guiones internos, como ya se hace con NSS/RFC) o rechazar con "caracteres no permitidos". Prueba: "700 002" sin CURP con existente "700002" -> error o actualización, insertados = 0.
+
+**R-3. MEDIO — Espera sin límite por el candado retiene conexiones: peor caso de agotamiento del pool**
+**Archivo/línea:** empleado.model.js:380 y :385 (conexión y candado de importarLote), :607 y :612 (asignarJefes); departamento.model.js:156 y :161; modules/rh/backend/utils/candadosImportacion.js:14; modules/portal/backend/config/database.js:27 (max 10) y :29 (connectionTimeout 5 s). No hay lock_timeout ni statement_timeout (database.js:18-20 lo declara).
+**Problema:** cada importación toma su conexión antes de esperar el candado y la conserva durante la espera; el candado no tiene límite de tiempo. Con 9 o más importaciones simultáneas (lote o jefes) el pool se llena y el resto de peticiones de la intranet, no solo las de importación, responde 500 genérico tras 5 s. Medido solo con 2, 5 y 6 simultáneas. Un usuario con una pestaña no lo dispara (los lotes van en serie).
+**Severidad:** medio.
+**Fix sugerido:** `SET LOCAL lock_timeout = '10s'` justo antes de tomarCandadoImportacion (o pg_try_advisory_xact_lock); traducir 55P03 (o false) a 409 "Otra importación de este tipo está en curso; reintenta en unos minutos"; que el front lo muestre como "No se envió". Complementar con un límite en proceso de 1-2 importaciones simultáneas por tipo, para no retener más de 2 conexiones.
+
+**R-4. BAJO — El comentario de vacaciones dice que ninguna otra ruta bloquea la fila del empleado; la importación sí la bloquea**
+**Archivo/línea:** modules/rh/backend/controllers/vacaciones.controller.js:628-630; modules/rh/backend/models/empleado.model.js:529 (UPDATE de empleados dentro del lote).
+**Problema:** aprobar toma FOR SHARE sobre la fila del empleado y la importación hace UPDATE de esa fila. Hoy es espera (no reproducida). Con un cambio de departamento durante una aprobación podría formarse un ciclo de bloqueo entre la FK (KEY SHARE de departamentos) y el FOR UPDATE de departamentos; PostgreSQL lo rompería con 40P01 (la fila de la importación se revierte con SAVEPOINT y vacaciones respondería 500).
+**Severidad:** bajo.
+**Fix sugerido:** corregir el comentario; valorar que la importación tome 4217/empleado antes de escribir la fila (mismo orden que vacaciones). Prueba: aprobación y lote que mueve al mismo empleado en dos procesos.
+
+**R-5. BAJO — Modo actualizar: un empleado repetido entre lotes (más de 100 filas) se sobrescribe sin aviso**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js:446 (enArchivo es por petición); lotes de 100 en el front (utils/importarFilas.js, dividirEnLotes).
+**Problema:** dentro de un lote la segunda aparición es "repetida en el archivo"; entre lotes actualiza de nuevo al mismo empleado (último valor gana) y cuenta como actualizado. En asignarJefes también gana el último par (candidatos.set).
+**Severidad:** bajo (el archivo de 71 cabe en un lote).
+**Fix sugerido:** deduplicar por CURP/nómina en el front antes de enviar, con aviso, o llevar el conjunto de claves vistas entre lotes.
+
+**R-6. BAJO — Modo omitir: filas sin CURP ni nómina repetidas en el mismo archivo se insertan dos veces**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js:435 (advierte "reimportar duplicará" pero no compara dentro del archivo).
+**Problema:** la fila sin identificador no pasa por ninguna comprobación de repetidas; dos filas iguales crean dos empleados.
+**Severidad:** bajo.
+**Fix sugerido:** comparar nombre, apellidos y fecha de nacimiento dentro del lote y marcar la segunda como "repetida en el archivo".
+
+**R-7. BAJO — Serial desbordado produce "NaN-NaN-NaN" que el front muestra como válido**
+**Archivo/línea:** modules/portal/frontend/utils/importarFechas.js:49-56 (construir no valida NaN) y :94-96.
+**Problema:** normalizarFecha({serialExcel:1e15}) y 1e20 devuelven {valor:"NaN-NaN-NaN"} sin error. El backend lo rechaza, así que no hay corrupción, pero la vista previa no avisa.
+**Severidad:** bajo.
+**Fix sugerido:** en fechaDeSerialExcel, si el Date no es finito o el serial pasa de 2958465 (9999-12-31), devolver error "Número de fecha fuera de rango".
+
+**R-8. BAJO — Número con formato de fecha en una columna de texto se convierte a fecha**
+**Archivo/línea:** modules/portal/frontend/utils/importarFilas.js:35 (valorATexto con serialExcel -> normalizarFecha).
+**Problema:** una nómina o CP con formato de fecha en la celda se envía como AAAA-MM-DD (o NaN) en vez del número, sin aviso.
+**Severidad:** bajo.
+**Fix sugerido:** en columnas de texto, usar el número crudo (String(serial)) y dejar que la validación de nómina decida.
+
+**R-9. BAJO — Exportación: inyección de fórmulas si el libro se guarda como CSV**
+**Archivo/línea:** modules/rh/frontend/utils/libroXlsx.js:7; modules/rh/frontend/utils/plantillaEmpleados.js:15.
+**Problema:** verificado con SheetJS: "=HYPERLINK(...)", "+52..." y "@SUM" se escriben como texto (t:"s", sin fórmula): seguros en el .xlsx. Si RH guarda la exportación como CSV y la reabre, Excel evalúa lo que empiece con = + - @ (datos capturados por terceros). Añadir apóstrofo al xlsx rompería la reimportación.
+**Severidad:** bajo.
+**Fix sugerido:** no añadir apóstrofo al xlsx; advertencia en la hoja de instrucciones ("no lo guardes como CSV"); si se exporta CSV, neutralizar ahí.
+
+**R-10. BAJO — Logs de CRUD de departamentos imprimen el objeto de error completo (fuera del importador, preexistente)**
+**Archivo/línea:** modules/rh/backend/controllers/departamento.controller.js:26, 50, 76, 101 (console.error("[departamentos]", error)).
+**Problema:** el error de PG trae `detail` con valores de la fila. La ruta de importación (:152) ya usa describirErrorSql.
+**Severidad:** bajo. **Fix sugerido:** describirErrorSql(error) en esas cuatro líneas.
+
+**R-11. BAJO — Pruebas que faltan**
+**Archivo/línea:** modules/rh/backend/tests/importarEmpleados.test.js y departamentos.importar.test.js.
+**Problema:** no hay casos para: libro 1904 (R-1), nómina con espacio interno (R-2), serial desbordado (R-7), repetidas entre lotes (R-5), repetidas sin identificador en omitir (R-6), ni concurrencia con límite de espera (R-3, el mecanismo no existe). Las 14 mutaciones sobre las reglas nuevas sí se detectan.
+**Severidad:** bajo. **Fix sugerido:** una prueba por caso junto con R-1 a R-3.
+
+**Mitigaciones para los 71 antes de subir el archivo real (staging):**
+1. Respaldo con scripts/supabase/backup.sh y prueba previa con 5 filas.
+2. Revisar la vista previa: fechas con año 1904 o desplazadas (R-1). Si aparecen, guardar el archivo con el sistema de fechas 1900.
+3. Filtrar nóminas con espacio o guion interno y CURP de 18 caracteres (R-2).
+4. Ejecutar en modo actualizar y exigir insertados = 0 (con los 71 existentes, cualquier alta indica identificación fallida); revisar los errores "Conflicto" y "Posible duplicado".
+5. Una sola importación a la vez; no lanzar otra mientras corre (R-3).
