@@ -66,7 +66,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   bd.reiniciar();
   Empleado.obtenerPorUsuarioId.mockImplementation(async (uid) => FICHAS[uid]);
-  bd.cuando(/SELECT id FROM empleados WHERE jefe_inmediato_id = \$1/, (_sql, p) => ({ rows: (SUBORDINADOS[p[0]] || []).map((id) => ({ id })) }));
+  bd.cuando(/FROM empleados\s+WHERE jefe_inmediato_id = \$1/, (_sql, p) => ({ rows: (SUBORDINADOS[p[0]] || []).map((id) => ({ id })) }));
   bd.cuando(/FROM asistencia_diaria d/, { rows: [] });
   como("rh_admin");
 });
@@ -158,6 +158,50 @@ describe("GET /resultados - alcance por rol (IDOR)", () => {
     expect(r.body).toEqual({ exito: true, datos: [expect.objectContaining({ estatus: "puntual" })], paginacion: { pagina: 2, limite: 10, total: 37 } });
     expect(r.body.datos[0].total).toBeUndefined();
     expect(consultasDatos(/FROM asistencia_diaria d/)[0].params.slice(-2)).toEqual([10, 10]);
+  });
+});
+
+describe("subordinados dados de baja", () => {
+  it("solo se listan si su baja no es anterior al rango consultado (la fecha inicial viaja al SQL)", async () => {
+    como("jefe");
+    await get("/api/asistencia/resultados?desde=2026-10-01&hasta=2026-10-15");
+    const q = consultasDatos(/FROM empleados\s+WHERE jefe_inmediato_id/)[0];
+    expect(q.params).toEqual([20, "2026-10-01"]);
+    expect(q.sql).toMatch(/estatus IS DISTINCT FROM 'baja' OR \(fecha_baja IS NOT NULL AND fecha_baja >= \$2::date\)/);
+  });
+});
+
+describe("GET /periodos - datos de gestión", () => {
+  const fila = { id: 1, estado: "abierto", reabierto_motivo: "Marcas tardías", reabierto_por: 5, veces_reabierto: 1, total: "1" };
+  it("rh_empleado/empleado NO ven quién reabrió ni por qué; rh_admin y rh_lectura sí", async () => {
+    bd.cuando(/FROM asistencia_periodos p/, { rows: [fila] });
+    for (const rol of ["empleado", "jefe", "rh_empleado"]) {
+      como(rol);
+      const d = (await get("/api/asistencia/periodos")).body.datos[0];
+      expect(d).not.toHaveProperty("reabierto_motivo");
+      expect(d).not.toHaveProperty("reabierto_por");
+      expect(d.veces_reabierto).toBe(1);
+    }
+    for (const rol of ["rh_admin", "rh_lectura", "super_admin"]) {
+      como(rol);
+      expect((await get("/api/asistencia/periodos")).body.datos[0]).toMatchObject({ reabierto_motivo: "Marcas tardías", reabierto_por: 5 });
+    }
+  });
+});
+
+describe("recalcular/cerrar/reabrir no esperan el candado", () => {
+  it("la API no pide espera al motor: responde 409 inmediato si hay un recálculo en curso", async () => {
+    Motor.recalcular.mockResolvedValue({ ocupado: true });
+    Motor.cerrarPeriodo.mockResolvedValue({ codigo: "ocupado" });
+    Motor.reabrirPeriodo.mockResolvedValue({ codigo: "ocupado" });
+    const r1 = await request(app).post("/api/asistencia/recalcular").send({ desde: "2026-10-01", hasta: "2026-10-02" });
+    const r2 = await request(app).post("/api/asistencia/periodos/3/cerrar");
+    const r3 = await request(app).post("/api/asistencia/periodos/3/reabrir").send({ motivo: "motivo válido" });
+    for (const r of [r1, r2, r3]) {
+      expect(r.status).toBe(409);
+      expect(r.body.mensaje).toBe("Hay un recálculo en curso; reintenta en unos segundos");
+    }
+    for (const mock of [Motor.recalcular, Motor.cerrarPeriodo, Motor.reabrirPeriodo]) expect(mock.mock.calls[0][0]).not.toHaveProperty("esperaMs");
   });
 });
 
@@ -489,6 +533,25 @@ describe("incidencias de RH (justificar un día)", () => {
     bd.cuando(/SELECT d\.id, d\.estatus, d\.periodo_id FROM asistencia_diaria d/, { rows: [] });
     expect((await request(app).post("/api/asistencia/incidencias").send(cuerpo)).status).toBe(404);
     expect(Auditoria.crear).not.toHaveBeenCalled();
+    expect(consultasDatos(/INSERT INTO asistencia_incidencias/)).toHaveLength(0);
+  });
+
+  it("un día ya justificado (o una carrera entre dos justificaciones) -> 409, sin segunda incidencia", async () => {
+    abrirDia("justificada");
+    expect((await request(app).post("/api/asistencia/incidencias").send(cuerpo)).status).toBe(409);
+    expect(consultasDatos(/INSERT INTO asistencia_incidencias/)).toHaveLength(0);
+    abrirDia("falta");
+    bd.estado.reglas.unshift({ re: /INSERT INTO asistencia_incidencias/, respuesta: Object.assign(new Error("dup"), { code: "23505" }) });
+    const r = await request(app).post("/api/asistencia/incidencias").send(cuerpo);
+    expect(r.status).toBe(409);
+    expect(r.body.mensaje).toMatch(/justificación activa/);
+    expect(Auditoria.crear).not.toHaveBeenCalled();
+  });
+
+  it("si ya hay una justificación activa del día no se inserta otra (409)", async () => {
+    abrirDia("falta");
+    bd.estado.reglas.unshift({ re: /SELECT id FROM asistencia_incidencias WHERE empleado_id = \$1 AND fecha = \$2::date AND activa/, respuesta: { rows: [{ id: 5 }] } });
+    expect((await request(app).post("/api/asistencia/incidencias").send(cuerpo)).status).toBe(409);
     expect(consultasDatos(/INSERT INTO asistencia_incidencias/)).toHaveLength(0);
   });
 

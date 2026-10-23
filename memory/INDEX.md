@@ -13,6 +13,10 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-23] [coder] → code-notes.md — Correcciones de la revisión de la Fase 4 (entrada temprana, salida anticipada con corte en el descanso, tope duro del planificador con pg_terminate_backend, medios; verificación 123/123 pg16+pg17, 33/33 mutantes)
+- [2026-10-23] orquestador → decisions.md — Decisión del humano: la interfaz sincroniza todos los días; aviso de retraso por última comunicación; correcciones del motor y de las pantallas en curso
+- [2026-10-23] orquestador → decisions.md — Fase 4: respuestas a las 8 decisiones del coder; revisión NO APROBADA (entrada temprana = falta, salida temprana = incompleta, planificador sin tope)
+- [2026-10-23] [revisor] → reviews.md#motor-de-análisis-de-asistencia-fase-4 — Motor de asistencia Fase 4: NO APROBADO (1 crítico: entrada 06:50 = falta; 2 altos: salida temprana = incompleta, vuelta colgada sin tope)
 - [2026-10-23] [coder] → code-notes.md — Asistencia Fase 4: motor de análisis (migración 014, motor puro, orquestador con candado 4501, planificador en proceso, API /api/asistencia, verificación pg16+pg17 106/106 contra un oráculo, 66/67 mutantes, jest 4608)
 - [2026-10-23] orquestador → decisions.md — GO del humano a la primera parte de la Fase 5 (pantallas de administración de Asistencia); carga real de empleados OK
 - [2026-10-23] orquestador → decisions.md — Despliegue a staging de la plantilla de carga completa (PR #17)

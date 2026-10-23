@@ -17,8 +17,13 @@ const dormir = (ms) => new Promise((resolver) => setTimeout(resolver, ms));
  * Ejecuta fn(cliente) con el candado del motor. Si otro proceso lo tiene devuelve { ocupado: true } sin ejecutar
  * (con esperaMs > 0 reintenta ese tiempo antes de rendirse). El candado se libera siempre; si no se pudo liberar,
  * la conexión se destruye (así PostgreSQL lo suelta).
+ *
+ * `control` (objeto vacío que pasa quien llama) recibe { cliente, pid, liberado }: con él un vigilante puede
+ * ABORTAR la corrida (abortarCorrida) si se cuelga. `statementTimeoutMs` pone un statement_timeout de sesión en la
+ * conexión dedicada (se restablece antes de devolverla al pool) y lo deja en cliente.timeoutMs para los SET LOCAL
+ * de las transacciones de la corrida.
  */
-async function conCandadoDelMotor(fn, { esperaMs = 0, pool = grupo } = {}) {
+async function conCandadoDelMotor(fn, { esperaMs = 0, pool = grupo, control = null, statementTimeoutMs = null } = {}) {
   const cliente = await pool.connect();
   let errorLiberar;
   try {
@@ -31,18 +36,56 @@ async function conCandadoDelMotor(fn, { esperaMs = 0, pool = grupo } = {}) {
       await dormir(INTERVALO_REINTENTO_MS);
     }
     if (!obtenido) return { ocupado: true };
+    if (control) {
+      control.cliente = cliente;
+      try {
+        const pid = await cliente.query("SELECT pg_backend_pid() AS pid");
+        control.pid = pid.rows[0] && pid.rows[0].pid;
+      } catch { /* sin pid: se destruye solo la conexión */ }
+    }
+    const tope = Number.isInteger(statementTimeoutMs) && statementTimeoutMs > 0 ? statementTimeoutMs : null;
+    if (tope) {
+      await cliente.query(`SET statement_timeout = ${tope}`);
+      cliente.timeoutMs = tope;
+    }
     try {
       return { ocupado: false, valor: await fn(cliente) };
     } finally {
       try {
+        if (tope) await cliente.query("RESET statement_timeout");
         await cliente.query("SELECT pg_advisory_unlock($1::int, $2::int)", [ESPACIO_MOTOR, CLAVE_MOTOR]);
       } catch (error) {
         errorLiberar = error;
       }
+      delete cliente.timeoutMs;
     }
   } finally {
-    cliente.release(errorLiberar);
+    if (!control) cliente.release(errorLiberar);
+    else if (!control.liberado) {
+      control.liberado = true;
+      cliente.release(errorLiberar);
+    }
   }
 }
 
-module.exports = { ESPACIO_MOTOR, CLAVE_MOTOR, conCandadoDelMotor };
+/**
+ * Tope duro: mata la sesión de la corrida (pg_terminate_backend desde otra conexión) y destruye la conexión del pool.
+ * El candado es de SESIÓN: muere con ella. Idempotente.
+ */
+async function abortarCorrida(control, { pool = grupo } = {}) {
+  if (!control || control.liberado) return;
+  control.abortado = true;
+  if (control.pid) {
+    try {
+      await pool.query("SELECT pg_terminate_backend($1::int)", [control.pid]);
+    } catch { /* la conexión se destruye de todos modos */ }
+  }
+  if (control.cliente && !control.liberado) {
+    control.liberado = true;
+    try {
+      control.cliente.release(true);
+    } catch { /* ya estaba liberada */ }
+  }
+}
+
+module.exports = { ESPACIO_MOTOR, CLAVE_MOTOR, conCandadoDelMotor, abortarCorrida };

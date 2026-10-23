@@ -21,9 +21,18 @@ const AsistenciaResultados = {
   ESTATUS,
   ESTATUS_JUSTIFICABLES,
 
-  /** Empleado propio y sus subordinados DIRECTOS (jefe inmediato vigente): ids visibles para quien no es RH */
-  async idsVisibles(empleadoPropioId, cliente = grupo) {
-    const r = await cliente.query("SELECT id FROM empleados WHERE jefe_inmediato_id = $1 AND id <> $1 ORDER BY id", [empleadoPropioId]);
+  /**
+   * Empleado propio y sus subordinados DIRECTOS (jefe inmediato vigente): ids visibles para quien no es RH.
+   * Un subordinado dado de baja solo se lista si su baja no es anterior al rango consultado.
+   */
+  async idsVisibles(empleadoPropioId, desde, cliente = grupo) {
+    const r = await cliente.query(
+      `SELECT id FROM empleados
+       WHERE jefe_inmediato_id = $1 AND id <> $1
+         AND (estatus IS DISTINCT FROM 'baja' OR (fecha_baja IS NOT NULL AND fecha_baja >= $2::date))
+       ORDER BY id`,
+      [empleadoPropioId, desde],
+    );
     return [empleadoPropioId, ...r.rows.map((f) => f.id)];
   },
 
@@ -69,7 +78,8 @@ const AsistenciaResultados = {
     return { filas: r.rows.map(sinTotal), total: r.rows[0] ? Number(r.rows[0].total) : 0 };
   },
 
-  async listarPeriodos({ estado, limite, offset }, cliente = grupo) {
+  /** esRH = false oculta quién reabrió y por qué (datos de gestión) */
+  async listarPeriodos({ estado, limite, offset, esRH = false }, cliente = grupo) {
     const r = await cliente.query(
       `SELECT p.id, to_char(p.fecha_inicio, 'YYYY-MM-DD') AS fecha_inicio, to_char(p.fecha_fin, 'YYYY-MM-DD') AS fecha_fin,
               p.estado, p.cerrado_en, p.cerrado_por, p.tipo_cierre, p.reabierto_en, p.reabierto_por, p.reabierto_motivo,
@@ -81,7 +91,14 @@ const AsistenciaResultados = {
        ORDER BY p.fecha_inicio DESC LIMIT $2 OFFSET $3`,
       [estado || null, limite, offset],
     );
-    return { filas: r.rows.map(sinTotal), total: r.rows[0] ? Number(r.rows[0].total) : 0 };
+    const filas = r.rows.map(sinTotal).map((f) => {
+      if (esRH) return f;
+      const publica = { ...f };
+      delete publica.reabierto_motivo;
+      delete publica.reabierto_por;
+      return publica;
+    });
+    return { filas, total: r.rows[0] ? Number(r.rows[0].total) : 0 };
   },
 
   /** Empleados que el motor NO analiza: sin número de nómina o con una nómina compartida en el mismo periodo */
@@ -158,9 +175,21 @@ const AsistenciaResultados = {
         await cliente.query("ROLLBACK");
         return { codigo: "periodo_cerrado", periodo_id: dia.rows[0].periodo_id };
       }
+      if (dia.rows[0].estatus === "justificada") {
+        await cliente.query("ROLLBACK");
+        return { codigo: "ya_justificada" };
+      }
       if (!ESTATUS_JUSTIFICABLES.includes(dia.rows[0].estatus)) {
         await cliente.query("ROLLBACK");
         return { codigo: "no_justificable", estatus: dia.rows[0].estatus };
+      }
+      const previa = await cliente.query(
+        `SELECT id FROM asistencia_incidencias WHERE empleado_id = $1 AND fecha = $2::date AND activa AND tipo = 'justificacion'`,
+        [empleadoId, fecha],
+      );
+      if (previa.rows[0]) {
+        await cliente.query("ROLLBACK");
+        return { codigo: "ya_justificada" };
       }
       const r = await cliente.query(
         `INSERT INTO asistencia_incidencias (empleado_id, fecha, tipo, motivo, creado_por)
@@ -174,6 +203,8 @@ const AsistenciaResultados = {
       await cliente.query("ROLLBACK").catch((e) => {
         errorRollback = e;
       });
+      // dos justificaciones simultáneas del mismo día: gana una (índice único parcial)
+      if (error && error.code === "23505") return { codigo: "ya_justificada" };
       throw error;
     } finally {
       cliente.release(errorRollback);

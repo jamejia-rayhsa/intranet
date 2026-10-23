@@ -26,8 +26,8 @@ Orden de precedencia (el primero que aplica gana):
 
 El día pertenece a la **fecha local de la entrada** (un turno nocturno 22:00-06:00 de un lunes termina el martes pero es del lunes).
 
-* **Entrada** = la primera marca dentro de `[entrada − ventana_entrada_antes, entrada + ventana_entrada_despues]` (07:00 a 10:30 con los valores del turno).
-* **Salida** = la última marca, distinta de la entrada y posterior a ella, dentro de `[salida − ventana_salida_antes, salida + ventana_salida_despues]` (17:55 a 23:59).
+* **Entrada** = la primera marca del día local, **desde las 00:00 hasta `entrada + ventana_entrada_despues`** (10:30 con Rayhsa). No hay límite inferior: llegar temprano (06:50) nunca penaliza. En un turno que cruza la medianoche el límite inferior sigue siendo `entrada − ventana_entrada_antes` (las marcas de la mañana son la salida del turno del día anterior).
+* **Salida** = la última marca del día **posterior al corte de salida** y a la entrada, hasta `salida + ventana_salida_despues` (23:59 con Rayhsa). El **corte de salida es el fin del descanso** (`descanso_inicio + descanso_min` = 14:00 en Rayhsa) o, si el turno no tiene descanso, `entrada + ventana_entrada_despues`. *Es una propuesta pendiente de confirmación del humano y se define en un solo lugar (`finCorteSalida` en `motor.js`).* La `ventana_salida_antes_min` del turno ya no limita la salida (queda en el snapshot).
 * Marcas a **60 segundos o menos** de la anterior conservada son la misma marca (duplicado de la checada). El descanso se descuenta de la jornada y **no se revisa**: las marcas de la comida no cambian el resultado.
 
 | Situación | Resultado |
@@ -38,9 +38,13 @@ El día pertenece a la **fecha local de la entrada** (un turno nocturno 22:00-06
 | Entrada 08:30:59 | `retardo` (30 min, aún dentro del umbral de falta) |
 | Entrada 08:31:00 | `falta` (más de 30 min), `minutos_retardo = 31` |
 | Entrada 08:15 y salida 17:56 | `retardo` con **ambos** minutos: `minutos_retardo = 15`, `minutos_salida_anticipada = 4` |
+| Entrada 06:50 (antes de la ventana) y salida 18:00 | `puntual` (llegar temprano no es falta) |
 | Entrada 08:00 y salida 17:56 (4 min antes; la tolerancia de salida de Rayhsa es 3) | `salida_anticipada`, 4 min |
-| Entrada 08:00 y nada más | `incompleta` (hay entrada, no salida) |
-| Sin marcas, o solo marcas fuera de la ventana de entrada | `falta` |
+| Entrada 08:00 y salida 15:00 | `salida_anticipada`, **180 min** |
+| Entrada 08:00 y salida 17:50 | `salida_anticipada`, 10 min (excede la tolerancia de 3) |
+| Entrada 08:00 y una marca a las 13:30 (durante el descanso) | `incompleta` con la bandera `marca_intermedia_sin_salida` |
+| Entrada 08:00 y nada más (una sola marca) | `incompleta` |
+| Sin marcas, o solo marcas después de las 10:30 sin ninguna antes | `falta` |
 | Solo una marca a las 18:00 | `falta` con la bandera `salida_sin_entrada` |
 | El día aún no termina | `pendiente` |
 
@@ -87,12 +91,14 @@ Corre dentro del proceso del backend, **sin dependencias nuevas**, y solo cuando
 |---|---|---|
 | `ASISTENCIA_MOTOR_ACTIVO` | `false` (dev y pruebas) · `true` en los compose de staging y prod | solo el valor `true` lo enciende |
 | `ASISTENCIA_MOTOR_INTERVALO_MIN` | 15 | minutos entre vueltas (1-1440) |
-| `ASISTENCIA_MOTOR_TIEMPO_MAX_MIN` | 10 | tiempo máximo por vuelta; lo pendiente se retoma en la siguiente (1-120) |
+| `ASISTENCIA_MOTOR_TIEMPO_MAX_MIN` | 10 | tiempo máximo **blando** por vuelta (se acota al 80 % del tope duro); el motor se detiene entre bloques y lo pendiente se retoma en la siguiente (1-120) |
+| `ASISTENCIA_MOTOR_TIMEOUT_MIN` | 10 | **tope duro** de una vuelta (1-240): `statement_timeout` en la conexión de la vuelta y `SET LOCAL` en sus transacciones, más un vigilante que al vencer mata la sesión (`pg_terminate_backend`), destruye la conexión (el candado de sesión muere con ella), libera la vuelta y deja la ejecución en error `tiempo_excedido`. La siguiente vuelta corre normal |
 | `ASISTENCIA_MOTOR_RETRASO_INICIAL_S` | 30 | espera antes de la primera vuelta tras arrancar (0-3600) |
 
 Cada vuelta: (1) toma el candado, (2) **vincula las marcas huérfanas** (`Ingesta.vincularHuerfanas`), (3) recalcula lo afectado, (4) detecta ajustes pendientes y (5) cierra los periodos vencidos. Todo queda en `asistencia_ejecuciones` (tipo, estado, conteos; **sin datos personales**).
 
 * **Qué se recalcula**: la primera vuelta y una vez cada `barrido_completo_horas` (o cuando se edita un turno) es **completa** (todos los empleados, todos los periodos abiertos). Las demás son **incrementales**: los últimos `ventana_seguridad_dias` días de todos, más los días con marcas importadas o vinculadas desde la vuelta anterior (con 2 min de solape), y los días afectados por cambios de calendario, vacaciones, permisos, incidencias, altas o cambios de empleados y nuevas asignaciones de turno.
+* **Cursor y traslape**: la vuelta incremental toma las marcas con `fecha_importacion` posterior al inicio de la última vuelta exitosa **menos 10 minutos** (una marca cuya transacción de ingesta empezó antes pero se confirmó después no se pierde) y las aprobaciones de vacaciones y permisos hechas desde entonces (`fecha_autoriza` / `fecha_respuesta`). **Solo entran con el barrido completo (≤ 24 h) o con *Recalcular*** los cambios sin marca de tiempo: corregir las fechas de una vacación o permiso ya aprobados, terminar una asignación de turno, cambiar de jefe y borrar un permiso o festivo.
 * **Latencia**: una marca llega a la intranet cuando la interfaz sincroniza (cada 15 min entre 07:00 y 20:00) y se refleja en el siguiente tick del motor (otros 0 a 15 min). En total, **hasta ~30 min** entre la checada y su resultado; no hay disparo inmediato tras la ingesta. Cambios que no dejan marca de tiempo (terminar una asignación de turno) se recogen en el barrido completo (≤ 24 h) o con `POST /recalcular`.
 * **Varias réplicas**: el candado consultivo de PostgreSQL (`pg_try_advisory_lock(4501, 1)`, de sesión; no colisiona con 4217, 4301, 4302 ni 4410) asegura una sola ejecución; la otra réplica registra "vuelta omitida". No se retienen conexiones del pool entre vueltas.
 * **Errores**: se registran como `la vuelta del motor falló (codigo XXXXX)` sin texto de PostgreSQL ni datos, y la siguiente vuelta reintenta. Nunca tumban el portal. Al recibir SIGTERM/SIGINT el planificador deja de programar y espera (hasta 5 s) la vuelta en curso.
@@ -100,21 +106,23 @@ Cada vuelta: (1) toma el candado, (2) **vincula las marcas huérfanas** (`Ingest
 
 ## 5. API (`/api/asistencia`, JWT)
 
-Lectura de resultados (necesita `Asistencia:consulta`): **RH** (`Empleados:edicion` o `Asistencia:edicion`; `super_admin`) ve a todos; cualquier otro usuario ve **su empleado y a sus subordinados directos** (jefe inmediato vigente, leído en cada petición). Un empleado fuera del alcance —ajeno o inexistente— recibe el mismo 403. Rango máximo 92 días; paginación `pagina` y `limite` (hasta 500).
+`recalcular`, `cerrar` y `reabrir` **no esperan** el candado: si hay un recálculo en curso responden 409 inmediato ("Hay un recálculo en curso"), sin retener una conexión.
+
+Lectura de resultados (necesita `Asistencia:consulta`): **RH** (`Empleados:edicion` o `Asistencia:edicion`; `super_admin`) ve a todos; cualquier otro usuario ve **su empleado y a sus subordinados directos** (jefe inmediato vigente, leído en cada petición; un subordinado dado de baja solo aparece si su baja no es anterior al rango consultado). Un empleado fuera del alcance —ajeno o inexistente— recibe el mismo 403. Rango máximo 92 días; paginación `pagina` y `limite` (hasta 500).
 
 | Método y ruta | Quién | Qué hace |
 |---|---|---|
 | `GET /resultados?desde&hasta[&empleado_id]` | alcance arriba | días calculados con turno, minutos, marcas usadas y `detalle` |
 | `GET /resumen?desde&hasta[&departamento_id]` | alcance arriba | conteos por empleado y estatus (más minutos acumulados) |
-| `GET /periodos[?estado]` | `Asistencia:consulta` | quincenas, estado, cierre, reaperturas y ajustes pendientes |
-| `POST /periodos/:id/cerrar` | `Asistencia:edicion` (rh_admin, super_admin) | recalcula y cierra (manual); 409 si ya está cerrado o aún no termina |
+| `GET /periodos[?estado]` | `Asistencia:consulta` | quincenas, estado, cierre, número de reaperturas y ajustes pendientes. `reabierto_motivo` y `reabierto_por` solo los ve RH |
+| `POST /periodos/:id/cerrar` | `Asistencia:edicion` (rh_admin, super_admin) | recalcula y cierra (manual); 409 si ya está cerrado, aún no termina o hay un recálculo en curso |
 | `POST /periodos/:id/reabrir` `{motivo}` | `Asistencia:edicion` | reabre con motivo; auditado |
 | `POST /recalcular` `{desde,hasta[,empleado_id]}` | `Asistencia:edicion` | solo periodos abiertos; 409 si el motor está ocupado o todo el rango está cerrado |
 | `GET /sin-identificador` | RH (lectura) | empleados que el motor no analiza (sin nómina o nómina repetida) |
 | `GET /ajustes-pendientes[?resueltos=true]` | RH (lectura) | marcas posteriores al cierre |
 | `POST /ajustes-pendientes/:id/resolver` `{nota?}` | `Asistencia:edicion` | marca el ajuste como atendido |
-| `POST /incidencias` `{empleado_id,fecha,motivo}` | `Asistencia:edicion` | justifica una falta/retardo/salida anticipada/incompleta de un periodo **abierto** y recalcula ese día |
-| `POST /incidencias/:id/anular` | `Asistencia:edicion` | anula la justificación (periodo abierto) |
+| `POST /incidencias` `{empleado_id,fecha,motivo}` | `Asistencia:edicion` | justifica una falta/retardo/salida anticipada/incompleta de un periodo **abierto** y recalcula ese día; a lo más **una** justificación activa por empleado y día (409 si ya hay) |
+| `POST /incidencias/:id/anular` | `Asistencia:edicion` | anula la justificación (periodo abierto) y **recalcula el día**: vuelve a su resultado original |
 | `GET /parametros` · `PUT /parametros` | RH (lectura) · `Asistencia:edicion` | valida rangos; `version_motor` no se edita |
 
 Toda escritura queda en la auditoría (`CERRAR_PERIODO`, `REABRIR_PERIODO`, `RECALCULAR`, `RESOLVER_AJUSTE`, `JUSTIFICAR_DIA`, `ANULAR_INCIDENCIA`, `ACTUALIZAR_PARAM`; la columna `accion` admite 20 caracteres). Los errores 500 son genéricos. Con los roles del seed solo `rh_admin` y `super_admin` tienen `Asistencia:edicion`; `rh_empleado` solo tiene `Asistencia:consulta` y ve lo propio.
@@ -124,14 +132,16 @@ Toda escritura queda en la auditoría (`CERRAR_PERIODO`, `REABRIR_PERIODO`, `REC
 1. Que RH asigne la nómina a los 8 empleados que no la tienen (`GET /sin-identificador`) y espere una vuelta del motor: se vinculan sus marcas y se calculan sus días.
 2. Elegir 5 a 10 empleados y una quincena (por ejemplo 1-15 sep) y comparar `GET /resultados` con su lista de asistencia de BioTime: mismos retardos, faltas y salidas anticipadas. `detalle.explicaciones` dice por qué cada día quedó como quedó y `marcas_usadas` qué marcas se tomaron como entrada y salida.
 3. Revisar los casos de borde que RH quiera fijar: los segundos se truncan (08:10:59 es puntual), el umbral de falta (30 min) frente a la ventana de captura de BioTime (150 min), la tolerancia de salida por turno (3 min en Rayhsa y 0 en Logística).
-4. Los días con la bandera `marca_intermedia_sin_salida` suelen ser salidas antes de las 17:55: la ventana de salida del turno solo admite 5 minutos antes, así que una salida mucho más temprana se ve como `incompleta`, no como `salida_anticipada` (ver límites).
+4. Los días con la bandera `marca_intermedia_sin_salida` tienen marcas después de la entrada pero ninguna posterior al fin del descanso (14:00): conviene preguntar al empleado si salió a comer y no volvió o si olvidó checar. Confirmar con RH que 14:00 sea el corte de salida correcto.
 5. Cerrar a mano cada quincena ya validada (`POST /periodos/:id/cerrar`); si luego llegan marcas tardías aparecerán como ajustes pendientes.
 
 ## 7. Límites conocidos
 
 * Los segundos se truncan: no hay forma de distinguir 08:10:00 de 08:10:59.
-* Una salida más de `ventana_salida_antes` minutos (5 en Rayhsa) antes de la hora es `incompleta`, no `salida_anticipada`: así lo define la regla de ventanas. Si RH quiere contar esas salidas, hay que ampliar `ventana_salida_antes_min` del turno.
-* Una sola marca cuenta como `incompleta` o `falta` según a qué ventana caiga; el motor no adivina si era entrada o salida.
+* Una salida temprana cuenta como `salida_anticipada` solo si la marca es posterior al fin del descanso (14:00 en Rayhsa); una marca de las 13:30 con entrada a las 08:00 es `incompleta`. La hora de corte está pendiente de confirmación del humano.
+* Una sola marca es `incompleta` (si cae antes de las 10:30) o `falta` con `salida_sin_entrada` (si cae después); el motor no adivina más.
+* Las **vacaciones aprobadas cubren de lunes a viernes**: no cubren un sábado laborable del turno (los turnos actuales tienen el sábado de descanso). Si algún día un turno trabaja sábado, las vacaciones de ese sábado no lo cubren y se calificará con las marcas.
+* Una vuelta que se cuelga (tabla bloqueada, red) se aborta al vencer el tope duro; los cambios de esa vuelta que no alcanzaron a confirmarse se pierden y se reintentan en la siguiente.
 * No se aplican las **correcciones de marca** de RH (`asistencia_incidencias` tipo `correccion_marca`): solo las justificaciones. Las marcas nunca se editan.
 * No hay permisos por horas (`permisos_ausencia` solo trae fechas): un permiso de medio día cubre el día completo.
 * El departamento del empleado no tiene historial: se usa el actual (por eso existe el snapshot y el cierre de periodos).
@@ -144,7 +154,7 @@ Toda escritura queda en la auditoría (`CERRAR_PERIODO`, `REABRIR_PERIODO`, `REC
 
 ## 8. Verificación reproducible con PostgreSQL real
 
-`scripts/asistencia/verificar-motor.js` siembra 71 empleados ficticios con casos especiales (sin nómina, sin departamento, nómina repetida, bajas e ingresos a mitad de periodo, turno individual y nocturno, vacaciones, permisos y festivos), arranca el backend real, carga marcas con el simulador (`jornadas`) por la ingesta con llave y compara **cada empleado-día** con un oráculo escrito aparte (la hora local la calcula PostgreSQL, no `Intl`). Después prueba idempotencia, rendimiento, concurrencia, cierre automático, periodos cerrados intactos tras editar un turno o transferir, reapertura, marcas tardías y re-vinculadas, el planificador con dos réplicas y la API con tokens HS256 por rol. Úsalo solo con una base **desechable**:
+`scripts/asistencia/verificar-motor.js` siembra 71 empleados ficticios con casos especiales (sin nómina, sin departamento, nómina repetida, bajas e ingresos a mitad de periodo, turno individual y nocturno, vacaciones, permisos y festivos), arranca el backend real, carga marcas con el simulador (`jornadas`) por la ingesta con llave y compara **cada empleado-día** con un oráculo escrito aparte (la hora local la calcula PostgreSQL, no `Intl`). Incluye 5 empleados de borde (entrada 06:50, salida 15:00, salida 17:50, una sola marca, marca durante el descanso). Después prueba idempotencia, rendimiento, concurrencia, cierre automático, periodos cerrados intactos tras editar un turno o transferir, reapertura, marcas tardías y re-vinculadas, el planificador con dos réplicas, el tope duro con una vuelta colgada de verdad (tabla bloqueada) y la API con tokens HS256 por rol. Úsalo solo con una base **desechable**:
 
 ```bash
 docker run -d --name pg-motor -e POSTGRES_PASSWORD=pw -p 55416:5432 postgres:16-alpine   # o supabase/postgres:17.6.1.136

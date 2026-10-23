@@ -20,7 +20,7 @@ const LIMITE_POR_OMISION = 100;
 const LIMITE_MAXIMO = 500;
 const PAGINA_MAXIMA = 10000;
 const MENSAJE_DENEGADO = "No tienes acceso a este recurso";
-const MENSAJE_OCUPADO = "El motor de asistencia está ejecutándose; reintenta en unos segundos";
+const MENSAJE_OCUPADO = "Hay un recálculo en curso; reintenta en unos segundos";
 const MSG_ID = "El identificador debe ser un número entero positivo";
 
 const responder400 = (res, mensaje) => res.status(400).json({ exito: false, mensaje });
@@ -79,7 +79,7 @@ const respuestaPaginada = (res, filas, total, pag) =>
   res.json({ exito: true, datos: filas, paginacion: { pagina: pag.pagina, limite: pag.limite, total } });
 
 /** { todos: true } (RH) | { ids } propio + subordinados directos | { vacio: true } sin ficha de empleado */
-async function alcanceDeLectura(req) {
+async function alcanceDeLectura(req, desde) {
   if (
     (await tienePermiso(req.user, "rh", "Empleados", "edicion")) ||
     (await tienePermiso(req.user, "rh", "Asistencia", "edicion"))
@@ -88,7 +88,7 @@ async function alcanceDeLectura(req) {
   }
   const propio = await Empleado.obtenerPorUsuarioId(req.user.usuario_id);
   if (!propio) return { vacio: true };
-  return { ids: await Resultados.idsVisibles(propio.id), propio };
+  return { ids: await Resultados.idsVisibles(propio.id, desde), propio };
 }
 
 const usuarioDe = (req) => req.user && (req.user.usuario_id || req.user.id);
@@ -102,7 +102,7 @@ const Controlador = {
     const { empleado_id: empleadoParam } = req.query;
     if (empleadoParam !== undefined && !esIdValido(empleadoParam)) return responder400(res, "empleado_id debe ser un entero positivo");
     try {
-      const alcance = await alcanceDeLectura(req);
+      const alcance = await alcanceDeLectura(req, rango.desde);
       if (alcance.vacio) return denegar(res);
       let ids = null;
       if (empleadoParam !== undefined) {
@@ -127,7 +127,7 @@ const Controlador = {
     const { departamento_id: depto } = req.query;
     if (depto !== undefined && !esIdValido(depto)) return responder400(res, "departamento_id debe ser un entero positivo");
     try {
-      const alcance = await alcanceDeLectura(req);
+      const alcance = await alcanceDeLectura(req, rango.desde);
       if (alcance.vacio) return denegar(res);
       const r = await Resultados.resumen({
         ids: alcance.todos ? null : alcance.ids,
@@ -149,7 +149,9 @@ const Controlador = {
     const { estado } = req.query;
     if (estado !== undefined && estado !== "abierto" && estado !== "cerrado") return responder400(res, "estado debe ser abierto o cerrado");
     try {
-      const r = await Resultados.listarPeriodos({ estado, limite: pag.limite, offset: pag.offset });
+      // quién reabrió y por qué solo lo ve RH (Empleados:edicion o Asistencia:edicion)
+      const esRH = (await tienePermiso(req.user, "rh", "Empleados", "edicion")) || (await tienePermiso(req.user, "rh", "Asistencia", "edicion"));
+      const r = await Resultados.listarPeriodos({ estado, limite: pag.limite, offset: pag.offset, esRH });
       return respuestaPaginada(res, r.filas, r.total, pag);
     } catch (error) {
       return responderError(res, "listar los periodos", error);
@@ -290,6 +292,7 @@ const Controlador = {
       if (r.codigo === "periodo_cerrado") {
         return res.status(409).json({ exito: false, mensaje: "El periodo está cerrado: reábrelo para justificar el día" });
       }
+      if (r.codigo === "ya_justificada") return res.status(409).json({ exito: false, mensaje: "Ese día ya tiene una justificación activa: anúlala antes de registrar otra" });
       if (r.codigo === "no_justificable") {
         return res.status(409).json({ exito: false, mensaje: "Solo se justifica una falta, retardo, salida anticipada o marca incompleta" });
       }

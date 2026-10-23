@@ -122,10 +122,48 @@ describe("motor: puntualidad y límites exactos", () => {
     expect(r.explicaciones.join(" ")).toMatch(/Salida 4 min antes/);
   });
 
-  it("salida fuera de la ventana de salida (17:54) no cuenta como salida: incompleta con bandera", () => {
+  it("salida temprana (17:54, fuera de la antigua ventana) es salida_anticipada con sus minutos", () => {
     const r = evaluar({ marcas: [marca(1, "08:00"), marca(2, "17:54")] });
-    expect(r.estatus).toBe("incompleta");
-    expect(r.banderas).toEqual(expect.arrayContaining(["marcas_fuera_de_ventana", "marca_intermedia_sin_salida"]));
+    expect(r).toMatchObject({ estatus: "salida_anticipada", minutos_salida_anticipada: 6 });
+  });
+
+  it.each([
+    ["15:00", 180], ["17:50", 10], ["14:01", 239], ["17:56", 4],
+  ])("salida a las %s (posterior al fin del descanso) = salida_anticipada de %i min", (hora, minutos) => {
+    const r = evaluar({ marcas: [marca(1, "08:00"), marca(2, hora)] });
+    expect(r).toMatchObject({ estatus: "salida_anticipada", minutos_salida_anticipada: minutos });
+    expect(r.marcas_usadas).toEqual([1, 2]);
+  });
+
+  it("la tolerancia de salida sigue valiendo para una salida temprana: 17:57 es puntual con tolerancia 3", () => {
+    expect(evaluar({ marcas: [marca(1, "08:00"), marca(2, "17:57")] }).estatus).toBe("puntual");
+    expect(evaluar({ turno: { ...RAYHSA, tolerancia_salida_min: 10 }, marcas: [marca(1, "08:00"), marca(2, "17:50")] }).estatus).toBe("puntual");
+    expect(evaluar({ turno: { ...RAYHSA, tolerancia_salida_min: 10 }, marcas: [marca(1, "08:00"), marca(2, "17:49")] }).estatus).toBe("salida_anticipada");
+  });
+
+  it("el corte es el fin del descanso (14:00): marcas durante el descanso o antes NO son salida (incompleta con bandera)", () => {
+    for (const hora of ["12:00", "13:00", "13:30", "14:00:59"]) {
+      const r = evaluar({ marcas: [marca(1, "08:00"), marca(2, hora)] });
+      expect(r.estatus).toBe("incompleta");
+      expect(r.banderas).toContain("marca_intermedia_sin_salida");
+      expect(r.marcas_usadas).toEqual([1]);
+    }
+    expect(evaluar({ marcas: [marca(1, "08:00"), marca(2, "14:01")] }).estatus).toBe("salida_anticipada");
+  });
+
+  it("una sola marca (o todas antes del fin del descanso) es incompleta, nunca salida anticipada", () => {
+    expect(evaluar({ marcas: [marca(1, "08:00")] }).estatus).toBe("incompleta");
+    expect(evaluar({ marcas: [marca(1, "08:00"), marca(2, "08:30"), marca(3, "13:10")] }).estatus).toBe("incompleta");
+  });
+
+  it("sin descanso el corte es entrada + ventana_entrada_despues (10:30)", () => {
+    const sin = { ...RAYHSA, descanso_inicio: null, descanso_min: 0 };
+    expect(evaluar({ turno: sin, marcas: [marca(1, "08:00"), marca(2, "10:30")] }).estatus).toBe("incompleta");
+    expect(evaluar({ turno: sin, marcas: [marca(1, "08:00"), marca(2, "10:31")] })).toMatchObject({ estatus: "salida_anticipada", minutos_salida_anticipada: 449 });
+  });
+
+  it("retardo y salida temprana el mismo día conservan ambos minutos", () => {
+    expect(evaluar({ marcas: [marca(1, "08:20"), marca(2, "15:00")] })).toMatchObject({ estatus: "retardo", minutos_retardo: 20, minutos_salida_anticipada: 180 });
   });
 
   it("23:59:59 después de la ventana (00:00) tampoco es salida", () => {
@@ -159,8 +197,9 @@ describe("motor: marcas, ventanas y duplicados", () => {
   });
 
   it.each([
-    ["06:59:59", "falta"], // antes de la ventana (07:00)
-    ["07:00:00", "puntual"], // primer minuto de la ventana
+    ["06:59:59", "puntual"], // llegar temprano nunca penaliza (antes la ventana empezaba a las 07:00)
+    ["06:50:00", "puntual"],
+    ["00:00:00", "puntual"], // primera marca del día local
     ["10:31:00", "falta"], // después de la ventana (10:30)
   ])("marca de entrada a las %s respecto de la ventana de entrada -> %s", (hora, esperado) => {
     const r = evaluar({ marcas: [marca(1, hora), marca(2, "18:00")] });
@@ -205,14 +244,18 @@ describe("motor: marcas, ventanas y duplicados", () => {
     expect(r.marcas_usadas).toEqual([1, 2]);
   });
 
-  it("con ventanas que se traslapan una sola marca nunca es entrada y salida a la vez", () => {
-    const traslapado = { ...RAYHSA, ventana_salida_antes_min: 600 }; // la ventana de salida empieza a las 08:00
-    const r = evaluar({ turno: traslapado, marcas: [marca(1, "08:00")] });
-    expect(r.estatus).toBe("incompleta");
-    expect(r.marcas_usadas).toEqual([1]);
-    // y con dos marcas, la salida es la última, posterior a la entrada
-    const dos = evaluar({ turno: traslapado, marcas: [marca(1, "08:00"), marca(2, "09:00")] });
-    expect(dos.marcas_usadas).toEqual([1, 2]);
+  it("llegar temprano (06:50, antes de la ventana de entrada) NO es falta y no lleva salida_sin_entrada", () => {
+    const r = evaluar({ marcas: [marca(1, "06:50"), marca(2, "18:00")] });
+    expect(r).toMatchObject({ estatus: "puntual", minutos_retardo: 0 });
+    expect(r.banderas).not.toContain("salida_sin_entrada");
+    expect(r.marcas_usadas).toEqual([1, 2]);
+    expect(r.primera_marca).toBe(utc(DIA, "06:50").toISOString());
+    expect(evaluar({ marcas: [marca(1, "06:50")] }).estatus).toBe("incompleta");
+    expect(evaluar({ marcas: [marca(1, "06:50"), marca(2, "17:56")] })).toMatchObject({ estatus: "salida_anticipada", minutos_salida_anticipada: 4 });
+  });
+
+  it("la primera marca del día es la entrada: 06:50 y 08:05 -> la entrada es la de 06:50", () => {
+    expect(evaluar({ marcas: [marca(1, "06:50"), marca(2, "08:05"), marca(3, "18:00")] }).marcas_usadas).toEqual([1, 3]);
   });
 
   it("el orden de llegada de las marcas no importa", () => {
@@ -399,6 +442,12 @@ describe("motor: turnos nocturnos y parámetros del turno", () => {
 
   it("el día pertenece a la fecha de la ENTRADA: salida al día siguiente", () => {
     const r = evaluar({ turno: NOCTURNO, ahora, marcas: [{ id: 1, ts: utc("2026-10-20", "21:50") }, { id: 2, ts: utc("2026-10-21", "06:05") }] });
+    expect(r.estatus).toBe("puntual");
+    expect(r.marcas_usadas).toEqual([1, 2]);
+  });
+
+  it("en un turno nocturno la marca de la mañana (salida del turno del día anterior) no es la entrada del día", () => {
+    const r = evaluar({ turno: NOCTURNO, ahora, marcas: [{ id: 9, ts: utc("2026-10-20", "06:03") }, { id: 1, ts: utc("2026-10-20", "21:55") }, { id: 2, ts: utc("2026-10-21", "06:02") }] });
     expect(r.estatus).toBe("puntual");
     expect(r.marcas_usadas).toEqual([1, 2]);
   });

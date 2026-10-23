@@ -96,8 +96,9 @@ CREATE INDEX IF NOT EXISTS idx_asistencia_diaria_periodo ON asistencia_diaria(pe
 CREATE INDEX IF NOT EXISTS idx_asistencia_diaria_departamento ON asistencia_diaria(departamento_id);
 
 -- Defensa en profundidad: un día de un periodo CERRADO no se inserta ni se recalcula (el backend ya lo evita con
--- FOR SHARE sobre el periodo). Se permiten los cambios de las FK de referencia (ON DELETE SET NULL de una
--- solicitud, permiso, festivo o incidencia): no alteran el resultado calculado. Reabrir el periodo los habilita.
+-- FOR SHARE sobre el periodo). Cubre el resultado Y el snapshot del turno (nombre, horario, tolerancias, ventanas,
+-- descanso, marcas usadas y detalle). Se permiten los cambios de las FK de referencia (ON DELETE SET NULL de una
+-- solicitud, permiso, festivo, incidencia o departamento): no alteran el resultado calculado. Reabrir el periodo los habilita.
 CREATE OR REPLACE FUNCTION asistencia_diaria_periodo_abierto() RETURNS trigger AS $$
 DECLARE
   estado_periodo TEXT;
@@ -106,10 +107,12 @@ BEGIN
     SELECT estado INTO estado_periodo FROM asistencia_periodos WHERE id = OLD.periodo_id;
     IF estado_periodo = 'cerrado'
        AND (NEW.empleado_id, NEW.fecha, NEW.periodo_id, NEW.estatus, NEW.minutos_retardo, NEW.minutos_salida_anticipada,
-            NEW.primera_marca, NEW.ultima_marca, NEW.turno_id, NEW.version_calculo, NEW.calculado_en)
+            NEW.primera_marca, NEW.ultima_marca, NEW.turno_id, NEW.version_calculo, NEW.calculado_en,
+            NEW.origen_turno, NEW.turno_nombre, NEW.entrada_programada, NEW.salida_programada, NEW.cruza_medianoche, NEW.tolerancia_retardo_min, NEW.tolerancia_salida_min, NEW.umbral_falta_min, NEW.ventana_entrada_antes_min, NEW.ventana_entrada_despues_min, NEW.ventana_salida_antes_min, NEW.ventana_salida_despues_min, NEW.descanso_inicio, NEW.descanso_min, NEW.marcas_usadas, NEW.detalle)
           IS DISTINCT FROM
           (OLD.empleado_id, OLD.fecha, OLD.periodo_id, OLD.estatus, OLD.minutos_retardo, OLD.minutos_salida_anticipada,
-           OLD.primera_marca, OLD.ultima_marca, OLD.turno_id, OLD.version_calculo, OLD.calculado_en) THEN
+           OLD.primera_marca, OLD.ultima_marca, OLD.turno_id, OLD.version_calculo, OLD.calculado_en,
+            OLD.origen_turno, OLD.turno_nombre, OLD.entrada_programada, OLD.salida_programada, OLD.cruza_medianoche, OLD.tolerancia_retardo_min, OLD.tolerancia_salida_min, OLD.umbral_falta_min, OLD.ventana_entrada_antes_min, OLD.ventana_entrada_despues_min, OLD.ventana_salida_antes_min, OLD.ventana_salida_despues_min, OLD.descanso_inicio, OLD.descanso_min, OLD.marcas_usadas, OLD.detalle) THEN
       RAISE EXCEPTION 'asistencia_diaria: el periodo % está cerrado', OLD.periodo_id USING ERRCODE = 'integrity_constraint_violation';
     END IF;
     RETURN NEW;
@@ -135,6 +138,10 @@ CREATE INDEX IF NOT EXISTS idx_sol_vac_aprobadas_rango ON solicitudes_vacaciones
   WHERE estatus = 'aprobado';
 CREATE INDEX IF NOT EXISTS idx_permisos_aprobados_rango ON permisos_ausencia(empleado_id, fecha_inicio, fecha_fin)
   WHERE estatus = 'aprobado';
+
+-- A lo más UNA justificación activa por empleado y día (anular una permite registrar otra)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_asistencia_incidencias_justificacion_activa
+  ON asistencia_incidencias(empleado_id, fecha) WHERE activa AND tipo = 'justificacion';
 
 -- d) Ajustes pendientes: marcas que llegan (o se vinculan) DESPUÉS del cierre de su periodo. No recalculan nada:
 --    RH decide si reabre el periodo (queda constancia de cuándo y quién la resolvió).

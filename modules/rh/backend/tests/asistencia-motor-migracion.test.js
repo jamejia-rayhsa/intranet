@@ -76,6 +76,22 @@ describe("Migración 014 - esquema", () => {
     expect(MIGRACION).not.toMatch(/BEFORE INSERT OR UPDATE OR DELETE ON asistencia_diaria/);
   });
 
+  it("el trigger del periodo cerrado cubre también el snapshot del turno (nombre, horario, tolerancias, ventanas, descanso, marcas, detalle)", () => {
+    for (const lado of ["NEW", "OLD"]) {
+      for (const col of ["origen_turno", "turno_nombre", "entrada_programada", "salida_programada", "cruza_medianoche", "tolerancia_retardo_min",
+        "tolerancia_salida_min", "umbral_falta_min", "ventana_entrada_antes_min", "ventana_entrada_despues_min", "ventana_salida_antes_min",
+        "ventana_salida_despues_min", "descanso_inicio", "descanso_min", "marcas_usadas", "detalle"]) {
+        expect(SQL).toContain(`${lado}.${col}`);
+      }
+    }
+    // el departamento y los vínculos son referencias con ON DELETE SET NULL: no deben bloquear borrados
+    expect(SQL).not.toMatch(/NEW\.departamento_id|NEW\.solicitud_vacaciones_id|NEW\.incidencia_id/);
+  });
+
+  it("a lo más UNA justificación activa por empleado y día (índice único parcial)", () => {
+    expect(SQL).toMatch(/CREATE UNIQUE INDEX IF NOT EXISTS uq_asistencia_incidencias_justificacion_activa ON asistencia_incidencias\(empleado_id, fecha\) WHERE activa AND tipo = 'justificacion'/);
+  });
+
   it("asistencia_ajustes_pendientes: una fila por marca y motivos acotados", () => {
     expect(SQL).toMatch(/CONSTRAINT asistencia_ajustes_marca_key UNIQUE \(marca_id\)/);
     expect(SQL).toMatch(/motivo IN \('marca_posterior_cierre', 'marca_vinculada_posterior_cierre'\)/);

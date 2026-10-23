@@ -45,6 +45,13 @@ describe("planificador: configuración", () => {
     expect(log.warn).toHaveBeenCalled();
   });
 
+  it("tope duro ASISTENCIA_MOTOR_TIMEOUT_MIN: 10 min por omisión, 1-240, inválido vuelve al defecto", () => {
+    const log = logSilencioso();
+    expect(leerConfigPlanificador({}, log).timeoutMs).toBe(10 * 60000);
+    expect(leerConfigPlanificador({ ASISTENCIA_MOTOR_TIMEOUT_MIN: "3" }, log).timeoutMs).toBe(180000);
+    for (const malo of ["0", "241", "x", "-1"]) expect(leerConfigPlanificador({ ASISTENCIA_MOTOR_TIMEOUT_MIN: malo }, log).timeoutMs).toBe(600000);
+  });
+
   it("tiempo máximo (10 min) y retraso inicial (30 s) configurables", () => {
     const log = logSilencioso();
     expect(leerConfigPlanificador({}, log)).toMatchObject({ tiempoMaxMs: 10 * 60000, retrasoInicialMs: 30000 });
@@ -69,7 +76,7 @@ describe("planificador: arranque, vueltas y parada", () => {
     const p = crearPlanificador({ ejecutar, intervaloMs: 900000, tiempoMaxMs: 600000, retrasoInicialMs: 10, log: logSilencioso(), ...reloj });
     p.iniciar();
     await reloj.disparar(10);
-    expect(ejecutar).toHaveBeenCalledWith({ tiempoMaxMs: 600000 });
+    expect(ejecutar).toHaveBeenCalledWith({ tiempoMaxMs: 528000, timeoutMs: 600000 + 60000, control: {} });
     await reloj.disparar(900000);
     expect(ejecutar).toHaveBeenCalledTimes(2);
     expect(p.estado()).toMatchObject({ vueltas: 2, errores: 0 });
@@ -151,16 +158,64 @@ describe("planificador: arranque, vueltas y parada", () => {
     expect(p.activo()).toBe(false);
   });
 
-  it("una vuelta que excede el tiempo máximo + gracia se registra y el candado evita el empalme", async () => {
+  it("TOPE DURO: una vuelta colgada se aborta (conexión destruida), se libera enCurso y la siguiente vuelta corre", async () => {
     const reloj = relojFalso();
     const log = logSilencioso();
-    const p = crearPlanificador({ ejecutar: () => new Promise(() => {}), intervaloMs: 1000, tiempoMaxMs: 5000, retrasoInicialMs: 1, log, ...reloj });
+    const abortar = jest.fn().mockResolvedValue();
+    const ejecutar = jest.fn()
+      .mockImplementationOnce(() => new Promise(() => {})) // se cuelga
+      .mockResolvedValueOnce({ tipo: "incremental", estado: "ok" });
+    const p = crearPlanificador({ ejecutar, abortar, intervaloMs: 1000, tiempoMaxMs: 5000, timeoutMs: 8000, retrasoInicialMs: 1, log, ...reloj });
     p.iniciar();
     const vuelta = reloj.disparar(1);
     await Promise.resolve();
-    await reloj.disparar(65000); // tiempoMax + 60 s de gracia
+    expect(ejecutar.mock.calls[0][0]).toMatchObject({ tiempoMaxMs: 5000, timeoutMs: 8000 });
+    expect(p.estado().enCurso).toBe(true);
+    await reloj.disparar(8000); // vence el tope duro
     await vuelta;
-    expect(log.error).toHaveBeenCalledWith(expect.stringMatching(/excedió el tiempo máximo/));
+    expect(abortar).toHaveBeenCalledTimes(1);
+    expect(abortar).toHaveBeenCalledWith(ejecutar.mock.calls[0][0].control);
+    expect(log.error).toHaveBeenCalledWith(expect.stringMatching(/tope duro/));
+    expect(p.estado()).toMatchObject({ enCurso: false, errores: 1 });
+    await reloj.disparar(1000); // la siguiente vuelta SÍ corre (no queda "en curso" para siempre)
+    expect(ejecutar).toHaveBeenCalledTimes(2);
+    expect(p.estado()).toMatchObject({ vueltas: 1, errores: 1 });
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it("una vuelta abortada cuyo ejecutar rechaza después NO se cuenta ni se registra dos veces", async () => {
+    const reloj = relojFalso();
+    const log = logSilencioso();
+    let rechazar;
+    const ejecutar = jest.fn(() => new Promise((_, rej) => { rechazar = rej; }));
+    const abortar = jest.fn(async (control) => {
+      control.abortado = true; // lo que hace abortarCorrida
+      rechazar(Object.assign(new Error("conexión terminada"), { code: "57P01" }));
+    });
+    const p = crearPlanificador({ ejecutar, abortar, intervaloMs: 1000, tiempoMaxMs: 5000, timeoutMs: 8000, retrasoInicialMs: 1, log, ...reloj });
+    p.iniciar();
+    const vuelta = reloj.disparar(1);
+    await Promise.resolve();
+    await reloj.disparar(8000);
+    await vuelta;
+    await Promise.resolve();
+    expect(p.estado().errores).toBe(1);
+    expect(log.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("el tiempo blando se acota al 80 % del tope duro y un fallo de abortar no rompe el planificador", async () => {
+    const reloj = relojFalso();
+    const log = logSilencioso();
+    const ejecutar = jest.fn(() => new Promise(() => {}));
+    const p = crearPlanificador({ ejecutar, abortar: jest.fn().mockRejectedValue(Object.assign(new Error("secreto"), { code: "XX1" })), intervaloMs: 1000, tiempoMaxMs: 600000, timeoutMs: 10000, retrasoInicialMs: 1, log, ...reloj });
+    p.iniciar();
+    const vuelta = reloj.disparar(1);
+    await Promise.resolve();
+    expect(ejecutar.mock.calls[0][0].tiempoMaxMs).toBe(8000);
+    await reloj.disparar(10000);
+    await vuelta;
+    expect(JSON.stringify(log.error.mock.calls)).not.toMatch(/secreto/);
+    expect(p.estado().enCurso).toBe(false);
     expect(reloj.activos().some((t) => t.ms === 1000)).toBe(true);
   });
 });
@@ -182,7 +237,7 @@ describe("planificador: arranque desde el entorno", () => {
       env: { ASISTENCIA_MOTOR_ACTIVO: "true", ASISTENCIA_MOTOR_INTERVALO_MIN: "5", ASISTENCIA_MOTOR_TIEMPO_MAX_MIN: "3", ASISTENCIA_MOTOR_RETRASO_INICIAL_S: "0" },
       log: logSilencioso(), crear, ejecutar,
     });
-    expect(crear).toHaveBeenCalledWith(expect.objectContaining({ intervaloMs: 300000, tiempoMaxMs: 180000, retrasoInicialMs: 0, ejecutar }));
+    expect(crear).toHaveBeenCalledWith(expect.objectContaining({ intervaloMs: 300000, tiempoMaxMs: 180000, timeoutMs: 600000, retrasoInicialMs: 0, ejecutar, abortar: expect.any(Function) }));
     expect(iniciar).toHaveBeenCalledTimes(1);
     expect(r.activo).toBe(true);
   });

@@ -271,12 +271,12 @@ describe("ejecutarCiclo: re-vinculación, incremental y completa", () => {
     expect(esc.upserts.filter((f) => f.fecha === "2026-10-05").map((f) => f.empleado_id)).toEqual([1]); // solo el empleado afectado
   });
 
-  it("el cursor de lo nuevo es el inicio de la ejecución anterior menos 2 minutos de solape", async () => {
+  it("el cursor de lo nuevo es el inicio de la ejecución anterior menos 10 minutos de solape (marcas confirmadas tarde)", async () => {
     esc.ejecucionPrevia = { inicio: new Date("2026-10-23T17:45:00Z"), tipo: "incremental" };
     esc.ultimaCompleta = { inicio: new Date("2026-10-23T08:00:00Z") };
     await Motor.ejecutarCiclo({ ahora: AHORA });
     const q = consultas(/SELECT DISTINCT m\.empleado_id/)[0];
-    expect(q.params[0].toISOString()).toBe("2026-10-23T17:43:00.000Z");
+    expect(q.params[0].toISOString()).toBe("2026-10-23T17:35:00.000Z");
   });
 
   it("cambios de calendario, vacaciones, permisos, incidencias y asignaciones recalculan solo lo afectado", async () => {
@@ -292,6 +292,17 @@ describe("ejecutarCiclo: re-vinculación, incremental y completa", () => {
     const claves = new Set(esc.upserts.map(clave));
     for (const k of ["1|2026-10-02", "2|2026-10-02", "2|2026-10-06", "2|2026-10-07", "1|2026-10-08", "1|2026-10-09", "2|2026-10-12"]) expect(claves.has(k)).toBe(true);
     for (const k of ["2|2026-10-08", "1|2026-10-06", "1|2026-10-12", "2|2026-10-09"]) expect(claves.has(k)).toBe(false);
+  });
+
+  it("las aprobaciones de vacaciones y permisos desde la última vuelta entran al incremental (fecha_autoriza / fecha_respuesta)", async () => {
+    esc.ejecucionPrevia = { inicio: new Date("2026-10-23T17:45:00Z"), tipo: "incremental" };
+    esc.ultimaCompleta = { inicio: new Date("2026-10-23T08:00:00Z") };
+    await Motor.ejecutarCiclo({ ahora: AHORA });
+    const v = consultas(/FROM solicitudes_vacaciones WHERE empleado_id IS NOT NULL/)[0];
+    expect(v.sql).toMatch(/fecha_autoriza > \$1::timestamptz OR fecha_creacion > \$1::timestamptz/);
+    const p = consultas(/FROM permisos_ausencia WHERE empleado_id IS NOT NULL/)[0];
+    expect(p.sql).toMatch(/fecha_respuesta > \$1::timestamptz OR fecha_solicitud > \$1::timestamptz/);
+    expect(v.params[0].toISOString()).toBe("2026-10-23T17:35:00.000Z");
   });
 
   it("pasadas 24 h (barrido_completo_horas) de la última completa, la corrida vuelve a ser completa", async () => {
@@ -458,5 +469,81 @@ describe("cierre y reapertura manual", () => {
   it.each([[1, "no_cerrado"], [99, "no_existe"]])("reabrir el periodo %i -> %s", async (id, codigo) => {
     expect((await Motor.reabrirPeriodo({ id, usuarioId: 9, motivo: "motivo válido", ahora: AHORA })).codigo).toBe(codigo);
     expect(esc.reabiertos).toHaveLength(0);
+  });
+});
+
+describe("tope duro: statement_timeout, control y abortar", () => {
+  const { abortarCorrida } = require("../services/asistencia/candado");
+  beforeEach(() => {
+    esc.empleados = [empleado(1)];
+    bd.estado.reglas.unshift({ re: /pg_backend_pid/, respuesta: { rows: [{ pid: 4242 }] } });
+  });
+
+  it("con timeoutMs pone statement_timeout de sesión, SET LOCAL en cada transacción y lo restablece antes de devolver la conexión", async () => {
+    const control = {};
+    await Motor.ejecutarCiclo({ ahora: AHORA, timeoutMs: 600000, control });
+    const sqls = bd.estado.llamadas.map((l) => l.sql.trim());
+    expect(sqls).toContain("SET statement_timeout = 600000");
+    const locales = sqls.filter((x) => x === "SET LOCAL statement_timeout = 600000");
+    expect(locales.length).toBeGreaterThanOrEqual(1);
+    for (let i = 0; i < sqls.length; i++) if (sqls[i] === "BEGIN") expect(sqls[i + 1]).toBe("SET LOCAL statement_timeout = 600000");
+    expect(sqls.indexOf("RESET statement_timeout")).toBeGreaterThan(sqls.findLastIndex((x) => /INSERT INTO asistencia_diaria/.test(x)));
+    expect(sqls.indexOf("RESET statement_timeout")).toBeLessThan(sqls.findIndex((x) => /pg_advisory_unlock/.test(x)));
+    expect(control).toMatchObject({ pid: 4242, liberado: true, ejecucionId: expect.anything() });
+  });
+
+  it("sin timeoutMs no toca statement_timeout (API y pruebas)", async () => {
+    await Motor.recalcular({ desde: "2026-10-19", hasta: "2026-10-19", ahora: AHORA });
+    expect(bd.estado.llamadas.some((l) => /statement_timeout/.test(l.sql))).toBe(false);
+  });
+
+  it("abortarCorrida mata la sesión (pg_terminate_backend), destruye la conexión UNA vez y es idempotente", async () => {
+    const cliente = { release: jest.fn() };
+    const pool = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+    const control = { cliente, pid: 4242 };
+    await abortarCorrida(control, { pool });
+    await abortarCorrida(control, { pool });
+    expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(pool.query.mock.calls[0]).toEqual(["SELECT pg_terminate_backend($1::int)", [4242]]);
+    expect(cliente.release).toHaveBeenCalledTimes(1);
+    expect(cliente.release).toHaveBeenCalledWith(true);
+    expect(control).toMatchObject({ abortado: true, liberado: true });
+  });
+
+  it("abortarCorrida no hace nada si la corrida ya terminó y liberó su conexión", async () => {
+    const control = { cliente: { release: jest.fn() }, pid: 1, liberado: true };
+    const pool = { query: jest.fn() };
+    await abortarCorrida(control, { pool });
+    expect(pool.query).not.toHaveBeenCalled();
+    expect(control.cliente.release).not.toHaveBeenCalled();
+    await abortarCorrida(null, { pool });
+  });
+
+  it("si terminate_backend falla igual se destruye la conexión", async () => {
+    const control = { cliente: { release: jest.fn() }, pid: 7 };
+    await abortarCorrida(control, { pool: { query: jest.fn().mockRejectedValue(new Error("x")) } });
+    expect(control.cliente.release).toHaveBeenCalledWith(true);
+  });
+
+  it("abortarVuelta registra 'tiempo_excedido' en la ejecución en curso, o crea una ya en error si aún no había abierto la suya", async () => {
+    const { abortarVuelta } = Motor;
+    bdGlobal.grupo.query.mockClear();
+    await abortarVuelta({ cliente: { release: jest.fn() }, pid: 1, ejecucionId: 55 });
+    let q = bdGlobal.grupo.query.mock.calls.map((c) => c[0]);
+    expect(q.some((x) => /UPDATE asistencia_ejecuciones SET estado = 'error', fin = NOW\(\), error = 'tiempo_excedido' WHERE id = \$1 AND estado = 'en_curso'/.test(x))).toBe(true);
+    bdGlobal.grupo.query.mockClear();
+    await abortarVuelta({ cliente: { release: jest.fn() }, pid: 1 });
+    q = bdGlobal.grupo.query.mock.calls.map((c) => c[0]);
+    expect(q.some((x) => /INSERT INTO asistencia_ejecuciones .*'error', NOW\(\), 'tiempo_excedido'/s.test(x))).toBe(true);
+  });
+
+  it("el candado se toma sin esperar por omisión (API: 409 inmediato, sin retener una conexión)", async () => {
+    esc.cerraduraLibre = false;
+    const t0 = Date.now();
+    expect(await Motor.recalcular({ desde: "2026-10-19", hasta: "2026-10-19", ahora: AHORA })).toEqual({ ocupado: true });
+    expect((await Motor.cerrarPeriodo({ id: 1, usuarioId: 1, ahora: AHORA })).codigo).toBe("ocupado");
+    expect((await Motor.reabrirPeriodo({ id: 1, usuarioId: 1, motivo: "motivo válido", ahora: AHORA })).codigo).toBe("ocupado");
+    expect(Date.now() - t0).toBeLessThan(200);
+    expect(consultas(/pg_try_advisory_lock/)).toHaveLength(3);
   });
 });

@@ -120,6 +120,14 @@ async function sembrar() {
     );
     empleados.push({ i, id: r.rows[0].id, nomina, depto, ingreso, baja, estatus });
   }
+  // 5 empleados extra para los casos de borde de las reglas de entrada y salida (nóminas 9201-9205)
+  for (let k = 1; k <= 5; k++) {
+    const r = await q(
+      `INSERT INTO empleados (nombre, apellido_paterno, numero_nomina, estatus, fecha_ingreso, departamento_id) VALUES ($1, $2, $3, 'activo', '2020-01-01', $4) RETURNING id`,
+      [`Borde${k}`, `Ficticio${k}`, String(9200 + k), deptos[0]],
+    );
+    empleados.push({ i: 100 + k, id: r.rows[0].id, nomina: String(9200 + k), depto: deptos[0], ingreso: "2020-01-01", baja: null, estatus: "activo" });
+  }
   const porI = (i) => empleados.find((e) => e.i === i);
   // jefes: 21 manda a 22-24 y 25 manda a 26
   for (const [sub, jefe] of [[22, 21], [23, 21], [24, 21], [26, 25]]) {
@@ -332,14 +340,25 @@ function oraculo(W, e, fecha) {
   const E = hm(dia.e);
   let S = hm(dia.s);
   if (S < E) S += 1440;
+  // Entrada: primera marca del día local (desde las 00:00, llegar temprano nunca penaliza) hasta entrada + ventana
+  // posterior; en un turno que cruza la medianoche el límite inferior sigue siendo entrada - ventana anterior.
+  const cruza = S > 1440;
+  const inferior = cruza ? E - turno.ventana_entrada_antes_min : Math.min(0, E - turno.ventana_entrada_antes_min);
   let entrada = null;
-  for (const m of unicas) if (m.rel >= E - turno.ventana_entrada_antes_min && m.rel <= E + turno.ventana_entrada_despues_min) { entrada = m; break; }
+  for (const m of unicas) if (m.rel >= inferior && m.rel <= E + turno.ventana_entrada_despues_min) { entrada = m; break; }
+  // Salida: la última marca POSTERIOR al fin del descanso (o a entrada + ventana si no hay descanso) y a la entrada
+  let corte = E + turno.ventana_entrada_despues_min;
+  if (turno.descanso_min > 0 && turno.descanso_inicio) {
+    let ini = hm(String(turno.descanso_inicio).slice(0, 5));
+    if (cruza && ini < E) ini += 1440;
+    corte = ini + turno.descanso_min;
+  }
   let salida = null;
   for (const m of unicas) {
     if (entrada && m.seg <= entrada.seg) continue;
-    if (m.rel >= S - turno.ventana_salida_antes_min && m.rel <= S + turno.ventana_salida_despues_min) salida = m; // la última
+    if (m.rel > corte && m.rel <= S + turno.ventana_salida_despues_min) salida = m; // la última
   }
-  const delDia = unicas.filter((m) => m.rel >= E - turno.ventana_entrada_antes_min && m.rel <= S + turno.ventana_salida_despues_min);
+  const delDia = unicas.filter((m) => m.rel >= inferior && m.rel <= S + turno.ventana_salida_despues_min);
   const primera = delDia.length ? delDia[0].seg : null;
   const ultima = delDia.length ? delDia[delDia.length - 1].seg : null;
   const tarde = entrada ? entrada.rel - E : 0;
@@ -457,6 +476,24 @@ async function principal() {
       );
     }
   }
+  // casos de borde de las reglas nuevas (martes 6 y miércoles 7 de octubre; hora de México = UTC-6)
+  const bordes = [
+    [101, "2026-10-06", ["06:50", "18:00"]], // llegó temprano, antes de la ventana: puntual
+    [102, "2026-10-06", ["08:00", "15:00"]], // salida a las 15:00: anticipada de 180 min
+    [103, "2026-10-06", ["08:00", "17:50"]], // 17:50 con tolerancia 3: anticipada de 10 min
+    [104, "2026-10-06", ["08:00"]], // una sola marca: incompleta
+    [105, "2026-10-06", ["08:00", "13:30"]], // marca durante el descanso: incompleta
+    [101, "2026-10-07", ["06:50"]], // solo la entrada temprana: incompleta
+    [102, "2026-10-07", ["08:20", "15:00"]], // retardo y salida temprana: ambos minutos
+  ];
+  let idB = 9_500_000;
+  for (const [i, fecha, horas] of bordes) {
+    for (const h of horas) {
+      const [hh, mm] = h.split(":").map(Number);
+      await q(`INSERT INTO asistencia_marcas (origen, id_externo, codigo_empleado, empleado_id, marca_ts) VALUES ('biotime', $1, $2, $3, $4)`,
+        [String(idB++), String(9200 + (i - 100)), S.porI(i).id, new Date(Date.parse(`${fecha}T00:00:00Z`) + ((hh + 6) * 60 + mm) * 60000).toISOString()]);
+    }
+  }
   const vinculo = (await q("SELECT COUNT(*) FILTER (WHERE empleado_id IS NULL)::int AS huerfanas, COUNT(*)::int AS total FROM asistencia_marcas")).rows[0];
   console.log(`  marcas totales ${vinculo.total}, huérfanas ${vinculo.huerfanas}`);
   comprobar("hay marcas huérfanas (sin nómina, nómina repetida, ex empleados, fuera de empleo)", vinculo.huerfanas > 0);
@@ -471,6 +508,15 @@ async function principal() {
     comprobar(`el conjunto sintético cubre el estatus ${est}`, (cmp1.cuenta[est] || 0) > 0);
   }
   comprobar("hay días no_aplica y sin_identificador que no se guardan", cmp1.cuenta.no_aplica > 0 && cmp1.cuenta.sin_identificador > 0);
+  const dia = async (i, f) => (await q("SELECT estatus, minutos_retardo, minutos_salida_anticipada, detalle->'banderas' AS b FROM asistencia_diaria WHERE empleado_id = $1 AND fecha = $2", [S.porI(i).id, f])).rows[0];
+  const d1 = await dia(101, "2026-10-06"); const d2 = await dia(102, "2026-10-06"); const d3 = await dia(103, "2026-10-06");
+  const d4 = await dia(104, "2026-10-06"); const d5 = await dia(105, "2026-10-06"); const d6 = await dia(101, "2026-10-07"); const d7 = await dia(102, "2026-10-07");
+  comprobar("entrada a las 06:50 (antes de la ventana) con salida 18:00 -> puntual, NO falta", d1.estatus === "puntual" && !d1.b.includes("salida_sin_entrada"), JSON.stringify(d1));
+  comprobar("salida a las 15:00 -> salida_anticipada de 180 min", d2.estatus === "salida_anticipada" && d2.minutos_salida_anticipada === 180, JSON.stringify(d2));
+  comprobar("salida a las 17:50 con tolerancia 3 -> salida_anticipada de 10 min", d3.estatus === "salida_anticipada" && d3.minutos_salida_anticipada === 10, JSON.stringify(d3));
+  comprobar("una sola marca -> incompleta (no salida anticipada)", d4.estatus === "incompleta" && d4.minutos_salida_anticipada === 0, JSON.stringify(d4));
+  comprobar("marca durante el descanso (13:30) -> incompleta con marca_intermedia_sin_salida", d5.estatus === "incompleta" && d5.b.includes("marca_intermedia_sin_salida"), JSON.stringify(d5));
+  comprobar("solo la entrada temprana 06:50 -> incompleta; retardo 08:20 + salida 15:00 -> retardo con ambos minutos", d6.estatus === "incompleta" && d7.estatus === "retardo" && d7.minutos_retardo === 20 && d7.minutos_salida_anticipada === 180, JSON.stringify([d6, d7]));
   const sinFila = (await q(
     `SELECT COUNT(*)::int AS n FROM asistencia_diaria d JOIN empleados e ON e.id = d.empleado_id WHERE e.numero_nomina IS NULL OR e.id IN ($1, $2)`,
     [S.porI(10).id, S.porI(11).id],
@@ -535,6 +581,16 @@ async function principal() {
     const r = await http(backend, "POST", "/api/asistencia/incidencias", U.rh_admin.token, { empleado_id: f.empleado_id, fecha: f.fecha, motivo: "Justificación ficticia de prueba" });
     comprobar(`justificar ${f.estatus} del empleado ${f.empleado_id} el ${f.fecha}: 201 y queda 'justificada'`, r.estado === 201 && r.json.datos.dia && r.json.datos.dia.estatus === "justificada", JSON.stringify(r));
   }
+  const unaJust = faltas[faltas.length - 1];
+  const otra = await http(backend, "POST", "/api/asistencia/incidencias", U.rh_admin.token, { empleado_id: unaJust.empleado_id, fecha: unaJust.fecha, motivo: "Segunda justificación del mismo día" });
+  comprobar("una segunda justificación del mismo día -> 409 (a lo más una activa)", otra.estado === 409, JSON.stringify(otra));
+  comprobar("la BD impide dos justificaciones activas del mismo día (índice único parcial)", await (async () => {
+    try { await q("INSERT INTO asistencia_incidencias (empleado_id, fecha, tipo, motivo) VALUES ($1, $2, 'justificacion', 'duplicada a mano')", [unaJust.empleado_id, unaJust.fecha]); return false; } catch (e) { return e.code === "23505"; }
+  })());
+  const idInc = (await q("SELECT id FROM asistencia_incidencias WHERE empleado_id = $1 AND fecha = $2 AND activa", [unaJust.empleado_id, unaJust.fecha])).rows[0].id;
+  const anul = await http(backend, "POST", `/api/asistencia/incidencias/${idInc}/anular`, U.rh_admin.token);
+  const trasAnular = (await q("SELECT estatus FROM asistencia_diaria WHERE empleado_id = $1 AND fecha = $2", [unaJust.empleado_id, unaJust.fecha])).rows[0].estatus;
+  comprobar(`anular la justificación recalcula el día y vuelve a su resultado original (${unaJust.estatus})`, anul.estado === 200 && trasAnular === unaJust.estatus, `${anul.estado} ${trasAnular}`);
   const noJust = (await q(`SELECT empleado_id, fecha::text FROM asistencia_diaria WHERE estatus = 'puntual' LIMIT 1`)).rows[0];
   comprobar("justificar un día puntual -> 409", (await http(backend, "POST", "/api/asistencia/incidencias", U.rh_admin.token, { empleado_id: noJust.empleado_id, fecha: noJust.fecha, motivo: "No procede" })).estado === 409);
   comprobar("un empleado no puede justificar (403)", (await http(backend, "POST", "/api/asistencia/incidencias", U.empleado.token, { empleado_id: noJust.empleado_id, fecha: noJust.fecha, motivo: "No procede" })).estado === 403);
@@ -687,6 +743,12 @@ async function principal() {
   comprobar("el resumen suma exactamente los días del rango", sumas === enBd, `${sumas} vs ${enBd}`);
   const resJefe = await http(backend, "GET", "/api/asistencia/resumen?desde=2026-10-01&hasta=2026-10-15&limite=500", U.jefe.token);
   comprobar("el resumen del jefe solo incluye a su gente", resJefe.json.datos.every((f) => [21, 22, 23, 24].map((i) => S.porI(i).id).includes(f.empleado_id)));
+  const perEmp = await http(backend, "GET", "/api/asistencia/periodos", U.rh_empleado.token);
+  const perRh = await http(backend, "GET", "/api/asistencia/periodos", U.rh_admin.token);
+  comprobar("GET /periodos: rh_empleado no ve reabierto_motivo/reabierto_por; rh_admin sí", perEmp.estado === 200 && perEmp.json.datos.every((p) => !("reabierto_motivo" in p) && !("reabierto_por" in p)) && perRh.json.datos.every((p) => "reabierto_motivo" in p && "reabierto_por" in p));
+  const sub1 = (await q("INSERT INTO empleados (nombre, apellido_paterno, estatus, fecha_baja, fecha_ingreso, jefe_inmediato_id) VALUES ('BajaA','Ficticio','baja','2026-09-10','2020-01-01',$1) RETURNING id", [S.porI(21).id])).rows[0].id;
+  const sub2 = (await q("INSERT INTO empleados (nombre, apellido_paterno, estatus, fecha_baja, fecha_ingreso, jefe_inmediato_id) VALUES ('BajaB','Ficticio','baja','2026-10-10','2020-01-01',$1) RETURNING id", [S.porI(21).id])).rows[0].id;
+  comprobar("subordinado dado de baja ANTES del rango -> 403; con baja dentro del rango -> 200", e(await http(backend, "GET", rutas(sub1), U.jefe.token)) === 403 && e(await http(backend, "GET", rutas(sub2), U.jefe.token)) === 200);
   comprobar("rango > 92 días -> 400", e(await http(backend, "GET", "/api/asistencia/resultados?desde=2026-01-01&hasta=2026-12-31", U.rh_admin.token)) === 400);
   comprobar("sin token 401 y token con firma ajena 401", e(await http(backend, "GET", rutas(emp22))) === 401 &&
     e(await http(backend, "GET", rutas(emp22), jwt.sign({ sub: crypto.randomUUID(), aud: "authenticated" }, "otro-secreto-de-prueba-largo-largo", { algorithm: "HS256" }))) === 401);
@@ -779,6 +841,38 @@ async function principal() {
   await dormir(2500);
   comprobar("con ASISTENCIA_MOTOR_ACTIVO=false no corre ninguna vuelta", (await q("SELECT COUNT(*)::int AS n FROM asistencia_ejecuciones WHERE origen = 'planificador'")).rows[0].n === 0);
   await detenerBackend(apagado);
+
+  seccion("12. Tope duro del planificador (vuelta colgada) con PostgreSQL real");
+  const { crearPlanificador } = require("../../modules/rh/backend/services/asistencia/planificador");
+  await q("DELETE FROM asistencia_ejecuciones");
+  const bloqueo = await pg.connect();
+  await bloqueo.query("BEGIN");
+  await bloqueo.query("LOCK TABLE asistencia_parametros IN ACCESS EXCLUSIVE MODE"); // la vuelta se queda esperando esta tabla
+  const registro = [];
+  const logPlan = { info: (m) => registro.push(m), warn: (m) => registro.push(m), error: (m) => registro.push(m) };
+  // statement_timeout largo a propósito: así actúa el VIGILANTE (destruir conexión), no el timeout de sentencia
+  const plan = crearPlanificador({
+    ejecutar: (o) => Motor.ejecutarCiclo({ ...o, timeoutMs: 120000, ahora: () => AHORA }),
+    abortar: Motor.abortarVuelta, intervaloMs: 60000, tiempoMaxMs: 60000, timeoutMs: 3000, retrasoInicialMs: 3600000, log: logPlan,
+  });
+  plan.iniciar();
+  const tHang = process.hrtime.bigint();
+  await plan.vuelta();
+  const msHang = Number(process.hrtime.bigint() - tHang) / 1e6;
+  console.log(`  la vuelta colgada se abortó a los ${msHang.toFixed(0)} ms`);
+  comprobar("el vigilante abortó la vuelta al vencer el tope duro (~3 s) y liberó enCurso", msHang >= 2800 && msHang < 6000 && plan.estado().enCurso === false && plan.estado().errores === 1, JSON.stringify(plan.estado()));
+  comprobar("el candado de sesión murió con la conexión", (await q("SELECT COUNT(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND classid = 4501")).rows[0].n === 0);
+  const colg = (await q("SELECT estado, error FROM asistencia_ejecuciones ORDER BY id")).rows;
+  comprobar("la bitácora registra el error 'tiempo_excedido' sin datos personales", colg.length >= 1 && colg.every((x) => x.estado === "error" && x.error === "tiempo_excedido"), JSON.stringify(colg));
+  comprobar("ninguna sesión de la vuelta abortada sigue viva en PostgreSQL", (await q("SELECT COUNT(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query ILIKE '%asistencia_parametros%'")).rows[0].n === 0);
+  await bloqueo.query("ROLLBACK");
+  bloqueo.release();
+  await q("DELETE FROM asistencia_ejecuciones");
+  await plan.vuelta();
+  const sig = (await q("SELECT estado FROM asistencia_ejecuciones ORDER BY id")).rows;
+  comprobar("la SIGUIENTE vuelta corre normalmente (ok) y el planificador sigue vivo", sig.length === 1 && sig[0].estado === "ok" && plan.estado().vueltas === 1, JSON.stringify(sig));
+  comprobar("el log del tope duro no lleva datos personales", registro.length > 0 && !registro.join(" ").match(/Empleado\d+|Ficticio\d+|rhk_/));
+  await plan.detener();
 
   seccion("Resumen");
   console.log(`  ${pasaron} comprobaciones PASS, ${fallos.length} FAIL, ${(Number(process.hrtime.bigint() - t0) / 1e9).toFixed(0)} s`);

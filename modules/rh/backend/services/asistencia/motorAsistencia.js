@@ -9,13 +9,16 @@ const Ingesta = require("../../models/ingesta.model");
 const { evaluarDia, snapshotTurno } = require("./motor");
 const { interpretarParametros, CLAVES } = require("./parametros");
 const { quincenaDe, quincenasEntre } = require("./periodos");
-const { conCandadoDelMotor } = require("./candado");
+const { conCandadoDelMotor, abortarCorrida } = require("./candado");
 const { ZONA, aLocal, hoyMexico, sumarDias } = require("./tiempo");
 const { aNumeroDia, deNumeroDia } = require("../../utils/diasHabiles");
 
 const TAMANO_BLOQUE = 20;
 const TIEMPO_MAXIMO_MS = 10 * 60 * 1000;
-const SOLAPE_CURSOR_MS = 120 * 1000;
+// Traslape del cursor incremental: una marca cuya transacción de ingesta empezó antes de la última vuelta pero se
+// confirmó después tiene fecha_importacion (= inicio de su transacción) anterior al cursor; 10 min cubren con holgura
+// cualquier ingesta razonable y el barrido completo (24 h) recoge el resto.
+const SOLAPE_CURSOR_MS = 10 * 60 * 1000;
 const LIMITE_VINCULACION = 5000;
 const MAX_VUELTAS_VINCULACION = 20;
 
@@ -295,12 +298,18 @@ const SQL_UPSERT = `
         IS DISTINCT FROM (${COLUMNAS_COMPARADAS.map((n) => `EXCLUDED.${n}`).join(", ")})
   RETURNING (xmax = 0) AS insertada`;
 
+/** SET LOCAL statement_timeout en las transacciones de una corrida con tope duro (ver candado.js) */
+async function fijarTimeoutLocal(c) {
+  if (Number.isInteger(c.timeoutMs) && c.timeoutMs > 0) await c.query(`SET LOCAL statement_timeout = ${c.timeoutMs}`);
+}
+
 /** Escribe un bloque en UNA transacción corta, re-verificando que los periodos sigan abiertos. */
 async function escribirBloque(c, filas, borrar) {
   if (filas.length === 0 && borrar.length === 0) return { modificadas: 0, omitidasCerradas: 0 };
   const idsPeriodo = [...new Set([...filas, ...borrar].map((f) => f.periodo_id))];
   await c.query("BEGIN");
   try {
+    await fijarTimeoutLocal(c);
     const periodos = await c.query(
       "SELECT id, estado FROM asistencia_periodos WHERE id = ANY($1::int[]) ORDER BY id FOR SHARE",
       [idsPeriodo],
@@ -434,12 +443,15 @@ async function cerrarEjecucion(c, id, { estado, stats = {}, error = null, detall
 /** Corre fn dentro de una ejecución registrada; ante un error deja la bitácora con un motivo SIN datos personales. */
 async function conBitacora(c, datos, fn) {
   const ej = await abrirEjecucion(c, datos);
+  if (datos.control) datos.control.ejecucionId = ej.id;
   try {
     const { estado = "ok", stats = {}, detalle = {}, valor } = await fn(ej);
     await cerrarEjecucion(c, ej.id, { estado, stats, detalle });
     return { ejecucion_id: ej.id, estado, ...valor };
   } catch (error) {
-    await cerrarEjecucion(c, ej.id, { estado: "error", error: motivoSeguro(error) }).catch(() => {});
+    if (!(datos.control && datos.control.abortado)) {
+      await cerrarEjecucion(c, ej.id, { estado: "error", error: motivoSeguro(error) }).catch(() => {});
+    }
     throw error;
   }
 }
@@ -615,6 +627,7 @@ async function recalcularPeriodo(c, periodo, ctx) {
 async function marcarCerrado(c, id, { tipo, usuarioId }) {
   await c.query("BEGIN");
   try {
+    await fijarTimeoutLocal(c);
     const r = await c.query(
       `UPDATE asistencia_periodos SET estado = 'cerrado', cerrado_en = NOW(), cerrado_por = $2, tipo_cierre = $3
        WHERE id = $1 AND estado = 'abierto'
@@ -667,6 +680,7 @@ const opcionesBase = (o = {}) => ({
 async function ejecutarCiclo(opciones = {}) {
   const base = opcionesBase({ tiempoMaxMs: TIEMPO_MAXIMO_MS, ...opciones });
   const origen = opciones.origen || "planificador";
+  const control = opciones.control || null;
   const salida = await conCandadoDelMotor(
     async (c) => {
       await marcarInterrumpidas(c);
@@ -685,7 +699,7 @@ async function ejecutarCiclo(opciones = {}) {
       const completa = !cursor || vencido || (await turnosEditados(c, cursor));
       const tipo = completa ? "completa" : "incremental";
 
-      return conBitacora(c, { tipo, origen, desde: parametros.analisis_desde, hasta: hoyTexto }, async () => {
+      return conBitacora(c, { tipo, origen, desde: parametros.analisis_desde, hasta: hoyTexto, control }, async () => {
         const vinculacion = await revincularMarcas(c);
         const ajustes = await detectarAjustes(c, {
           analisisDesde: parametros.analisis_desde,
@@ -738,7 +752,7 @@ async function ejecutarCiclo(opciones = {}) {
         };
       });
     },
-    { esperaMs: opciones.esperaMs || 0 },
+    { esperaMs: opciones.esperaMs || 0, control, statementTimeoutMs: opciones.timeoutMs || null },
   );
   if (salida.ocupado) return { omitida: true, motivo: "candado" };
   return { omitida: false, ...salida.valor };
@@ -748,7 +762,7 @@ async function ejecutarCiclo(opciones = {}) {
  * Recalcula un rango (manual, desde la API). Solo periodos abiertos; los cerrados se cuentan en
  * dias_omitidos_cerrados. { ocupado: true } si el candado no se obtuvo en esperaMs.
  */
-async function recalcular({ desde, hasta, empleadoIds, usuarioId, origen = "api", esperaMs = 5000, ...resto }) {
+async function recalcular({ desde, hasta, empleadoIds, usuarioId, origen = "api", esperaMs = 0, ...resto }) {
   const base = opcionesBase(resto);
   const salida = await conCandadoDelMotor(
     async (c) => {
@@ -790,7 +804,7 @@ async function periodoPorId(c, id) {
 }
 
 /** Cierre manual: recalcula una última vez el periodo y lo congela. Devuelve { codigo } ante una condición de negocio. */
-async function cerrarPeriodo({ id, usuarioId, esperaMs = 5000, ...resto }) {
+async function cerrarPeriodo({ id, usuarioId, esperaMs = 0, ...resto }) {
   const base = opcionesBase(resto);
   const salida = await conCandadoDelMotor(
     async (c) => {
@@ -816,7 +830,7 @@ async function cerrarPeriodo({ id, usuarioId, esperaMs = 5000, ...resto }) {
 }
 
 /** Reapertura: solo la usa RH (rh_admin / super_admin). Deja el periodo abierto, sin cierre automático, y lo recalcula. */
-async function reabrirPeriodo({ id, usuarioId, motivo, esperaMs = 5000, ...resto }) {
+async function reabrirPeriodo({ id, usuarioId, motivo, esperaMs = 0, ...resto }) {
   const base = opcionesBase(resto);
   const salida = await conCandadoDelMotor(
     async (c) => {
@@ -830,6 +844,7 @@ async function reabrirPeriodo({ id, usuarioId, motivo, esperaMs = 5000, ...resto
           await c.query("BEGIN");
           let reabierto;
           try {
+            await fijarTimeoutLocal(c);
             const r = await c.query(
               `UPDATE asistencia_periodos SET estado = 'abierto', reabierto_en = NOW(), reabierto_por = $2, reabierto_motivo = $3,
                  veces_reabierto = veces_reabierto + 1, no_cerrar_automatico = true
@@ -860,7 +875,30 @@ async function recalcularDia({ empleadoId, fecha, ...resto }) {
   return !r.ocupado;
 }
 
+/**
+ * Tope duro de una vuelta: destruye su conexión (liberando el candado de sesión) y deja constancia en la bitácora,
+ * sin datos personales. Si la vuelta aún no había abierto su ejecución, registra una ya en error.
+ */
+async function abortarVuelta(control) {
+  await abortarCorrida(control);
+  try {
+    if (control && control.ejecucionId) {
+      await grupo.query(
+        `UPDATE asistencia_ejecuciones SET estado = 'error', fin = NOW(), error = 'tiempo_excedido' WHERE id = $1 AND estado = 'en_curso'`,
+        [control.ejecucionId],
+      );
+    } else {
+      await grupo.query(
+        `INSERT INTO asistencia_ejecuciones (tipo, origen, estado, fin, error) VALUES ('incremental', 'planificador', 'error', NOW(), 'tiempo_excedido')`,
+      );
+    }
+  } catch (error) {
+    console.error(`[Asistencia] no se pudo registrar el tiempo excedido (${motivoSeguro(error)})`);
+  }
+}
+
 module.exports = {
+  abortarVuelta,
   leerParametros, listarParametros, guardarParametros, asegurarPeriodos,
   ejecutarCiclo, recalcular, recalcularDia, cerrarPeriodo, reabrirPeriodo,
   // internos expuestos para pruebas
