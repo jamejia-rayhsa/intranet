@@ -4,11 +4,26 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { obtenerConvenio, crearConvenio, actualizarConvenio } from '../services/convenios.service';
+import {
+  obtenerConvenio, crearConvenio, actualizarConvenio,
+  buscarFichaClienteMba3, buscarVendedorMba3, buscarProductoMba3,
+} from '../services/convenios.service';
 import PageHeader from '../../../portal/frontend/components/PageHeader';
 import '../styles/comercial.css';
 
 const PERIODOS = ['mensual', 'bimestral', 'trimestral', 'unico'];
+
+// Fase 2 (autocompletar al teclear un código): igual que el backend, el nombre exacto de campo
+// que devuelve MBA3 por registro no está confirmado (solo el body de ficha-cliente lo está), así
+// que se intentan varios nombres plausibles en orden. Ver mba3Catalogo.service.js en el backend.
+function extraerCampo(registro, nombres) {
+  if (!registro || typeof registro !== 'object') return null;
+  for (const nombre of nombres) {
+    const valor = registro[nombre];
+    if (valor !== undefined && valor !== null && String(valor).trim()) return String(valor).trim();
+  }
+  return null;
+}
 
 const LINEA_VACIA = {
   producto_codigo: '', producto_descripcion: '', empaque: '', unidad_medida: '',
@@ -62,6 +77,47 @@ export default function ConvenioForm() {
 
   function cambiarCabecera(campo, valor) {
     setCabecera(c => ({ ...c, [campo]: valor }));
+  }
+
+  // Autocompletar best-effort: un fallo (MBA3 no configurado/sin red/código inexistente) se
+  // ignora en silencio aquí; el backend vuelve a intentarlo al guardar y nunca bloquea el envío
+  // (ver convenio.controller.js#resolverSnapshots). Esto solo ahorra teclear el nombre a mano.
+  async function autocompletarCliente(codigo) {
+    if (!codigo || !codigo.trim()) return;
+    try {
+      const res = await buscarFichaClienteMba3(codigo.trim());
+      const nombre = extraerCampo(res?.datos, ['nombre', 'cliente_nombre', 'razon_social', 'nombre_cliente']);
+      if (nombre) setCabecera(c => ({ ...c, cliente_nombre: nombre }));
+    } catch (_err) { /* best-effort */ }
+  }
+
+  // R-F2-1: antes se tomaba `res.datos[0]` sin verificar el código; ahora solo se acepta el
+  // registro cuyo `codigo` coincide EXACTO con el buscado (defensa en profundidad: el backend ya
+  // filtra exacto, pero esta capa no debe confiar ciegamente en "el primero que venga").
+  function encontrarExacto(res, codigo) {
+    const buscado = codigo.toLowerCase();
+    const lista = Array.isArray(res?.datos) ? res.datos : (res?.datos ? [res.datos] : []);
+    return lista.find((r) => String(r?.codigo ?? '').trim().toLowerCase() === buscado) || null;
+  }
+
+  async function autocompletarVendedor(codigo) {
+    if (!codigo || !codigo.trim()) return;
+    try {
+      const res = await buscarVendedorMba3(codigo.trim());
+      const registro = encontrarExacto(res, codigo.trim());
+      const nombre = extraerCampo(registro, ['nombre', 'vendedor_nombre', 'nombre_vendedor']);
+      if (nombre) setCabecera(c => ({ ...c, vendedor_nombre: nombre }));
+    } catch (_err) { /* best-effort */ }
+  }
+
+  async function autocompletarProducto(i, codigo) {
+    if (!codigo || !codigo.trim()) return;
+    try {
+      const res = await buscarProductoMba3(codigo.trim());
+      const registro = encontrarExacto(res, codigo.trim());
+      const descripcion = extraerCampo(registro, ['descripcion', 'producto_descripcion', 'nombre', 'descripcion_producto']);
+      if (descripcion) cambiarLinea(i, 'producto_descripcion', descripcion);
+    } catch (_err) { /* best-effort */ }
   }
 
   function cambiarLinea(i, campo, valor) {
@@ -124,14 +180,22 @@ export default function ConvenioForm() {
           <label>Folio de origen (opcional)
             <input value={cabecera.folio_origen} onChange={e => cambiarCabecera('folio_origen', e.target.value)} />
           </label>
-          <label>Código de cliente (opcional)
-            <input value={cabecera.cliente_codigo} onChange={e => cambiarCabecera('cliente_codigo', e.target.value)} />
+          <label>Código de cliente (opcional, autocompleta el nombre desde MBA3)
+            <input
+              value={cabecera.cliente_codigo}
+              onChange={e => cambiarCabecera('cliente_codigo', e.target.value)}
+              onBlur={e => autocompletarCliente(e.target.value)}
+            />
           </label>
           <label>Nombre del cliente *
             <input required value={cabecera.cliente_nombre} onChange={e => cambiarCabecera('cliente_nombre', e.target.value)} />
           </label>
-          <label>Código de vendedor (opcional)
-            <input value={cabecera.vendedor_codigo} onChange={e => cambiarCabecera('vendedor_codigo', e.target.value)} />
+          <label>Código de vendedor (opcional, autocompleta el nombre desde MBA3)
+            <input
+              value={cabecera.vendedor_codigo}
+              onChange={e => cambiarCabecera('vendedor_codigo', e.target.value)}
+              onBlur={e => autocompletarVendedor(e.target.value)}
+            />
           </label>
           <label>Nombre del vendedor *
             <input required value={cabecera.vendedor_nombre} onChange={e => cambiarCabecera('vendedor_nombre', e.target.value)} />
@@ -150,7 +214,12 @@ export default function ConvenioForm() {
         <h3 style={{ marginTop: '1.5rem' }}>Líneas de producto</h3>
         {productos.map((p, i) => (
           <div key={i} className="convenio-linea">
-            <input placeholder="Código de producto" value={p.producto_codigo} onChange={e => cambiarLinea(i, 'producto_codigo', e.target.value)} />
+            <input
+              placeholder="Código de producto"
+              value={p.producto_codigo}
+              onChange={e => cambiarLinea(i, 'producto_codigo', e.target.value)}
+              onBlur={e => autocompletarProducto(i, e.target.value)}
+            />
             <input placeholder="Descripción *" required value={p.producto_descripcion} onChange={e => cambiarLinea(i, 'producto_descripcion', e.target.value)} />
             <input placeholder="Empaque" type="number" value={p.empaque} onChange={e => cambiarLinea(i, 'empaque', e.target.value)} />
             <input placeholder="Unidad (ej. PZ)" value={p.unidad_medida} onChange={e => cambiarLinea(i, 'unidad_medida', e.target.value)} />

@@ -599,3 +599,65 @@ FAIL (todos con evidencia reproducible):
 **Criterio de aceptación:** decisions.md 2026-10-23 ("Decisiones del humano para Convenios de compra") y roadmap.md "Fase 1 — Modelo de datos y autorización base"; estándar de calidad (funcional, idempotencia/duplicados, errores, seguridad, regresión).
 
 **Acción:** `PARA RESOLVER: [tester]` abierto en decisions.md para R-4/R-9 (confirmados en vivo). El resto de los hallazgos del revisor (R-1 a R-3, R-5 a R-8, R-10 a R-13) ya están en `reviews.md` con fix sugerido; no duplico entradas. Contenedor Postgres (`conv_test_pg`), backend y Vite de prueba apagados y borrados; contenedores de Playwright (`--rm`) removidos; `tokens.json` (JWT de prueba) borrado; `git status` solo trae `tests/comercial-convenios/` nuevo (sin commit).
+
+---
+
+### [2026-10-23] [tester] — Convenios de compra: Fase 2 (MBA3)
+
+**Qué se probó:** la integración de lectura de MBA3 (migración 003, cliente HTTP con login/refresh/caché/fallback, autocompletar best-effort al crear/editar convenios, rutas `/api/comercial/mba3/*`), con infraestructura real donde fue posible y un MBA3 falso **propio** (no el del coder: `mba3-falso.js`, Express con contadores de llamadas y controles `/_control/{reset,forzar401,colgar,descolgar,invalidar-tokens}`) para los escenarios que exigían simular fallos.
+
+**Cómo (infraestructura usada):**
+- Postgres real desechable (`postgres:16-alpine` en Docker, puerto 55499, borrado al terminar).
+- Backend real (`modules/portal/backend/app.js`) arrancado como proceso Node real contra ese Postgres, con JWT HS256 reales (`SUPABASE_JWT_SECRET` de prueba) para 2 usuarios reales insertados en `usuarios`/`usuario_rol` (uno con rol `comercial_admin` → permiso `Convenios`, otro con `rh_empleado` → sin permiso).
+- MBA3 falso propio en `9931` (no el del coder), reiniciado varias veces durante la sesión.
+- `curl` directo a las rutas reales del backend y a `https://mba3api.rayhsa.net`.
+
+**Resultado:** PASS en todo lo cubierto, salvo 1 hallazgo PARA RESOLVER (lentitud acumulable, no bloqueante) y 1 nota informativa sobre el límite literal del encargo (no es un bug).
+
+1. **Migración `003-mba3-cache.sql` (idempotencia + paridad con `init.sql`):** PASS.
+   - Migración sola, 2 corridas sobre Postgres real desechable: `CREATE TABLE`/`CREATE INDEX` la primera vez; `NOTICE: ... already exists, skipping` + 0 errores la segunda.
+   - `init.sql` completo cargado desde cero sin errores (incluye el bloque de la caché MBA3); estructura de `comercial_cache_mba3` idéntica (`\d`) a la de la migración aislada.
+   - Migración 003 aplicada **encima** de un `init.sql` ya cargado (paridad real pedida en el encargo): sin errores, mismo patrón `already exists, skipping`.
+
+2. **Login/401/refresh/relogin (MBA3 falso propio), con límite de tiempo en cada prueba:** PASS, sin loop infinito en ningún caso.
+   - 401 simple → `refrescar()` OK → reintento exitoso: `{logins:1, refreshes:1, llamadas.ficha-cliente:1}`, 200.
+   - 401 dos veces seguidas dentro de la MISMA llamada de alto nivel (refresh exitoso pero el reintento también da 401): el cliente **no** hace un tercer intento ni reloguea dentro de esa llamada — propaga `ErrorMba3` de inmediato (30 ms, HTTP 502 en la ruta de búsqueda; convertido a advertencia sin bloquear en la ruta de creación de convenio). Bounded, sin loop. Documentado también en `code-notes.md` ("nunca bucle infinito").
+   - `refrescar()` falla (refresh_token inválido en el servidor, p. ej. tras reiniciar el MBA3 falso) → el cliente SÍ hace relogin completo antes de reintentar: `{logins:1, refreshes:1, llamadas.ficha-cliente:1}`, 200 en 106 ms.
+   - **Nota informativa (no es FAIL):** la frase del encargo "401 otra vez tras refrescar → debe reloguearse desde cero" se cumple literalmente solo cuando es el propio `POST /v1/refresh` el que falla; si el refresh tiene éxito pero el reintento al catálogo vuelve a dar 401, el cliente no relogea dentro de esa misma llamada (sí se recupera solo en la siguiente llamada, porque el token quedó actualizado por el refresh exitoso — verificado: una consulta inmediata después tuvo éxito sin relogin adicional). Es un diseño ya documentado por el coder y es seguro (nunca 500, nunca loop), así que no abro PARA RESOLVER por esto — solo lo dejo registrado por si el humano quiere exigir el relogin también en ese caso.
+
+3. **Sin credenciales (`MBA3_LECTURA_USUARIO`/`PASSWORD` fuera del entorno), backend real reiniciado en frío:** PASS.
+   - `POST /convenios` con `cliente_codigo`/`vendedor_codigo`/`producto_codigo` → 201, snapshot = código tal cual, 3 advertencias con el mensaje de `ErrorMba3NoConfigurado` (nunca 500).
+   - `GET /api/comercial/mba3/ficha-cliente?codigo=X` → 503 con mensaje claro (nunca 500).
+
+4. **MBA3 falso colgado (timeout):** PASS, con límite de tiempo razonable (no indefinido).
+   - Ruta de búsqueda (`/mba3/ficha-cliente`): 502 en 10.08 s (el tope de 10 s de axios, documentado en el servicio).
+   - Creación de convenio con cliente+vendedor+1 producto, todos por código, MBA3 colgado: **201 en 27.4 s** (tres resoluciones secuenciales de ~10 s cada una: cliente, vendedor, producto), con 3 advertencias de timeout — nunca 500/502, nunca colgado indefinidamente.
+   - **Ya reportado por el revisor (no duplico, solo confirmo con medición real):** el revisor ya encontró por lectura de código este mismo problema (`reviews.md`, "Convenios de compra: Fase 2 (MBA3)", **R-F2-3**, medio/alto, fórmula `(2+N)×10 s`, fix sugerido: `Promise.allSettled` + presupuesto total de tiempo). Mi medición de 27.4 s con 1 sola línea de producto es consistente con esa fórmula y queda como evidencia de tiempo real en `decisions.md` ("confirmación empírica de R-F2-3"); con varias líneas (folio 27/80 del CSV histórico tienen varias tallas) el peor caso sube a ≈ 70 s, suficiente para chocar con un timeout de proxy/nginx en producción. No abro un PARA RESOLVER nuevo — el de R-F2-3 en `reviews.md` ya es accionable tal cual.
+
+5. **Caché (contador de llamadas en el MBA3 falso propio):** PASS en los 4 sub-casos.
+   - 1.ª consulta de un código nuevo → 1 llamada real registrada en el falso (`ficha-cliente:1`).
+   - 2.ª consulta inmediata del mismo código → sigue en `1` (no repitió).
+   - TTL vencido manualmente en BD (`consultado_en` -20 min, TTL de cliente es 15 min) → 3.ª consulta sí vuelve a pegar (`ficha-cliente:2`).
+   - MBA3 colgado + caché vencida presente → 200 con el dato cacheado y `advertencias: ["MBA3 no respondió (...); usando el último dato conocido (...)"]` en vez de fallar (10.09 s, acotado por el timeout de axios).
+
+6. **Rutas `/api/comercial/mba3/*` — permisos y parámetros:** PASS.
+   - Token de usuario sin permiso `Convenios` (rol `rh_empleado`) → 403 en `ficha-cliente`.
+   - Sin token → 401.
+   - `GET /mba3/ficha-cliente` sin `codigo` → 400 (`"codigo es requerido"`), nunca 500.
+   - `GET /mba3/clientes` sin `vendedor` (incluido un valor de solo espacios) → 400 (`"vendedor es requerido"`), nunca 500.
+   - `GET /mba3/existencias-ventas` sin `codigo` → 400.
+   - `GET /mba3/vendedores` y `/mba3/productos` sin parámetros → 200 (listan todo el catálogo, comportamiento esperado, no son obligatorios).
+
+7. **Regresión:** PASS.
+   - `npx jest modules/comercial`: 11 suites / 172 tests OK (coincide con lo reportado por el coder).
+   - `npx jest` completo: 73 suites / 2254 tests OK.
+   - `npx eslint modules/comercial`: 0 errores (1 warning preexistente y ajeno en `SolicitudCreditoForm.jsx`).
+   - `npm run build:frontend`: OK (183 módulos, sin errores).
+
+8. **Salida real a internet hacia `mba3api.rayhsa.net`:** confirmado — `curl -sI --max-time 15 https://mba3api.rayhsa.net/openapi.json` respondió `HTTP/2 302` con `location: https://rayhsa.cloudflareaccess.com/cdn-cgi/access/login/...` y `server: cloudflare` — exactamente el bloqueo de Cloudflare Access ya documentado en `blockers.md` (2026-10-23, "mba3api.rayhsa.net está detrás de Cloudflare Access"). No se intentó nada más (no hay credenciales de Cloudflare Access que probar). Confirma de forma independiente que el hallazgo del coder es reproducible y no es un artefacto de su sandbox particular.
+
+**Evidencia:** sesión completa de comandos (Postgres Docker, backend real, MBA3 falso propio en `9931`, curls con tiempos medidos) ejecutada y limpiada en esta misma corrida; ver transcripción de la sesión del tester para los comandos exactos y salidas completas (contadores de `/_control/contadores`, tiempos `real` de cada `curl`, cuerpos de respuesta JSON). Entorno de prueba (contenedor Postgres, procesos backend/MBA3 falso, usuarios de prueba) fue desechado al terminar; no se tocó ninguna base real ni se dejaron procesos residuales.
+
+**Criterio de aceptación:** encargo del orquestador "Convenios de compra Fase 2 (MBA3)", puntos 1-8; comportamiento decidido en `decisions.md` (2026-10-23, "MBA3 lectura: canal confirmado" y "Fase 2 de Convenios de compra: endpoints de MBA3 confirmados por el humano") y documentado en `code-notes.md` (2026-10-23, coder).
+
+**Acción:** ninguna PARA RESOLVER nueva — el punto 4 (latencia acumulable de MBA3 con varias líneas de producto) ya está cubierto por R-F2-3 del revisor en `reviews.md`; agregué una entrada corta en `decisions.md` solo con la medición real que lo confirma (27.4 s con 1 producto), sin duplicar la pregunta al humano. Sin bloqueados nuevos (el bloqueo de Cloudflare Access ya estaba abierto en `blockers.md` y se confirma, no se agrega uno nuevo). El resto, sin fallos.

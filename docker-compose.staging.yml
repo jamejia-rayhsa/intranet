@@ -62,6 +62,10 @@ services:
       MSSQL_USER: ${MSSQL_USER:-}
       MSSQL_PASSWORD: ${MSSQL_PASSWORD:-}
       MSSQL_DB: ${MSSQL_DB:-}
+      # Lectura de catálogos MBA3 (Convenios de compra, Fase 2); distinta de MBA3_URL (escritura)
+      MBA3_LECTURA_URL: ${MBA3_LECTURA_URL:-https://mba3api.rayhsa.net}
+      MBA3_LECTURA_USUARIO: ${MBA3_LECTURA_USUARIO:-}
+      MBA3_LECTURA_PASSWORD: ${MBA3_LECTURA_PASSWORD:-}
       # Proxies de confianza para req.ip (lista de IP de las llaves de ingesta): vacío = ninguno
       TRUST_PROXY: ${TRUST_PROXY:-}
       # Puerta de ingesta dedicada (segundo puerto, solo rutas de ingesta, sin trust proxy). Ver docs/asistencia/operacion-ingesta.md

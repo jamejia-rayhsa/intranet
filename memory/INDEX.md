@@ -13,6 +13,13 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-23] orquestador → decisions.md — Fase 2 de Convenios de compra CERRADA (commit en feat/comercial-convenios); MBA3 real sigue bloqueado por Cloudflare Access
+- [2026-10-23] [coder] → code-notes.md#2026-10-23-coder--convenios-de-compra-fase-2-integración-de-lectura-mba3 — Correcciones post-revisión Fase 2: coincidencia exacta de código, single-flight/cooldown de login, resolución en paralelo (~70s a ~1 llamada), namespace de caché separado, migración 002 agregada al compose
+- [2026-10-23] [tester] → tests.md#2026-10-23-tester--convenios-de-compra-fase-2-mba3 — Convenios de compra Fase 2: sin fallos bloqueantes nuevos; confirmó en vivo la latencia de R-F2-3 (~70s peor caso) y el bloqueo de Cloudflare Access de forma independiente
+- [2026-10-23] [revisor] → reviews.md#2026-10-23-revisor--convenios-de-compra-fase-2-mba3 — Convenios de compra Fase 2: APROBADO CON OBSERVACIONES, 2 ALTOS (coincidencia de código por data[0], login sin single-flight/cooldown)
+- [2026-10-23] [coder] → code-notes.md#2026-10-23-coder--convenios-de-compra-fase-2-integración-de-lectura-mba3 — Convenios de compra Fase 2: cliente de lectura MBA3 (login/refresh/caché/fallback), 5 endpoints, autocompletar; Cloudflare Access bloquea la verificación en vivo
+- [2026-10-23] orquestador → decisions.md — Fase 2 de Convenios de compra: endpoints de MBA3 confirmados por el humano (clientes-vendedor, vendedores, productos, acuvtaprod)
+- [2026-10-23] orquestador → blockers.md#2026-10-23-bloqueo-activo--mba3apirayhsanet-está-detrás-de-cloudflare-access-zero-trust-no-se-puede-verificar-en-vivo-ni-con-credenciales-reales — Bloqueo nuevo: mba3api.rayhsa.net detrás de Cloudflare Access, hace falta Service Token o bypass de IP
 - [2026-10-23] orquestador → decisions.md — Fase 1 de Convenios de compra CERRADA (commit en feat/comercial-convenios); esperando GO del humano para la Fase 2 (MBA3)
 - [2026-10-23] [coder] → code-notes.md#2026-10-23-coder--convenios-de-compra-comercial-fase-1-modelo-de-datos--autorización-base — Correcciones post-revisión: nunca-lo-propio en SQL, ids/fechas/montos validados, reglas de cancelar (autorizador/super_admin) y editar (creador/super_admin), bug real en AutorizadoresPage corregido
 - [2026-10-23] orquestador → decisions.md — Decisiones del humano: quién cancela (autorizador/super_admin) y quién edita (creador/super_admin) un convenio

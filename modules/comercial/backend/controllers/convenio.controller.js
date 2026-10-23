@@ -3,6 +3,7 @@ const Autorizador = require('../models/autorizador.model');
 const Usuario = require('../../../portal/backend/models/usuario.model');
 const { registrarAccion } = require('../../../auditoria/backend/services/auditoria.service');
 const { idValido, fechaValida, numeroValido } = require('../utils/validacion');
+const Mba3Catalogo = require('../services/mba3Catalogo.service');
 
 // Lista corta validada en el backend (periodo es texto libre en BD, no hay CHECK): cantidad a
 // facturar al cliente por periodo.
@@ -71,6 +72,64 @@ function validarProductos(productos) {
   return null;
 }
 
+// Fase 2 — autocompletar contra MBA3: si viene un *_codigo, intenta resolver el nombre/descripción
+// real y lo guarda como snapshot (sobreescribe lo que haya mandado el usuario en el campo nombre).
+// Si MBA3 no responde (sin red, sin credenciales, timeout, 401 persistente) NUNCA bloquea la
+// creación/edición: conserva el nombre que mandó el usuario (o el código solo si no mandó nombre)
+// y agrega una advertencia al arreglo que recibe, nunca lanza un error hacia el llamador.
+async function resolverCampo(obj, campoCodigo, campoNombre, fnResolver, fnExtraer, advertencias, etiqueta) {
+  const codigo = obj?.[campoCodigo];
+  if (!codigo || !String(codigo).trim()) return;
+  try {
+    const { datos: registro, advertencia } = await fnResolver(String(codigo).trim());
+    if (advertencia) advertencias.push(advertencia);
+    const nombre = fnExtraer(registro);
+    if (nombre) {
+      obj[campoNombre] = nombre;
+      return;
+    }
+    advertencias.push(`MBA3 no encontró ${etiqueta} con código "${codigo}"`);
+  } catch (error) {
+    advertencias.push(`No se pudo verificar ${etiqueta} "${codigo}" contra MBA3: ${error.message}`);
+  }
+  if (!obj[campoNombre] || !String(obj[campoNombre]).trim()) {
+    obj[campoNombre] = String(codigo).trim();
+  }
+}
+
+// R-F2-3 (revisión post Fase 2): cliente, vendedor y cada línea de producto se resuelven EN
+// PARALELO (antes era en serie: con MBA3 colgado, (2+N)×10 s — medido en vivo por el tester en
+// 27.4 s con 1 sola línea y ≈70 s con varias, suficiente para chocar con un timeout de proxy/
+// nginx). Con Promise.allSettled el tiempo total se acerca al de la llamada más lenta, no a la
+// suma. `resolverCampo` ya nunca lanza (se degrada a snapshot manual + advertencia por sí mismo);
+// `allSettled` en vez de `all` es solo defensa en profundidad para que un cambio futuro que sí
+// lance no tire la resolución completa ni deje advertencias a medias.
+async function resolverSnapshots(datos, productos) {
+  const advertencias = [];
+  const tareas = [
+    resolverCampo(
+      datos, 'cliente_codigo', 'cliente_nombre',
+      Mba3Catalogo.resolverCliente, Mba3Catalogo.extraerNombreCliente, advertencias, 'el cliente',
+    ),
+    resolverCampo(
+      datos, 'vendedor_codigo', 'vendedor_nombre',
+      Mba3Catalogo.resolverVendedor, Mba3Catalogo.extraerNombreVendedor, advertencias, 'el vendedor',
+    ),
+  ];
+  if (Array.isArray(productos)) {
+    for (const producto of productos) {
+      if (producto && typeof producto === 'object' && !Array.isArray(producto)) {
+        tareas.push(resolverCampo(
+          producto, 'producto_codigo', 'producto_descripcion',
+          Mba3Catalogo.resolverProducto, Mba3Catalogo.extraerDescripcionProducto, advertencias, 'el producto',
+        ));
+      }
+    }
+  }
+  await Promise.allSettled(tareas);
+  return advertencias;
+}
+
 function validarCabecera(datos) {
   if (!datos.cliente_nombre || !String(datos.cliente_nombre).trim()) {
     return 'cliente_nombre es requerido';
@@ -137,6 +196,10 @@ const ControladorConvenio = {
   async crear(req, res) {
     try {
       const { productos, ...datos } = req.body;
+      // Fase 2: resuelve cliente_nombre/vendedor_nombre/producto_descripcion contra MBA3 ANTES de
+      // validar, para que un código válido sin nombre capturado a mano pase la validación si MBA3
+      // lo resuelve; si MBA3 no responde, no bloquea (ver resolverSnapshots arriba).
+      const advertencias = await resolverSnapshots(datos, productos);
       const errorCabecera = validarCabecera(datos);
       if (errorCabecera) return res.status(400).json({ exito: false, mensaje: errorCabecera });
       const errorProductos = validarProductos(productos);
@@ -151,7 +214,9 @@ const ControladorConvenio = {
         productos: convenio.productos.length,
       });
 
-      return res.status(201).json({ exito: true, datos: convenio });
+      const respuesta = { exito: true, datos: convenio };
+      if (advertencias.length) respuesta.advertencias = advertencias;
+      return res.status(201).json(respuesta);
     } catch (error) {
       console.error('Error al crear convenio:', error.message);
       return res.status(500).json({ exito: false, mensaje: 'Error al crear convenio' });
@@ -162,6 +227,7 @@ const ControladorConvenio = {
     try {
       if (!idValido(req.params.id)) return res.status(400).json({ exito: false, mensaje: MSG_ID_INVALIDO });
       const { productos, ...datos } = req.body;
+      const advertencias = await resolverSnapshots(datos, productos);
       const errorCabecera = validarCabecera(datos);
       if (errorCabecera) return res.status(400).json({ exito: false, mensaje: errorCabecera });
       const errorProductos = validarProductos(productos);
@@ -199,7 +265,9 @@ const ControladorConvenio = {
         { cliente_nombre: convenio.cliente_nombre, vendedor_nombre: convenio.vendedor_nombre },
       );
 
-      return res.json({ exito: true, datos: convenio });
+      const respuesta = { exito: true, datos: convenio };
+      if (advertencias.length) respuesta.advertencias = advertencias;
+      return res.json(respuesta);
     } catch (error) {
       console.error('Error al actualizar convenio:', error.message);
       return res.status(500).json({ exito: false, mensaje: 'Error al actualizar convenio' });

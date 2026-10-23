@@ -3353,3 +3353,115 @@ Hallazgos abiertos:
 **Fix sugerido:** corregir api.md o el middleware según la decisión vigente, y añadir ORDER BY determinista en completarRol. Fuera del alcance de este encargo; registrado como nota.
 
 **Notas de alcance:** productos[] sin tope de tamaño y falta de test de concurrencia real ya estaban anotados por el coder; siguen abiertos para la Fase 6.
+
+### [2026-10-23] [revisor] — Convenios de compra: Fase 2 (MBA3)
+**Alcance:** worktree feat+comercial-convenios, sin commit. Leídos: code-notes "[2026-10-23] [coder] — Convenios de compra Fase 2", decisions 2026-10-23 (endpoints y canal confirmados), blockers (Cloudflare Access, hoy), roadmap "Fase 2 — Integración de lectura MBA3" y el diff/archivos nuevos (services, model, controller mba3, migración 003, convenio.controller diff, routes, ConvenioForm diff, env y compose). No se pegó al MBA3 real ni se corrieron pruebas; revisión de código.
+
+**Veredicto: APROBADO CON OBSERVACIONES.** Sin críticos: no hay violación de decisions.md (la API de lectura no se mezcla con el web service de escritura, los endpoints son los confirmados por el humano, y la captura no se bloquea por MBA3). No hace falta escalar por crítico. Recomiendo que el coder corrija R-F2-1 (snapshot con código no exacto) y R-F2-2 (login sin coordinación) antes del GO a staging.
+
+**Verificado sin hallazgos:**
+- Tokens: `access_token`/`refresh_token` viven en `estado` (variable de módulo, `mba3Lectura.service.js:58-61`), nunca en BD ni en respuestas. La cuenta de servicio es única, así que no hay fuga entre usuarios; los logs solo imprimen `error.message`.
+- Reintento acotado: `llamarEndpoint` (`mba3Lectura.service.js:130-149`) hace como máximo dos peticiones al endpoint; un 401 tras el reintento sale como `ErrorMba3`. No hay bucle.
+- Sin configurar: `login()` lanza `ErrorMba3NoConfigurado` antes de cualquier red (`:89`). En `/mba3/*` se traduce a 503 (`mba3.controller.js:11-12`); en guardado lo captura `resolverCampo` y deja advertencia.
+- Guardado: todo lo que lanza `fnResolver` queda dentro del try de `resolverCampo` (`convenio.controller.js:22-40`); no aparece 500/502 nuevo en crear/editar.
+- TTL por tipo correcto (`mba3Catalogo.service.js:11-17`): producto 30 min, cliente 15 min, vendedor 1 h, existencias 5 min.
+- Fallback sin caché: `conCache` relanza solo si no hay nada cacheado; el llamador lo degrada a advertencia (`mba3Catalogo.service.js:45-53`).
+- Migración idempotente (`003-mba3-cache.sql:8,11`), replicada en `init.sql` (bloque nuevo, ~línea 671) y en `docker-compose.supabase.yml:88,118-122`. SQL parametrizado en `cacheMba3.model.js`.
+- Variables: `MBA3_LECTURA_URL/USUARIO/PASSWORD` no comparten nombre ni valor con `MBA3_URL/MBA3_CORP/MBA3_PASSWORD` en los dos `.env.*.example` ni en los tres compose.
+- Permisos: las 5 rutas `/mba3/*` (`convenios.routes.js:35-39`) pasan por `authenticateJWT` (global) y `verificarPermiso('comercial','Convenios','consulta')`.
+- Validación: `ficha`, `clientesPorVendedor` y `existenciasVentas` rechazan código vacío con 400 antes de llamar a MBA3. Respuestas con `exito` y `mensaje`/`advertencias`, consistentes con el patrón.
+- Fuera de alcance respetado: no hay CSV, movimientos, dashboard ni escritura hacia `wsAPIS/api_wr`.
+
+**Hallazgos:**
+
+**R-F2-1 — Snapshot con registro de otro cliente/vendedor/producto (coincidencia no exacta).**
+**Archivo/línea:** `modules/comercial/backend/services/mba3Lectura.service.js:180, 197, 207` (`lista[0]`, `data[0]`); `modules/comercial/frontend/pages/ConvenioForm.jsx:98, 108` (`res.datos[0]`); `modules/comercial/backend/controllers/mba3.controller.js:48-51` (filtro de vendedores por `includes`).
+**Problema:** ninguna capa verifica que el primer registro tenga `codigo` igual al pedido; el filtro de vendedores es por subcadena, así que buscar "1" puede traer "10" u "11" y el nombre equivocado queda guardado (el backend lo sobreescribe en `convenio.controller.js:30`).
+**Severidad:** alto.
+**Fix sugerido:** en las tres funciones de `mba3Lectura` y en el formulario, aceptar solo coincidencia exacta del campo código (`String(registro.<campo_codigo>).trim() === codigo`); si no hay coincidencia, tratar como "no encontrado" con advertencia. Poner el nombre del campo de código en una sola constante.
+
+**R-F2-2 — Login sin single-flight ni cooldown: riesgo de bloquear la cuenta de servicio.**
+**Archivo/línea:** `modules/comercial/backend/services/mba3Lectura.service.js:131, 137-141` (login/refresh sin coordinación), `:86-94`.
+**Problema:** peticiones concurrentes sin token disparan N logins en paralelo; con credenciales malas, cada petición (cada blur, cada guardado con varias líneas) vuelve a intentar login. Según el manual, 5 fallos bloquean la cuenta 15 min y el login tiene 5 req/min.
+**Severidad:** alto.
+**Fix sugerido:** compartir una promesa en curso para login y refresh (single-flight); tras un fallo de login, cooldown (p. ej. 60 s) sin reintentar; no reintentar ante 429.
+
+**R-F2-3 — Latencia de guardado sin límite total de tiempo cuando MBA3 está caído.**
+**Archivo/línea:** `modules/comercial/backend/controllers/convenio.controller.js:42-63` (llamadas en serie), `:192, 220`; `mba3Lectura.service.js:70` (timeout 10 s por llamada).
+**Problema:** con MBA3 colgado, cada consulta cuesta hasta 10 s; un convenio con N productos suma del orden de (2+N)×10 s antes de guardar. No da 500, pero contradice "nunca bloquear el guardado" y puede cortar la petición del navegador.
+**Severidad:** medio (sube a alto si MBA3 se cae con frecuencia).
+**Fix sugerido:** resolver en paralelo con límite de concurrencia (`Promise.allSettled`), presupuesto total para autocompletar (p. ej. 3 s), y corte en el proceso tras error de red para no reintentar al host durante unos segundos.
+
+**R-F2-4 — Caché colisionable por entrada del usuario (clave `'*'`).**
+**Archivo/línea:** `modules/comercial/backend/services/mba3Catalogo.service.js:65-67` (`resolverProducto` usa el código tal cual), `:86` (`buscarProductos` usa `codigo || '*'`), `:58`, `:79-82` (vendedores: `'*'` guarda el arreglo y `resolverVendedor('*')` guarda un registro en la misma clave).
+**Problema:** un usuario con permiso de edición que escriba `producto_codigo: "*"` envenena durante 30 min el catálogo completo de productos (y 1 h el de vendedores). `mba3.controller.js:50` hace `.filter` sobre un objeto, lo que da TypeError y 502 en la búsqueda.
+**Severidad:** medio.
+**Fix sugerido:** separar claves por forma (p. ej. `catalogo_producto` vs `producto`) y validar el código en rutas y en `resolverCampo` (no vacío, sin `*`, longitud máxima, charset acotado).
+
+**R-F2-5 — Caché sin límite de crecimiento ni purga; amplificación hacia MBA3 sin límite de tasa.**
+**Archivo/línea:** `modules/comercial/backend/models/cacheMba3.model.js:18-26`; `migrations/003-mba3-cache.sql:11` (índice en `consultado_en` sin job de purga); `mba3.controller.js:21, 34, 74` (sin longitud máxima).
+**Problema:** cualquier usuario con `Convenios:consulta` crea una fila y una llamada a MBA3 por cada código distinto que escriba; no hay purga ni límite de tasa propio (el coder lo reconoce como pendiente).
+**Severidad:** medio.
+**Fix sugerido:** validar longitud y charset del código; límite de tasa por usuario en `/mba3/*`; purga periódica de filas con `consultado_en` mayor a N días.
+
+**R-F2-6 — Paginación truncada en silencio.**
+**Archivo/línea:** `modules/comercial/backend/services/mba3Lectura.service.js:163` (si no viene `pagination.total`, `total = acumulado.length` y corta en la primera página); `:38, 157` (tope de 20 páginas, unos 2000 registros).
+**Problema:** un catálogo sin `total` se queda con 100 registros, y uno mayor a 2000 se corta; en ambos casos sin advertencia al usuario.
+**Severidad:** medio.
+**Fix sugerido:** si falta `total`, seguir hasta página vacía; al llegar al tope, devolver advertencia "resultado truncado" en `advertencias`.
+
+**R-F2-7 — Datos crudos de MBA3 cacheados y devueltos completos a todos los usuarios con consulta.**
+**Archivo/línea:** `modules/comercial/backend/models/cacheMba3.model.js:25` (guarda el registro completo como JSONB); `modules/comercial/backend/controllers/mba3.controller.js:24, 52, 64, 77` (devuelve el registro completo).
+**Problema:** la forma del registro no está confirmada y puede incluir crédito, saldo, RFC o dirección que el formulario no necesita. Se guardan en una tabla compartida y se entregan a cualquier usuario con permiso de consulta.
+**Severidad:** medio.
+**Fix sugerido:** proyectar a campos mínimos (código, nombre, vendedor, descripción) antes de cachear y de devolver; documentar qué campos se conservan y confirmarlo con el humano antes de staging.
+
+**R-F2-8 — Advertencia engañosa cuando el registro existe pero no trae un campo de nombre reconocido.**
+**Archivo/línea:** `modules/comercial/backend/controllers/convenio.controller.js:33` ("MBA3 no encontró ... con código"), alimentado por `modules/comercial/backend/services/mba3Catalogo.service.js:111-120`.
+**Problema:** si MBA3 sí devuelve el registro pero con un nombre de campo no previsto, la advertencia dice "no encontró" y la suposición de campos queda oculta.
+**Severidad:** medio.
+**Fix sugerido:** distinguir "sin registro" de "registro sin campo de nombre reconocido" y registrar una vez (sin datos) las claves del registro para ajustar la lista.
+
+**R-F2-9 — Suposición de campos repetida en backend y frontend.**
+**Archivo/línea:** `mba3Catalogo.service.js:111, 115, 119`; `modules/comercial/frontend/pages/ConvenioForm.jsx:19-24, 85-109` (listas propias de nombres de campo).
+**Problema:** un cambio de nombre de campo obliga a tocar al menos cuatro listas en dos capas; el frontend interpreta campos crudos de MBA3.
+**Severidad:** medio.
+**Fix sugerido:** que el backend devuelva un objeto normalizado (`{ codigo, nombre, ... }`) y el frontend lea solo esas claves; dejar la lista de nombres en un único módulo del backend.
+
+**R-F2-10 — Despliegue: la migración 002 (Fase 1) no está en la lista de `supabase-db-init`.**
+**Archivo/línea:** `docker-compose.supabase.yml:85-122` (solo se añade `003`).
+**Problema:** en un Supabase nuevo no se crean las tablas de Convenios de la Fase 1, y la Fase 2 sí. El coder lo documentó como hueco heredado, pero bloquea staging.
+**Severidad:** medio (preexistente de Fase 1, relevante para el despliegue).
+**Fix sugerido:** añadir `002-convenios-compra.sql` antes de `003`, con el mismo patrón de volumen y `psql`.
+
+**R-F2-11 — Llamadas a MBA3 antes de validar y antes del chequeo de propiedad.**
+**Archivo/línea:** `modules/comercial/backend/controllers/convenio.controller.js:192` (crear, antes de `validarCabecera`), `:220` (actualizar, antes del chequeo de creador en `:229-232`).
+**Problema:** se consulta MBA3 para peticiones que luego se rechazan con 400 o 403.
+**Severidad:** bajo.
+**Fix sugerido:** mover `resolverSnapshots` después de las validaciones y del chequeo de propiedad (en actualizar, después de `:232`).
+
+**R-F2-12 — Mensajes internos expuestos al cliente.**
+**Archivo/línea:** `modules/comercial/backend/controllers/mba3.controller.js:12, 15` (campo `error: error.message` en 502; 503 expone nombres de variables), `convenio.controller.js:35` (mensaje de error en `advertencias`), `mba3Lectura.service.js:43`.
+**Problema:** el detalle del error de MBA3 y los nombres de variables de entorno llegan a cualquier usuario con consulta.
+**Severidad:** bajo.
+**Fix sugerido:** mensaje genérico en la respuesta y detalle solo en el log.
+
+**R-F2-13 — Errores de login fuera de `convertirError`.**
+**Archivo/línea:** `modules/comercial/backend/services/mba3Lectura.service.js:131` (`login()` fuera del try) y `:140`.
+**Problema:** un error de login sale como AxiosError crudo, no como `ErrorMba3`; el manejo posterior depende del llamador.
+**Severidad:** bajo.
+**Fix sugerido:** envolver `login()` y `refrescar()` con `convertirError` dentro de `llamarEndpoint`.
+
+**R-F2-14 — Caché negativa de 15 min.**
+**Archivo/línea:** `modules/comercial/backend/services/mba3Catalogo.service.js:57-59` y `modules/comercial/backend/models/cacheMba3.model.js:18-26` (se guarda `null`).
+**Problema:** un cliente dado de alta en MBA3 no aparece hasta que expire la caché; una respuesta vacía transitoria queda fijada.
+**Severidad:** bajo.
+**Fix sugerido:** no cachear `null`, o usar un TTL más corto para negativos.
+
+**R-F2-15 — Autocompletar en el frontend puede sobrescribir un nombre con una respuesta tardía.**
+**Archivo/línea:** `modules/comercial/frontend/pages/ConvenioForm.jsx:85-92` (`setCabecera` tras `await`, sin comprobar que el código siga vigente).
+**Problema:** si el usuario cambia el código mientras llega la respuesta, queda el nombre del código anterior.
+**Severidad:** bajo.
+**Fix sugerido:** comparar el código actual con el enviado antes de aplicar el resultado.
+
+**Notas de alcance:** el contrato real de MBA3 sigue sin verificarse en vivo (blocker de Cloudflare Access). R-F2-1, R-F2-7 y R-F2-8 dependen de la forma real del registro y deben revisarse al llegar el Service Token. Los bodies de `clientes-vendedor`, `vendedores`, `productos` y `acuvtaprod` siguen siendo suposición. No se modificó código, no hubo commit, y `memory/INDEX.md` no se tocó por instrucción del encargo.

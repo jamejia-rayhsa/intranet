@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const ControladorConvenio = require('../controllers/convenio.controller');
 const ControladorAutorizador = require('../controllers/autorizador.controller');
+const ControladorMba3 = require('../controllers/mba3.controller');
 const { authenticateJWT } = require('../../../portal/backend/middleware/auth.middleware');
 const { verificarPermiso } = require('../../../portal/backend/middleware/permisos.middleware');
 
@@ -28,5 +29,13 @@ router.put('/convenios/:id/cancelar', verificarPermiso(MODULO, OPCION, 'edicion'
 router.get('/autorizadores', soloSuperAdmin, ControladorAutorizador.listar);
 router.post('/autorizadores', soloSuperAdmin, ControladorAutorizador.agregar);
 router.delete('/autorizadores/:usuario_id', soloSuperAdmin, ControladorAutorizador.quitar);
+
+// Fase 2 — búsqueda en catálogos MBA3 para el formulario de Convenios (antes de crear/editar).
+// Mismo permiso que listar/obtener convenios (consulta): son endpoints de solo lectura.
+router.get('/mba3/ficha-cliente', verificarPermiso(MODULO, OPCION, 'consulta'), ControladorMba3.ficha);
+router.get('/mba3/clientes', verificarPermiso(MODULO, OPCION, 'consulta'), ControladorMba3.clientesPorVendedor);
+router.get('/mba3/vendedores', verificarPermiso(MODULO, OPCION, 'consulta'), ControladorMba3.vendedores);
+router.get('/mba3/productos', verificarPermiso(MODULO, OPCION, 'consulta'), ControladorMba3.productos);
+router.get('/mba3/existencias-ventas', verificarPermiso(MODULO, OPCION, 'consulta'), ControladorMba3.existenciasVentas);
 
 module.exports = router;

@@ -669,6 +669,20 @@ WHERE r.nombre IN ('super_admin', 'portal_admin', 'comercial_admin')
 ON CONFLICT DO NOTHING;
 
 -- ============================================
+-- MÓDULO COMERCIAL: caché de catálogos MBA3 (origen: modules/comercial/backend/migrations/003-mba3-cache.sql)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS comercial_cache_mba3 (
+  tipo TEXT NOT NULL,
+  codigo TEXT NOT NULL,
+  datos JSONB NOT NULL,
+  consultado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (tipo, codigo)
+);
+
+CREATE INDEX IF NOT EXISTS idx_comercial_cache_mba3_consultado_en ON comercial_cache_mba3(consultado_en);
+
+-- ============================================
 -- MÓDULO RH: Vacaciones (origen: modules/rh/backend/migrations/002-solicitudes-vacaciones.sql)
 -- ============================================
 CREATE TABLE IF NOT EXISTS tabla_calculo_vacaciones (

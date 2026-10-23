@@ -6,6 +6,32 @@ type: project
 
 # Decisiones de Arquitectura
 
+### [2026-10-23] orquestador — Fase 2 de Convenios de compra CERRADA (commit en `feat/comercial-convenios`); MBA3 real sigue bloqueado por Cloudflare Access
+
+**Resultado:** coder construyó el cliente de lectura MBA3 (login/refresh/caché/fallback) y el autocompletar en el convenio; revisor APROBADO CON OBSERVACIONES (2 ALTOS: coincidencia de código por `data[0]`/subcadena en vez de exacta, y login sin single-flight/cooldown con riesgo de bloquear la cuenta de servicio 15 min); tester confirmó en vivo que el medio de latencia (resolución en serie) llegaba a ~70 s peor caso. Ronda de correcciones aplicada: coincidencia exacta de código, single-flight + cooldown de login, resolución en paralelo (`Promise.allSettled`, de ~70 s a ~tiempo de 1 llamada), namespace de caché separado para listados (ya no colisiona con un código real `"*"`), y se agregó la migración 002 (Fase 1) que faltaba en `docker-compose.supabase.yml` — bug real que habría dejado un entorno nuevo sin las tablas de convenios. Verificado con jest (184/184 del módulo, 2266/2266 del repo) y mediciones de tiempo antes/después.
+
+**Bloqueo que SIGUE activo (no se resuelve con código):** `mba3api.rayhsa.net` está detrás de Cloudflare Access — ver `blockers.md`. Toda esta fase se construyó y probó contra un MBA3 falso local; **nada se ha verificado contra el MBA3 real**, y los bodies de 4 de los 5 endpoints (`clientes-vendedor`, `vendedores`, `productos`, `acuvtaprod`) siguen siendo una suposición sin confirmar (solo `ficha-cliente` tiene su contrato documentado). Antes de dar por buena esta integración en staging/prod hace falta: (a) que alguien con acceso a Cloudflare Access para `rayhsa.net` dé un Service Token o un bypass de IP, y (b) con eso, correr `/openapi.json` real y ajustar los nombres de campo si no coinciden con lo que se asumió (documentado campo por campo en code-notes.md).
+
+**Deuda documentada, no bloqueante:** caché sin límite de tasa propio ni purga automática; datos crudos de MBA3 se cachean y devuelven completos (sin proyectar a campos mínimos, porque la forma real de la respuesta no está confirmada todavía); varios hallazgos bajos del revisor sin tocar.
+
+---
+
+### [2026-10-23] orquestador — Fase 2 de Convenios de compra: endpoints de MBA3 confirmados por el humano
+
+**Respuestas del humano a lo que pedía la Fase 2 (ver entrada "MBA3 lectura: canal confirmado" más abajo):**
+1. **Endpoints exactos** (bajo `POST /v1/api/{endpoint}`, mismo contrato que `ficha-cliente`):
+   - Clientes por vendedor: `clientes-vendedor`
+   - Vendedores: `vendedores`
+   - Productos: `productos`
+   - Existencias y ventas (un solo endpoint para ambas): `acuvtaprod`
+   - (Cliente individual ya confirmado en el manual: `ficha-cliente`)
+2. **Credenciales:** ya existe un usuario de servicio para esta API (el humano no compartió usuario/password en el chat — correcto, no se piden aquí; van en `.env` de cada entorno cuando se pruebe en vivo).
+3. **Red:** el host es alcanzable desde donde corre la intranet.
+
+**Qué falta confirmar (no bloquea empezar, sí bloquea la verificación en vivo):** el cuerpo exacto de parámetros de `clientes-vendedor`, `vendedores`, `productos` y `acuvtaprod` — solo `ficha-cliente` tiene su body confirmado en el manual (`{"codigo": "..."}`). Plan: el coder intenta `GET https://mba3api.rayhsa.net/openapi.json` primero (el manual dice que no requiere login para consultarlo) para obtener el esquema real; si el sandbox no tiene salida a internet, construye con el mismo patrón de `ficha-cliente` como mejor suposición, lo deja documentado como pendiente de confirmar, y diseña el cliente para que ajustar un nombre de campo sea un cambio de una línea. La prueba de extremo a extremo con login real requiere las credenciales reales en `.env` — eso lo hace el humano cuando se pruebe en un entorno con salida a internet (probablemente staging).
+
+---
+
 ### [2026-10-23] orquestador — Fase 1 de Convenios de compra CERRADA (commit en `feat/comercial-convenios`)
 
 **Resultado:** coder corrigió los 3 hallazgos MEDIO del revisor (R-1 "nunca lo propio" movido al WHERE del UPDATE, R-2 ids validados → 400, R-3 fechas/montos validados → 400) y aplicó las 2 reglas de negocio decididas por el humano (cancelar un convenio autorizado: solo autorizador activo o `super_admin`; editar uno pendiente: solo el creador o `super_admin`), de paso arregló varios BAJOS y un bug real en `AutorizadoresPage.jsx` (el chequeo de super_admin nunca funcionaba). Verificado en vivo (Postgres real + backend real + JWT reales, 17/17) y por pruebas (`jest modules/comercial` 136/136; repo completo 2218/2218; eslint 0 errores nuevos). Sin re-revisión completa de esta ronda (cambios acotados y verificados en vivo; ver code-notes.md "Correcciones post-revisión [2026-10-23]").
@@ -1224,3 +1250,11 @@ Al desactivar (o registrar inactiva/sábado/domingo/sobre festivo) una actividad
 **Para decidir:** (a) ¿cancelar un convenio `autorizado` debe limitarse a quien está en `comercial_autorizadores` o a `super_admin` (mismo candado que autorizar/rechazar), o se deja abierto a cualquiera con el permiso de edición como está hoy? (b) ¿editar un convenio pendiente debe limitarse al creador (y/o a un autorizador), o el permiso granular de módulo ya es suficiente control como en el resto del proyecto (p. ej. Solicitudes de Crédito)? Fix sugerido por el revisor si se decide restringir: aplicar `motivoSinAutoridad` también a cancelar cuando `previo.estatus === 'autorizado'`, y comprobar `creado_por_id === usuario_id` (u otra regla de propiedad) antes de `Convenio.actualizar`.
 
 **No bloquea el GO de la Fase 1** (no hay crítico ni alto; es un hueco de alcance, no un bug) pero conviene cerrarlo antes de producción. El resto de los hallazgos del revisor (R-1, R-2, R-3, R-5 a R-8, R-10 a R-13) son correcciones de código con fix sugerido, no decisiones de negocio — ver `reviews.md` directamente.
+
+---
+
+### [2026-10-23] [tester] — Convenios de compra Fase 2: confirmación empírica de R-F2-3 del revisor (latencia de guardado con MBA3 caído)
+
+**Contexto:** probando Convenios de compra Fase 2 con Postgres real + backend real + un MBA3 falso propio (ver [[tests]] "Convenios de compra: Fase 2 (MBA3)"), el revisor ya había encontrado por lectura de código (`reviews.md`, "Convenios de compra: Fase 2 (MBA3)", **R-F2-3**, severidad medio/alto) que las resoluciones de cliente/vendedor/producto en `resolverSnapshots` son secuenciales y cada una puede tardar hasta el timeout de axios (10 s) si MBA3 no responde. **Lo confirmo con medición real, sin duplicar el hallazgo:** con MBA3 colgado, un convenio con cliente + vendedor + 1 sola línea de producto por código tardó **27.4 s** en guardarse (201, sin pérdida de datos, con 3 advertencias) — consistente con la fórmula del revisor `(2+N)×10 s`. No agrego una pregunta nueva al humano: el fix sugerido por el revisor (resolver en paralelo con `Promise.allSettled` y un presupuesto total de tiempo) ya es accionable tal cual está en `reviews.md`; esta entrada solo deja evidencia de tiempo real para dimensionar la urgencia (con 5 líneas de producto, que sí ocurren en el histórico de convenios — folio 27 T8/T9, folio 80 T6-T10 — el peor caso sube a ≈ 70 s, suficiente para chocar con un timeout de proxy/nginx delante del backend en producción).
+
+**No bloquea nada de lo ya construido.** El resto de la Fase 2 (migración 003, login/refresh/relogin acotado sin loop, caché con TTL y fallback, permisos y validación de parámetros en `/api/comercial/mba3/*`, regresión) pasó sin fallos — ver `tests.md`.

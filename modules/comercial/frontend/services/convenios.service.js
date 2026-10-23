@@ -44,3 +44,16 @@ export async function agregarAutorizador(usuario_id) {
 export async function quitarAutorizador(usuario_id) {
   return solicitar(`/comercial/autorizadores/${usuario_id}`, { method: 'DELETE' });
 }
+
+// Fase 2 — búsqueda en catálogos MBA3 (autocompletar al capturar un código en el formulario).
+export async function buscarFichaClienteMba3(codigo) {
+  return solicitar(`/comercial/mba3/ficha-cliente?codigo=${encodeURIComponent(codigo)}`);
+}
+
+export async function buscarVendedorMba3(codigo) {
+  return solicitar(`/comercial/mba3/vendedores?codigo=${encodeURIComponent(codigo)}`);
+}
+
+export async function buscarProductoMba3(codigo) {
+  return solicitar(`/comercial/mba3/productos?codigo=${encodeURIComponent(codigo)}`);
+}
