@@ -46,6 +46,60 @@ describe("Convenio.cancelar — autoridad para cancelar un convenio ya autorizad
   });
 });
 
+describe("Convenio.crearHistorico — Fase 3 (carga histórica del CSV)", () => {
+  it("inserta la cabecera con estatus/autoriza_nombre/fecha_autoriza del snapshot, autoriza_id siempre NULL y origen_historico=true", async () => {
+    const cliente = { query: jest.fn().mockResolvedValue({ rows: [{ id: 42 }] }), release: jest.fn() };
+    grupo.connect.mockResolvedValue(cliente);
+    await Convenio.crearHistorico(
+      {
+        folio_origen: "27",
+        cliente_codigo: "C00776",
+        cliente_nombre: "Polaquimia SA DE CV",
+        vendedor_codigo: "MEX10",
+        vendedor_nombre: "Lizethe Maher",
+        fecha_inicio: "2026-01-14",
+        vigente_hasta: null,
+        estatus: "cancelado",
+        autoriza_nombre: "ABI",
+        fecha_autoriza: "2026-01-14",
+        observaciones: "Convenio histórico marcado 'No vigente' en el Excel (incremento de precios).",
+        creado_por_id: 1,
+      },
+      [],
+    );
+    const [sql, params] = cliente.query.mock.calls[1]; // calls[0] es BEGIN (enTransaccion)
+    expect(sql).toMatch(/INSERT INTO comercial_convenios/);
+    expect(sql).toMatch(/estatus, autoriza_id, autoriza_nombre, fecha_autoriza/);
+    expect(sql).toMatch(/observaciones, creado_por_id, origen_historico/);
+    expect(params).toEqual([
+      "27", "C00776", "Polaquimia SA DE CV", "MEX10", "Lizethe Maher",
+      "2026-01-14", null, "cancelado", null, "ABI", "2026-01-14",
+      "Convenio histórico marcado 'No vigente' en el Excel (incremento de precios).", 1, true,
+    ]);
+  });
+
+  it("inserta cada línea de producto con insertarProducto dentro de la misma transacción", async () => {
+    const cliente = { query: jest.fn().mockResolvedValue({ rows: [{ id: 42 }] }), release: jest.fn() };
+    grupo.connect.mockResolvedValue(cliente);
+    await Convenio.crearHistorico(
+      { cliente_nombre: "X", vendedor_nombre: "Y", fecha_inicio: "2026-01-01", estatus: "autorizado", creado_por_id: 1 },
+      [{ producto_descripcion: "ANSELL 39-122-08", cantidad_periodica: 144, periodo: "mensual" }],
+    );
+    const sqls = cliente.query.mock.calls.map(([sql]) => sql);
+    expect(sqls.some((s) => s.includes("INSERT INTO comercial_convenio_productos"))).toBe(true);
+  });
+});
+
+describe("Convenio.existeHistorico — idempotencia de la carga histórica", () => {
+  it("consulta por folio_origen y exige origen_historico=true (R-P3-2: no colisiona con convenios de la UI)", async () => {
+    await Convenio.existeHistorico("27");
+    const [sql, params] = grupo.query.mock.calls[0];
+    expect(sql).toMatch(/WHERE c\.folio_origen = \$1 AND c\.origen_historico = true/);
+    expect(sql).toMatch(/total_lineas/);
+    expect(params).toEqual(["27"]);
+  });
+});
+
 describe("Convenio.listar — R-8: ILIKE escapado", () => {
   it("escapa %, _ y \\ del filtro antes de envolverlo en comodines", async () => {
     await Convenio.listar({ cliente_nombre: "100%_off\\" });

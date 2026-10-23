@@ -6,6 +6,30 @@ type: project
 
 # Decisiones de Arquitectura
 
+### [2026-10-23] orquestador — Fase 3 de Convenios de compra CERRADA (commit en `feat/comercial-convenios`)
+
+**Resultado:** las 2 decisiones del humano y los hallazgos del revisor se aplicaron: folio 90 y cualquier `VIGENCIA` no-fecha ahora importan como `cancelado` (se eliminó la heurística frágil); el inventario histórico de la columna "16.10.26" quedó en `observaciones` por línea de producto; nueva columna `origen_historico` (migración 004) con índice único parcial evita que la carga histórica colisione con convenios creados desde la UI; dry-run y corrida real ya coinciden al dividir por vendedor; re-ejecutar con líneas nuevas avisa en vez de callar; `CONSUMO` con "MESES" ya no finge un periodo mensual en silencio.
+
+**Resultado final verificado (Postgres real):** 170 convenios, 196 líneas, 119 `autorizado` / 51 `cancelado`, 109 convenios con nota de inventario histórico. Idempotente (segunda corrida: 0 creados). `npx jest` 2344/2344, eslint 0 errores.
+
+**Deuda documentada, no bloqueante:** R-P3-7 (el estatus se toma de la primera línea del grupo, frágil al orden de filas si el CSV cambia — es un cambio de diseño, no un fix puntual) y R-P3-8 (convenios `autorizado` con `vigente_hasta` ya vencido se importan igual; "vencido" se calcula por fecha, no por estatus, como se decidió desde la Fase 1 — comportamiento esperado, no un bug).
+
+**Siguiente paso:** GO del humano para la Fase 4 (registro real de consumo y tiempo estimado) o para correr esta carga contra datos reales de staging/prod (requiere que alguien revise el reporte final antes, y decidir el `--creado-por-usuario-id` a usar).
+
+---
+
+### [2026-10-23] orquestador — Fase 3 de Convenios de compra: revisión/pruebas y 2 decisiones del humano antes de corregir
+
+**Resultado:** coder construyó el script de carga histórica; revisor APROBADO CON OBSERVACIONES (0 críticos, 1 ALTO: folio 90 con `VIGENCIA="No sale en precio"` se importaba como autorizado con fecha ya vencida; varios medios); tester confirmó en vivo sin fallos nuevos (170 convenios/196 líneas, idempotencia, casos especiales, transacción por convenio, 2324/2324 jest).
+
+**Decisiones del humano:**
+1. **Inventario histórico (columna "16.10.26"):** guardarlo como nota de texto en `observaciones` de cada convenio (no se crea columna nueva).
+2. **Folio 90 y cualquier fila con `VIGENCIA` en texto no reconocible (ni fecha, ni "No vigente"):** tratarla como **cancelado**, igual que "No vigente"/"Ya no comprar" — mismo criterio, generalizado a cualquier texto en `VIGENCIA` que no sea una fecha válida.
+
+**Siguiente paso:** ronda de correcciones del coder con estas 2 decisiones + los hallazgos MEDIO del revisor (colisión de idempotencia con convenios creados desde la UI, inconsistencia dry-run vs. real al dividir por vendedor, re-ejecutar sin avisar si el archivo trae una línea nueva, periodo "mensual" inventado para texto de duración como "20-30 meses"). Bajos a criterio del coder.
+
+---
+
 ### [2026-10-23] orquestador — Fase 2 de Convenios de compra CERRADA (commit en `feat/comercial-convenios`); MBA3 real sigue bloqueado por Cloudflare Access
 
 **Resultado:** coder construyó el cliente de lectura MBA3 (login/refresh/caché/fallback) y el autocompletar en el convenio; revisor APROBADO CON OBSERVACIONES (2 ALTOS: coincidencia de código por `data[0]`/subcadena en vez de exacta, y login sin single-flight/cooldown con riesgo de bloquear la cuenta de servicio 15 min); tester confirmó en vivo que el medio de latencia (resolución en serie) llegaba a ~70 s peor caso. Ronda de correcciones aplicada: coincidencia exacta de código, single-flight + cooldown de login, resolución en paralelo (`Promise.allSettled`, de ~70 s a ~tiempo de 1 llamada), namespace de caché separado para listados (ya no colisiona con un código real `"*"`), y se agregó la migración 002 (Fase 1) que faltaba en `docker-compose.supabase.yml` — bug real que habría dejado un entorno nuevo sin las tablas de convenios. Verificado con jest (184/184 del módulo, 2266/2266 del repo) y mediciones de tiempo antes/después.

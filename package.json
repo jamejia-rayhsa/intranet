@@ -26,7 +26,8 @@
     "db:migrate": "npm run migrate --workspace=modules/portal/backend",
     "db:seed": "npm run seed --workspace=modules/portal/backend",
     "db:migrar-usuarios-supabase": "node scripts/migrar-usuarios-supabase.js",
-    "db:migrar-archivos-storage": "node scripts/migrar-archivos-storage.js"
+    "db:migrar-archivos-storage": "node scripts/migrar-archivos-storage.js",
+    "db:importar-convenios-historicos": "node scripts/comercial/importar-convenios-historicos.js"
   },
   "devDependencies": {
     "eslint": "^8.56.0",

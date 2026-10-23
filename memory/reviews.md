@@ -3465,3 +3465,90 @@ Hallazgos abiertos:
 **Fix sugerido:** comparar el código actual con el enviado antes de aplicar el resultado.
 
 **Notas de alcance:** el contrato real de MBA3 sigue sin verificarse en vivo (blocker de Cloudflare Access). R-F2-1, R-F2-7 y R-F2-8 dependen de la forma real del registro y deben revisarse al llegar el Service Token. Los bodies de `clientes-vendedor`, `vendedores`, `productos` y `acuvtaprod` siguen siendo suposición. No se modificó código, no hubo commit, y `memory/INDEX.md` no se tocó por instrucción del encargo.
+
+### [2026-10-23] [revisor] — Convenios de compra: Fase 3 (carga CSV)
+
+**Veredicto:** APROBADO CON OBSERVACIONES, 0 críticos. No hay violación de decisions.md (separación de folios 60/124 por cliente cumplida). Verificado contra el CSV real: 197 filas de datos con 39 campos cada una; 171 grupos folio+cliente; 170 convenios candidatos (120 autorizado / 50 cancelado), 196 líneas; folio 130 omitido sin convenio vacío; folio 37 cancelado por "Ya no comprar"; folio 61 serial 46112 -> 2026-03-31; folios 139/140 reparados a 2026-08-20; sin claves duplicadas; ningún `vigente_hasta` anterior a `fecha_inicio`. Tests: 59/59 pasan (importar-convenios-historicos + convenio.model). Los conteos del reporte del coder coinciden con lo que produce el código.
+
+**Confirmado correcto:**
+- Transacción por convenio: `Convenio.crearHistorico` usa `enTransaccion` (convenio.model.js:250); `ejecutar` captura el error por candidato (script:723-733) y sigue con los demás. Un fallo no revierte convenios previos.
+- SQL parametrizado en todas las consultas nuevas (model:243-300).
+- `--creado-por-usuario-id` / `--creado-por-correo` se validan contra `usuarios` en `resolverCreadoPorId` (script:634-644) antes de cualquier INSERT; falla con mensaje claro.
+- Parser CSV: saltos de línea dentro de comillas (folios 54, 139, 140) y filas finales vacías correctos.
+- Exclusión de líneas CANCELADO antes de construir el convenio (script:527-562).
+
+**Hallazgos:**
+
+**R-P3-1 — Folio 90 (BA GLASS) importado como `autorizado` con fecha ya vencida.**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:431-447` (CSV fila 118).
+**Problema:** VIGENCIA literal es "No sale en precio"; la heurística toma OBSERVACIONES="19/08/2026" como `vigente_hasta` y deja el convenio activo. Esa fecha ya pasó (hoy 2026-10-23) y el texto literal apunta a producto fuera de precio, es decir, cancelado. Tiene advertencia, pero el estatus por defecto es el que entra a la base.
+**Severidad:** alto.
+**Fix sugerido:** importar este folio como `cancelado` o dejarlo fuera hasta decisión humana. Como mínimo, la heurística no debe dar `autorizado` cuando la fecha tomada de OBSERVACIONES ya pasó.
+
+**R-P3-2 — Idempotencia: un convenio creado desde la UI con el mismo `folio_origen` hace que el histórico se omita en silencio.**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:701-710`; `modules/comercial/backend/models/convenio.model.js:285-291`; `modules/comercial/frontend/pages/ConvenioForm.jsx:181` (folio de texto libre).
+**Problema:** `existeHistorico` no distingue convenios históricos de los creados por la UI. Si un usuario escribió un folio igual a uno del CSV con el mismo cliente, el histórico se reporta como "ya importado" (motivo incorrecto) y no se crea.
+**Severidad:** medio.
+**Fix sugerido:** marcar el origen (columna `origen` o flag) y consultar solo esas filas; como mínimo, mostrar en el reporte el id y `creado_por_id` del convenio existente.
+
+**R-P3-3 — Dry-run y corrida real divergen si un folio+cliente se divide por vendedor (ruta latente).**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:358-367` (split por vendedor) y `:701-710` (chequeo contra BD).
+**Problema:** los dos subgrupos comparten folio y cliente. En la corrida real, el segundo subgrupo encuentra la fila recién insertada por el primero y se omite como "ya importado" (se pierden sus líneas). En `--dry-run` ambos aparecen como "creados". El CSV actual no dispara esta ruta (verificado: ningún folio+cliente tiene dos vendedores) y el test de línea 329 solo cubre funciones puras, no `ejecutar`.
+**Severidad:** medio.
+**Fix sugerido:** llevar un `Set` de claves creadas o simuladas dentro de la corrida y consultarlo antes de `existeHistorico`; añadir test de `ejecutar` con un folio dividido por vendedor.
+
+**R-P3-4 — Re-ejecutar con una línea nueva en un folio+cliente ya importado no la inserta ni avisa.**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:705-710`.
+**Problema:** la clave es folio+cliente; si el CSV gana una línea para un convenio ya importado, se omite como "ya importado" con exit 0 y la línea nueva nunca entra. No hay diferencia de líneas en el reporte.
+**Severidad:** medio.
+**Fix sugerido:** comparar número de líneas/productos con la BD y reportar `[diferencia]` con detalle; documentar que la carga es de una sola corrida.
+
+**R-P3-5 — Periodo "mensual" asignado sin dato fuente a casi todas las líneas; "20-30 meses" queda como 20 mensual.**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:237` (default) y `:249-250`; CSV fila 119 (folio 91, CONSUMO="20-30 meses").
+**Problema:** cualquier CONSUMO sin BIMESTRAL/TRIMESTRAL recibe `periodo='mensual'` sin advertencia. Es la mayoría de las líneas y aparentan dato confirmado. "Meses" se trata como mensual.
+**Severidad:** medio.
+**Fix sugerido:** advertencia por línea cuando no hay periodo explícito, o valor de periodo "no especificado"; tratar "meses" como periodo propio. El humano debe aceptar la suposición antes de la carga real.
+
+**R-P3-6 — Inventario histórico (columna `16.10.26`) descartado: 193 de 197 filas con dato.**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:89-110` (no se mapea); CSV columna índice 28.
+**Problema:** verificado que la columna tiene valor en 193 filas. Se ignoró por encargo y el coder lo documentó; no es defecto de código sino decisión pendiente con dato de negocio perdido.
+**Severidad:** medio (decisión de negocio que bloquea la carga real según la Puerta del roadmap).
+**Fix sugerido:** decidir con el humano el destino (columna en `comercial_convenio_productos` u observaciones) antes de la carga real y re-verificar.
+
+**R-P3-7 — Estatus tomado solo de la primera línea del grupo (frágil al orden).**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:396` y `:518-524`.
+**Problema:** VIGENCIA, OBSERVACIONES y AUTORIZACION se leen de `filas[0]`. En folio 68 la primera línea trae AUTORIZACION="SIA" y otra línea vacía; si cambiara el orden, el convenio quedaría cancelado. Hoy no cambia el resultado.
+**Severidad:** bajo.
+**Fix sugerido:** definir una regla explícita sobre el grupo (por ejemplo, cancelado si cualquier línea trae "Ya no comprar"/"No vigente") y documentarla.
+
+**R-P3-8 — Seis convenios importados como `autorizado` con `vigente_hasta` ya vencido.**
+**Archivo/línea:** resultado de la carga (folios 19, 20, 59, 61, 67, 90).
+**Problema:** `vigente_hasta` entre 2026-03-31 y 2026-08-19, anterior a hoy. Si la Fase 5 cuenta `autorizado` como activo, aparecerán como vigentes.
+**Severidad:** bajo.
+**Fix sugerido:** confirmar que Fase 5 calcula "vencido" por fecha y no por estatus, o decidir estatus para estos seis.
+
+**R-P3-9 — "Fila N" en el reporte es índice lógico, no línea física del archivo.**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:662-667`.
+**Problema:** `numeroFila` cuenta registros, no líneas; con saltos dentro de comillas el número no coincide con la línea del editor (folios 139/140).
+**Severidad:** bajo.
+**Fix sugerido:** registrar la línea física en el parser o llamarlo "registro N" en el reporte.
+
+**R-P3-10 — Parser de CONSUMO: coma decimal se lee como miles (latente).**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:249`.
+**Problema:** "1,5" se convierte en 15. No hay casos así en el CSV actual, pero sería un error silencioso si aparecen.
+**Severidad:** bajo.
+**Fix sugerido:** tratar la coma como miles sólo con exactamente tres dígitos después; en otro caso como decimal o con advertencia.
+
+**R-P3-11 — Sin restricción de unicidad para el histórico (carrera entre corridas).**
+**Archivo/línea:** `modules/comercial/backend/migrations/002-convenios-compra.sql:6-25`.
+**Problema:** la idempotencia depende de un SELECT previo sin lock; dos corridas simultáneas pueden duplicar.
+**Severidad:** bajo.
+**Fix sugerido:** índice único parcial para históricos o advertencia operativa de una sola corrida.
+
+**R-P3-12 — Filas con solo FOLIOS/CLIENTE/MARCA vacíos se descartan sin contarse (latente).**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:263-265` y `:665`.
+**Problema:** una fila con datos de precio pero sin esos campos se omite sin aparecer en el reporte. El CSV actual no tiene ninguna (verificado).
+**Severidad:** bajo.
+**Fix sugerido:** contar las filas saltadas con datos en el reporte.
+
+**Notas de alcance:** sin conexión a MBA3 (Fase 2 intacta); no se tocan tablas de Fase 4/5; `package.json` solo agrega el script. No se revisó la corrida contra Postgres real (los conteos del coder no se repitieron aquí, solo el dry-run lógico). Antes de la carga real, la Puerta del roadmap exige decidir R-P3-1, R-P3-5 y R-P3-6. No se modificó código, no hubo commit, y `memory/INDEX.md` no se tocó por instrucción del encargo.

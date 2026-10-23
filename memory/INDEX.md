@@ -13,6 +13,13 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-23] orquestador → decisions.md — Fase 3 de Convenios de compra CERRADA (commit en feat/comercial-convenios): 170 convenios, 196 líneas, idempotente
+- [2026-10-23] [coder] → code-notes.md#2026-10-23-coder--convenios-de-compra-fase-3-carga-histórica-del-csv — Correcciones post-revisión Fase 3: folio 90 y VIGENCIA no-fecha → cancelado, inventario histórico a observaciones, columna origen_historico con índice único, dry-run=real, avisos de re-ejecución
+- [2026-10-23] orquestador → decisions.md — Decisiones del humano: folio 90 (VIGENCIA no-fecha) → cancelado; inventario histórico de la columna suelta → observaciones
+- [2026-10-23] [tester] → tests.md#2026-10-23-tester--convenios-de-compra-fase-3-carga-csv — Convenios de compra Fase 3: sin fallos, conteos (170/196) verificados de forma independiente contra Postgres real
+- [2026-10-23] [revisor] → reviews.md#2026-10-23-revisor--convenios-de-compra-fase-3-carga-csv — Convenios de compra Fase 3: APROBADO CON OBSERVACIONES, 1 ALTO (folio 90 autorizado con vigencia ya vencida)
+- [2026-10-23] [coder] → code-notes.md#2026-10-23-coder--convenios-de-compra-fase-3-carga-histórica-del-csv — Convenios de compra Fase 3: script de migración única del CSV histórico, 170 convenios / 196 líneas, idempotente
+- [2026-10-23] orquestador → .env.dev — Placeholders de MBA3_LECTURA_*/Cloudflare Access para pruebas locales (advertencia: no poner secretos reales ahí, está versionado)
 - [2026-10-23] [coder] → code-notes.md#2026-10-23-coder--convenios-de-compra-fase-2-integración-de-lectura-mba3 — Soporte de Service Token de Cloudflare Access (headers CF-Access-Client-Id/Secret) en el cliente de lectura MBA3; el humano ya tiene el token
 - [2026-10-23] orquestador → decisions.md — Fase 2 de Convenios de compra CERRADA (commit en feat/comercial-convenios); MBA3 real sigue bloqueado por Cloudflare Access
 - [2026-10-23] [coder] → code-notes.md#2026-10-23-coder--convenios-de-compra-fase-2-integración-de-lectura-mba3 — Correcciones post-revisión Fase 2: coincidencia exacta de código, single-flight/cooldown de login, resolución en paralelo (~70s a ~1 llamada), namespace de caché separado, migración 002 agregada al compose

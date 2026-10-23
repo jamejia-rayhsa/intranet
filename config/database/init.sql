@@ -669,6 +669,16 @@ WHERE r.nombre IN ('super_admin', 'portal_admin', 'comercial_admin')
 ON CONFLICT DO NOTHING;
 
 -- ============================================
+-- MÓDULO COMERCIAL: origen histórico de convenios (origen: modules/comercial/backend/migrations/004-convenios-origen-historico.sql)
+-- ============================================
+
+ALTER TABLE comercial_convenios ADD COLUMN IF NOT EXISTS origen_historico BOOLEAN NOT NULL DEFAULT false;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_comercial_convenios_historico_folio_cliente_vendedor
+  ON comercial_convenios (folio_origen, lower(btrim(cliente_nombre)), lower(btrim(vendedor_nombre)))
+  WHERE origen_historico;
+
+-- ============================================
 -- MÓDULO COMERCIAL: caché de catálogos MBA3 (origen: modules/comercial/backend/migrations/003-mba3-cache.sql)
 -- ============================================
 

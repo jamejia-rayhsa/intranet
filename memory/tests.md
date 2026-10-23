@@ -660,4 +660,31 @@ FAIL (todos con evidencia reproducible):
 
 **Criterio de aceptación:** encargo del orquestador "Convenios de compra Fase 2 (MBA3)", puntos 1-8; comportamiento decidido en `decisions.md` (2026-10-23, "MBA3 lectura: canal confirmado" y "Fase 2 de Convenios de compra: endpoints de MBA3 confirmados por el humano") y documentado en `code-notes.md` (2026-10-23, coder).
 
+---
+
+### [2026-10-23] [tester] — Convenios de compra: Fase 3 (carga CSV)
+
+**Qué se probó:** `scripts/comercial/importar-convenios-historicos.js` contra el CSV real `modules/comercial/backend/seeds/convenios-historicos-2026-10-22.csv` (168 filas de datos crudas / 207 líneas físicas / 197 filas lógicas una vez reparados los saltos de línea embebidos — mismo hallazgo que `code-notes.md`), verificación INDEPENDIENTE con Postgres real desechable (no se confió en los números del coder, se repitió la corrida desde cero).
+
+**Cómo:** contenedor Docker `postgres:16` efímero (`docker run ... -p 55499:5432`), `psql -f config/database/init.sql` (ya trae inline las migraciones 001-003 de `comercial`, confirmado por grep — no hace falta aplicarlas por separado), usuario semilla `admin@rayhsa.com.mx`. Corridas: `node scripts/comercial/importar-convenios-historicos.js --dry-run --creado-por-correo=admin@rayhsa.com.mx`, luego sin `--dry-run` 3 veces, luego contra una copia corrupta del CSV (`--archivo=.../convenios-corrupto.csv`, folio 150 con `VIGENCIA="01/01/2026"` anterior a su `Fecha` para forzar la violación de `chk_convenio_vigencia`). Verificación con `psql` directo (`SELECT count(*)`, `GROUP BY estatus`, consultas por `folio_origen`). Regresión: `npx jest`, `npx eslint modules/ scripts/`. Contenedor eliminado al terminar (`docker rm -f`).
+
+**Resultado:** PASS (sin fallos; mis conteos coinciden EXACTAMENTE con los reportados por el coder).
+
+**Evidencia:**
+1. **Corrida real completa:** dry-run y real dieron `convenios_creados=170 lineas_creadas=196 omitidos=1 filas_error=0 advertencias=11 convenios_con_error=0` (idéntico al reporte del coder en `code-notes.md`). SQL directo tras la corrida real: `comercial_convenios` = 170, `comercial_convenio_productos` = 196, `estatus`: `autorizado`=120 / `cancelado`=50. Folio 130 (Voltran, ANSELL R840 T7, única línea `Clave MBA3=CANCELADO`) → 0 filas en `comercial_convenios` (omitido, confirmado). Folios 60 y 124 → 4 y 2 convenios respectivamente, uno por cliente distinto (NUTEK/AVES LIBRES/SANFER ANIMAL/INCUBADORA para el 60; Voltran/Arcosa para el 124), mismo `vendedor_nombre`/`folio_origen`.
+2. **Idempotencia:** 2.ª y 3.ª corrida real → `convenios_creados=0 omitidos=171` ambas veces (170 "ya importado" + folio 130 de nuevo omitido por "sin líneas válidas", nunca por "ya importado"), conteo de `comercial_convenios` sin cambiar (170) y de `comercial_convenio_productos` sin cambiar (196). Sin duplicados.
+3. **Casos puntuales (SQL dirigido, no solo el log):**
+   - Folio 61 (Friccion y Tecnologia): `vigente_hasta=2026-03-31`, fecha de calendario real (no el serial `46112` crudo). PASS.
+   - Folios 139/140 (Manufacturera Mexicana de partes de automovil): `fecha_inicio=2026-08-20` en ambos (reparado desde `"20/08/226"`), no NULL ni año inválido. PASS.
+   - Folio 90 (BA GLASS, PIP A705): fila real del CSV tiene `VIGENCIA="No sale en precio"` y `OBSERVACIONES="19/08/2026"`; quedó `vigente_hasta=2026-08-19`, `fecha_inicio=2026-05-25` (de `Fecha=25/05/2026`), `observaciones` documenta la heurística de columnas desalineadas. Tiene sentido contra la fila real (verificada con `grep` en el CSV). PASS.
+   - Folios 0 y 3 (Granjas carrol de mexico, `VIGENCIA="No vigente"`): `estatus=cancelado` en ambos (y en los 14 folios restantes de ese mismo cliente con la misma marca). PASS.
+   - Folio 27 (Polaquimia SA DE CV): 1 solo convenio (`id=27`) con 2 líneas de producto (`ANSELL 39-122-08` y `ANSELL 39-122-09`), no 2 convenios. PASS.
+4. **Transacción por convenio:** copia corrupta del CSV (folio 150 con `vigente_hasta` anterior a `fecha_inicio`, viola el `CHECK` de la tabla) → corrida real dio `convenios_creados=169 convenios_con_error=1`; SQL directo confirmó que el folio 150 NO quedó en la tabla (rollback de su propia transacción) pero folio 149 (inmediatamente anterior) **y** folio 167 (el último del archivo, procesado después del error) SÍ quedaron committeados. Confirma `enTransaccion`/`crearHistorico` por convenio, no todo-o-nada. PASS.
+5. **Regresión:** `npx jest` → 74 suites / 2324 tests OK (incluye las 2 suites nuevas de esta fase: 59/59). `npx eslint modules/ scripts/` → 0 errores (19 warnings preexistentes y ajenos a esta fase: variables sin usar en RH/Tickets/scripts de otras fases).
+6. **Comparación contra el coder:** todos los conteos (170/196/120/50/11/1-omitido) coinciden exactamente con `code-notes.md` (2026-10-23, "Convenios de compra Fase 3: carga histórica del CSV"). Sin discrepancias.
+
+**Criterio de aceptación:** encargo del orquestador "Convenios de compra: Fase 3 (carga CSV)" puntos 1-6; reglas de negocio de `calcularEstatusYVigencia`/`construirConvenio` documentadas en `code-notes.md` (2026-10-23, coder) como oráculo de "correcto".
+
+**Acción:** ninguna — sin hallazgos que requieran código ni decisión del humano. Las 2 suposiciones de negocio ya marcadas como pendientes por el coder (columna de inventario `16.10.26` descartada; heurística del folio 90) siguen abiertas tal cual él las dejó, no son hallazgos nuevos de esta prueba.
+
 **Acción:** ninguna PARA RESOLVER nueva — el punto 4 (latencia acumulable de MBA3 con varias líneas de producto) ya está cubierto por R-F2-3 del revisor en `reviews.md`; agregué una entrada corta en `decisions.md` solo con la medición real que lo confirma (27.4 s con 1 producto), sin duplicar la pregunta al humano. Sin bloqueados nuevos (el bloqueo de Cloudflare Access ya estaba abierto en `blockers.md` y se confirma, no se agrega uno nuevo). El resto, sin fallos.

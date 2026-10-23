@@ -96,7 +96,7 @@
 Convenios de compra para productos que no se tienen en stock y hay que comprar en mínimos de paquete con el proveedor: autorización por una lista de personas designadas, cantidad a facturar periódicamente al cliente, tiempo estimado de consumo del stock adquirido, datos de cliente/vendedor/producto, registro real de consumo y un dashboard del estado de cada convenio. Carga inicial desde el CSV de convenios actuales adjuntado por el humano (1 convenio = 1 cliente + 1 vendedor + 1 o más líneas de producto; folios que agrupan varios clientes se separan en convenios independientes).
 
 ## Estado global
-- **Fase actual:** Fases 1 y 2 CERRADAS (commits en `feat/comercial-convenios`). Esperando GO del humano para la Fase 3 (carga del CSV histórico). **Bloqueo activo ajeno al código:** `mba3api.rayhsa.net` detrás de Cloudflare Access — nada de la Fase 2 se ha verificado contra MBA3 real (ver blockers.md); solo `ficha-cliente` tiene contrato confirmado, los otros 4 endpoints son suposición sin verificar.
+- **Fase actual:** Fases 1, 2 y 3 CERRADAS (commits en `feat/comercial-convenios`). Esperando GO del humano para la Fase 4 (registro real de consumo). El soporte de Service Token de Cloudflare Access ya está en el código (commit aparte); el humano ya tiene el token y está decidiendo cómo probarlo en vivo sin comitear secretos (ver blockers.md). 4 de 5 endpoints de MBA3 siguen sin verificar contra la API real.
 - **Actualizado:** 2026-10-23
 
 ## Fase 1 — Modelo de datos y autorización base — CERRADA
@@ -110,10 +110,11 @@ Convenios de compra para productos que no se tienen en stock y hay que comprar e
 - **Pendiente, no bloqueante para cerrar la fase de código:** `mba3api.rayhsa.net` está detrás de Cloudflare Access (ver blockers.md) — nada se ha probado contra el MBA3 real; 4 de 5 endpoints tienen el body sin confirmar. Verificación en vivo queda pendiente hasta tener Service Token o bypass de IP de Cloudflare.
 - **Puerta:** GO del humano — ya dado implícitamente al pedir seguir con esta fase; cerrada.
 
-## Fase 3 — Carga histórica del CSV de convenios actuales
+## Fase 3 — Carga histórica del CSV de convenios actuales — CERRADA
 - **Objetivo:** migrar los convenios ya existentes del CSV adjuntado a las tablas nuevas, una sola vez.
-- **Tareas previstas:** parser dedicado (reutilizando `ImportadorArchivo` + patrón de `importarDepartamentos`: validación por fila, modo migración única, lotes, advertencias) para normalizar: FOLIOS (agrupar líneas del mismo folio+cliente en un convenio con varias líneas de producto; folios con varios clientes se separan), CONSUMO (formatos mixtos → cantidad + periodo), montos y FACTOR, VIGENCIA (fecha o "No vigente"), OBSERVACIONES (señales como "Si comprar"/"Ya no comprar"); reporte de filas migradas/omitidas/con advertencia.
-- **Puerta:** GO del humano, con revisión del reporte de la carga antes de confirmarla.
+- **Hecho:** script de un solo uso `scripts/comercial/importar-convenios-historicos.js` (`--dry-run`, idempotente, transacción por convenio, no por archivo); agrupación folio+cliente(+vendedor si cambia) en convenios con 1+ líneas de producto; folios con varios clientes separados en convenios independientes; líneas "CANCELADO" excluidas; estatus `autorizado`/`cancelado` según `VIGENCIA`/`AUTORIZACION`/`OBSERVACIONES` (cualquier `VIGENCIA` no-fecha → cancelado, decisión del humano); parseo de `CONSUMO` (cantidad+periodo) y montos; inventario histórico de la columna suelta "16.10.26" guardado en `observaciones` por línea (decisión del humano); columna nueva `origen_historico` (migración 004) con índice único parcial para que la carga histórica nunca colisione con convenios creados desde la UI. Revisor APROBADO CON OBSERVACIONES (1 ALTO corregido); tester sin fallos nuevos, conteos verificados de forma independiente. **Resultado final:** 170 convenios, 196 líneas, 119 autorizado / 51 cancelado, idempotente.
+- **Deuda documentada:** estatus tomado de la primera línea del grupo (frágil al orden si el CSV cambia); convenios autorizado con vigencia ya vencida se importan igual (por diseño, "vencido" se calcula por fecha).
+- **Puerta:** GO del humano para correr esto contra datos reales de staging/prod requiere además decidir `--creado-por-usuario-id` y revisar el reporte final — todavía no se ha corrido contra una base real de negocio, solo contra Postgres desechable de prueba.
 
 ## Fase 4 — Registro real de consumo y tiempo estimado
 - **Objetivo:** llevar el consumo real contra lo planeado, no solo un estimado por fechas.

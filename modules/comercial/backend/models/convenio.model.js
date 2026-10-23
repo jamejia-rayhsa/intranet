@@ -241,6 +241,70 @@ const Convenio = {
     return res.rows[0];
   },
 
+  // Fase 3 (carga histórica del CSV): a diferencia de crear(), aquí el convenio YA tiene un
+  // estatus final conocido (autorizado/cancelado) y su snapshot de autorización desde el Excel —
+  // no pasa por el flujo de pendiente_autorizacion ni por autorizar()/cancelar(). `autoriza_id`
+  // siempre NULL (no hay un usuario real detrás de iniciales como "AMJ"/"SIA"; ver code-notes.md
+  // Fase 3), `motivo_rechazo` siempre NULL (ese campo es solo del flujo nuevo de rechazo).
+  // `origen_historico = true` siempre (migración 004, R-P3-2): distingue este convenio de uno
+  // creado desde la UI, para que existeHistorico() nunca colisione con un folio/cliente de texto
+  // libre capturado a mano.
+  async crearHistorico(datos, productos) {
+    return Convenio.enTransaccion(async (cliente) => {
+      const res = await cliente.query(
+        `
+        INSERT INTO comercial_convenios (
+          folio_origen, cliente_codigo, cliente_nombre, vendedor_codigo, vendedor_nombre,
+          fecha_inicio, vigente_hasta, estatus, autoriza_id, autoriza_nombre, fecha_autoriza,
+          observaciones, creado_por_id, origen_historico
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        RETURNING *
+      `,
+        [
+          datos.folio_origen || null,
+          datos.cliente_codigo || null,
+          datos.cliente_nombre,
+          datos.vendedor_codigo || null,
+          datos.vendedor_nombre,
+          datos.fecha_inicio,
+          datos.vigente_hasta || null,
+          datos.estatus,
+          null,
+          datos.autoriza_nombre || null,
+          datos.fecha_autoriza || null,
+          datos.observaciones || null,
+          datos.creado_por_id,
+          true,
+        ],
+      );
+      const convenio = res.rows[0];
+      for (const producto of productos) {
+        await Convenio.insertarProducto(convenio.id, producto, cliente);
+      }
+      convenio.productos = await Convenio.listarProductos(convenio.id, cliente);
+      return convenio;
+    });
+  },
+
+  // Idempotencia de la carga histórica: clave = folio_origen + cliente_nombre normalizado (lo
+  // decide el script, aquí solo se devuelven los candidatos con ese folio_origen). R-P3-2:
+  // `origen_historico = true` en el WHERE para no confundir un convenio creado desde la UI con uno
+  // importado del CSV, aunque compartan folio_origen + cliente_nombre como texto libre. R-P3-4:
+  // incluye `total_lineas` para que el script pueda avisar si una re-ejecución trae más/menos líneas
+  // que las ya importadas, en vez de omitir en silencio.
+  async existeHistorico(folioOrigen) {
+    const res = await grupo.query(
+      `
+      SELECT c.id, c.cliente_nombre,
+             (SELECT COUNT(*) FROM comercial_convenio_productos p WHERE p.convenio_id = c.id) AS total_lineas
+      FROM comercial_convenios c
+      WHERE c.folio_origen = $1 AND c.origen_historico = true
+    `,
+      [folioOrigen],
+    );
+    return res.rows;
+  },
+
   // Cancelar: cualquier estatus salvo ya cancelado (pendiente, autorizado o rechazado). Decisión del
   // humano [2026-10-23]: cancelar un convenio YA autorizado exige estar en la lista de autorizadores
   // activos o ser super_admin (mismo criterio que autorizar/rechazar, incluyendo "nunca lo propio");
