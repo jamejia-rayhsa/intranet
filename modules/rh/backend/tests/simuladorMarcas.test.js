@@ -1,5 +1,5 @@
 const path = require("path");
-const { crearGenerador, crearAzar, armarEnvios, leerArgumentos } = require(path.join("../../../../scripts/asistencia/simulador-marcas"));
+const { crearGenerador, crearAzar, armarEnvios, leerArgumentos, generarJornadas, rangoDeCodigos } = require(path.join("../../../../scripts/asistencia/simulador-marcas"));
 const { validarMarca } = require("../utils/marcaValidacion");
 
 const AHORA = Date.parse("2026-10-21T12:00:00Z");
@@ -89,5 +89,66 @@ describe("simulador de marcas - envíos y argumentos", () => {
     expect(fuente).toMatch(/process\.env\.INTRANET_API_KEY/);
     expect(fuente).not.toMatch(/opciones\.llave|--llave/);
     expect(fuente).not.toMatch(/console\.(log|error)\([^)]*\$\{llave\}/); // nunca imprime la llave completa
+  });
+});
+
+describe("simulador de marcas - modo jornadas (motor de análisis)", () => {
+  const base = { codigos: [9001, 9002, 9003], desde: "2026-10-12", hasta: "2026-10-23", idInicial: 5000000 };
+
+  it("es determinista por semilla y las marcas salen ordenadas con ids ascendentes y con huecos", () => {
+    const a = generarJornadas({ ...base, semilla: 3 });
+    expect(generarJornadas({ ...base, semilla: 3 })).toEqual(a);
+    expect(generarJornadas({ ...base, semilla: 4 })).not.toEqual(a);
+    const ids = a.map((m) => Number(m.id_externo));
+    expect(ids.every((id, i) => i === 0 || id > ids[i - 1])).toBe(true);
+    expect(ids.some((id, i) => i > 0 && id - ids[i - 1] > 2)).toBe(true);
+    const ts = a.map((m) => Date.parse(m.marca_ts));
+    expect(ts.every((t, i) => i === 0 || t >= ts[i - 1])).toBe(true);
+  });
+
+  it("todas las marcas las acepta el validador real de la ingesta", () => {
+    for (const m of generarJornadas({ ...base, semilla: 1 })) {
+      expect(validarMarca(m, { origen: "biotime", ahora: Date.parse("2026-10-24T12:00:00Z") }).ok).toBe(true);
+    }
+  });
+
+  it("de lunes a viernes genera jornadas de oficina en hora de México (UTC-6) y casi nada en fin de semana", () => {
+    const m = generarJornadas({ ...base, codigos: Array.from({ length: 40 }, (_, i) => 9001 + i), semilla: 1 });
+    const finde = m.filter((x) => [0, 6].includes(new Date(Date.parse(x.marca_ts) - 6 * 3600000).getUTCDay()));
+    expect(finde).toHaveLength(0); // sin --fines-semana
+    const horas = m.map((x) => new Date(Date.parse(x.marca_ts) - 6 * 3600000).getUTCHours());
+    expect(Math.min(...horas)).toBeGreaterThanOrEqual(6);
+    expect(Math.max(...horas)).toBeLessThanOrEqual(18);
+    const conFinde = generarJornadas({ ...base, desde: "2026-09-01", hasta: "2026-10-31", codigos: Array.from({ length: 60 }, (_, i) => 9001 + i), finesDeSemana: true, semilla: 1 });
+    expect(conFinde.some((x) => new Date(Date.parse(x.marca_ts) - 6 * 3600000).getUTCDay() === 6)).toBe(true);
+  });
+
+  it("mezcla los casos que el motor debe distinguir: faltas, retardos, solo entrada y duplicados a segundos", () => {
+    const m = generarJornadas({ ...base, desde: "2026-09-01", hasta: "2026-10-23", codigos: Array.from({ length: 71 }, (_, i) => 9001 + i), semilla: 7 });
+    const porDia = new Map();
+    for (const x of m) {
+      const k = `${x.codigo_empleado}|${new Date(Date.parse(x.marca_ts) - 6 * 3600000).toISOString().slice(0, 10)}`;
+      porDia.set(k, [...(porDia.get(k) || []), Date.parse(x.marca_ts)]);
+    }
+    const jornadas = [...porDia.values()];
+    expect(jornadas.some((d) => d.length === 1)).toBe(true); // marca única
+    expect(jornadas.some((d) => d.some((t, i) => i > 0 && t - d[i - 1] <= 60000))).toBe(true); // duplicado a segundos
+    expect(jornadas.some((d) => d.length >= 4)).toBe(true); // marcas de comida
+    expect(porDia.size).toBeLessThan(71 * 38); // hay días sin ninguna marca (faltas)
+  });
+
+  it("rangoDeCodigos valida el formato", () => {
+    expect(rangoDeCodigos("9001-9003")).toEqual([9001, 9002, 9003]);
+    for (const malo of [undefined, "", "9001", "9003-9001", "a-b", "1-99999"]) expect(() => rangoDeCodigos(malo)).toThrow();
+  });
+
+  it("no usa códigos ni datos reales", () => {
+    const texto = JSON.stringify(generarJornadas({ ...base, semilla: 1 }));
+    expect(texto).not.toMatch(/10\.\d+\.\d+\.\d+/);
+    expect(texto).toContain("SN-FICTICIO");
+  });
+
+  it("el modo jornadas está documentado en la ayuda y exige --codigos y --hasta", () => {
+    expect(leerArgumentos(["jornadas", "--codigos", "9001-9003", "--hasta", "2026-10-23", "--fines-semana"]).opciones).toMatchObject({ codigos: "9001-9003", hasta: "2026-10-23", "fines-semana": true });
   });
 });

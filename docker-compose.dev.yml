@@ -39,6 +39,10 @@ services:
       MSSQL_DB: ${MSSQL_DB:-bi_data}
       # Proxies de confianza para req.ip (lista de IP de las llaves de ingesta): vacío = ninguno
       TRUST_PROXY: ${TRUST_PROXY:-}
+      # Motor de análisis de asistencia (planificador en proceso). Apagado en dev: se activa a propósito con ASISTENCIA_MOTOR_ACTIVO=true
+      ASISTENCIA_MOTOR_ACTIVO: ${ASISTENCIA_MOTOR_ACTIVO:-false}
+      ASISTENCIA_MOTOR_INTERVALO_MIN: ${ASISTENCIA_MOTOR_INTERVALO_MIN:-15}
+      ASISTENCIA_MOTOR_TIEMPO_MAX_MIN: ${ASISTENCIA_MOTOR_TIEMPO_MAX_MIN:-10}
       # Puerta de ingesta dedicada (segundo puerto, solo rutas de ingesta, sin trust proxy). Ver docs/asistencia/operacion-ingesta.md
       INGESTA_PORT: ${INGESTA_PORT:-4010}
       INGESTA_SOLO_PUERTO_DEDICADO: ${INGESTA_SOLO_PUERTO_DEDICADO:-false}

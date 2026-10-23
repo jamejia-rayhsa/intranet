@@ -13,6 +13,9 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-23] [coder] → code-notes.md — Asistencia Fase 4: motor de análisis (migración 014, motor puro, orquestador con candado 4501, planificador en proceso, API /api/asistencia, verificación pg16+pg17 106/106 contra un oráculo, 66/67 mutantes, jest 4608)
+- [2026-10-23] orquestador → decisions.md — GO del humano a la primera parte de la Fase 5 (pantallas de administración de Asistencia); carga real de empleados OK
+- [2026-10-23] orquestador → decisions.md — Despliegue a staging de la plantilla de carga completa (PR #17)
 - [2026-10-22] [coder] → code-notes.md — Una importación no congela la intranet (lock_timeout 3 s + 409, tope de 2 simultáneas, reintento del front), libros 1904, nómina con espacios, repetidos entre lotes (jest 2082, 23 mutantes, 15 importaciones simultáneas con la API en 200)
 - [2026-10-22] [revisor] → reviews.md#re-revisión-de-integridad-de-la-carga — Re-revisión de integridad de la carga: CON OBSERVACIONES, sin críticos (R-1 fechas 1904, R-2 nómina con espacio, R-3 pool y candado sin límite)
 - [2026-10-22] [coder] → code-notes.md — Correcciones de integridad del modo actualizar (CURP inválida/sin identificador/ceros = error, NSS y estatus sin pisar, candado advisory 4410 y SAVEPOINT por fila, fechas Excel como serial, exportación auditada; 195 importaciones simultáneas 0 errores, jest 2062, 37 mutantes)
