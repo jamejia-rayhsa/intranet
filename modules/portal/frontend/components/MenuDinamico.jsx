@@ -4,6 +4,9 @@ import { usarAuth } from '../context/AuthContext';
 
 const NOMBRE_EMPRESA = import.meta.env.VITE_NOMBRE_EMPRESA || 'Intranet';
 
+// Lectura de la gestión de asistencia (resultados, periodos, parámetros): RH = Asistencia:edicion o Empleados:edicion
+const REQUIERE_GESTION_ASISTENCIA = [['Asistencia', 'edicion'], ['Empleados', 'edicion']];
+
 const SUB_RUTAS = {
   portal: [
     { path: '/', label: 'Inicio', opcion: null },
@@ -30,6 +33,10 @@ const SUB_RUTAS = {
     { path: '/rh/asistencia/marcas', label: 'Marcas', opcion: 'Ingesta', grupo: 'Asistencia' },
     { path: '/rh/asistencia/sincronizacion', label: 'Sincronización', opcion: 'Ingesta', grupo: 'Asistencia' },
     { path: '/rh/asistencia/llaves', label: 'Llaves de ingesta', opcion: 'Ingesta', grupo: 'Asistencia' },
+    // Resultados del motor (gestión): Asistencia:edicion o Empleados:edicion (rh_empleado solo tiene Asistencia:consulta)
+    { path: '/rh/asistencia/resultados', label: 'Resultados', opcion: 'Asistencia', requiere: REQUIERE_GESTION_ASISTENCIA, grupo: 'Asistencia' },
+    { path: '/rh/asistencia/periodos', label: 'Periodos', opcion: 'Asistencia', requiere: REQUIERE_GESTION_ASISTENCIA, grupo: 'Asistencia' },
+    { path: '/rh/asistencia/parametros', label: 'Parámetros', opcion: 'Asistencia', requiere: REQUIERE_GESTION_ASISTENCIA, grupo: 'Asistencia' },
   ],
   tickets: [
     { path: '/tickets', label: 'Dashboard', opcion: null },
@@ -140,7 +147,7 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
   const modulosVisibles = modulosActivos.filter((m) => {
     const subRutas = SUB_RUTAS[m.nombre] || [];
     if (subRutas.length === 0) return true; // módulos sin sub-rutas siempre se muestran
-    return subRutas.some((sr) => tieneAcceso(m.nombre, sr.opcion, Boolean(sr.grupo)));
+    return subRutas.some((sr) => tieneAcceso(m.nombre, sr.opcion, Boolean(sr.grupo), sr.requiere));
   });
 
   function esActivo(ruta) {
@@ -149,8 +156,12 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
   }
 
   // `estricto`: sin permiso explícito no se muestra (ni siquiera con la lista de permisos vacía)
-  function tieneAcceso(moduloNombre, opcion, estricto = false) {
+  // `requiere`: lista [opcion, tipo] de las que basta UNA (p. ej. gestión de asistencia: edición)
+  function tieneAcceso(moduloNombre, opcion, estricto = false, requiere = null) {
     if (usuario?.rol_nombre === 'super_admin') return true;
+    if (requiere) {
+      return permisos.some((p) => p.modulo.toLowerCase() === moduloNombre.toLowerCase() && requiere.some(([o, t]) => p.opcion === o && p.tipo === t));
+    }
     if (!opcion) return true;
     if (permisos.length === 0 && !estricto) return true;
     return permisos.some(
@@ -204,7 +215,7 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
 
               <div className={`sidebar-subitems${estaAbierto ? ' abierto' : ''}`}>
                 {subRutas
-                  .filter((sr) => tieneAcceso(m.nombre, sr.opcion, Boolean(sr.grupo)))
+                  .filter((sr) => tieneAcceso(m.nombre, sr.opcion, Boolean(sr.grupo), sr.requiere))
                   .map((sr, i, visibles) => (
                     <Fragment key={sr.path}>
                       {sr.grupo && visibles[i - 1]?.grupo !== sr.grupo && (

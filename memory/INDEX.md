@@ -13,6 +13,8 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-23] [coder] → code-notes.md — Fase 5 (parte 2a): pantallas de Resultados, Periodos y Parámetros para RH (3 endpoints, cuadrícula accesible, detalle con justificar/anular, jest 2803, Chromium 119 comprobaciones)
+- [2026-10-23] orquestador → decisions.md — Despliegue a staging del motor y las pantallas (PR #18/#19) y primera vuelta real; GO a las pantallas de resultados para RH
 - [2026-10-23] orquestador → decisions.md — Fase 4 (motor) y pantallas de administración listas para GO/NO-GO; plan de fusión y despliegue
 - [2026-10-23] [tester] → tests.md — Motor de análisis de asistencia (Fase 4), regla de comida: oráculo propio 0 diferencias en 4 028 días, 37/37 casos a mano, frontera 16:00 consistente, PUT /parametros y cambio de ventana sin tocar lo cerrado, tope duro/apagado/réplicas, API 189/189, jest 18/18, lint 0 errores; sin fallos del motor, 1 menor (F-M4-4)
 - [2026-10-23] [tester] → decisions.md — F-M4-1/2/3 verificados corregidos; PARA RESOLVER F-M4-4 (fila `tiempo_excedido` al apagar vs `interrumpida` en el doc)

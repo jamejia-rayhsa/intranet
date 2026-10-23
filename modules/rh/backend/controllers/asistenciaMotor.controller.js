@@ -18,6 +18,7 @@ const { esFechaValida, validarRango } = require("../utils/diasHabiles");
 const MAX_DIAS_CONSULTA = 92;
 const LIMITE_POR_OMISION = 100;
 const LIMITE_MAXIMO = 500;
+const TOPE_EXPORTACION = 10000;
 const PAGINA_MAXIMA = 10000;
 const MENSAJE_DENEGADO = "No tienes acceso a este recurso";
 const MENSAJE_OCUPADO = "Hay un recálculo en curso; reintenta en unos segundos";
@@ -140,6 +141,67 @@ const Controlador = {
       return respuestaPaginada(res, r.filas, r.total, pag);
     } catch (error) {
       return responderError(res, "consultar el resumen de asistencia", error);
+    }
+  },
+
+  // Detalle de un día: snapshot del turno, marcas del día local, cruces y justificación. Mismo alcance que /resultados.
+  async detalleDia(req, res) {
+    const { empleado_id: empleadoParam, fecha } = req.query;
+    if (!esIdValido(empleadoParam)) return responder400(res, "empleado_id debe ser un entero positivo");
+    if (typeof fecha !== "string" || !esFechaValida(fecha)) return responder400(res, "fecha debe ser una fecha válida AAAA-MM-DD");
+    const id = Number(empleadoParam);
+    try {
+      const alcance = await alcanceDeLectura(req, fecha);
+      if (alcance.vacio) return denegar(res);
+      if (!alcance.todos && !alcance.ids.includes(id)) return denegar(res);
+      const r = await Resultados.detalleDia({ empleadoId: id, fecha, esRH: Boolean(alcance.todos) });
+      if (!r) return res.status(404).json({ exito: false, mensaje: "Ese día no tiene un resultado calculado" });
+      res.set("Cache-Control", "no-store");
+      return res.json({ exito: true, datos: r });
+    } catch (error) {
+      return responderError(res, "consultar el detalle del día", error);
+    }
+  },
+
+  // Bitácora de las últimas ejecuciones del motor (gestión: RH)
+  async ejecuciones(req, res) {
+    const limite = req.query.limite === undefined ? 20 : req.query.limite;
+    if (typeof limite !== "string" || !/^\d{1,3}$/.test(limite) || Number(limite) < 1 || Number(limite) > 100) {
+      return responder400(res, "limite debe ser un entero entre 1 y 100");
+    }
+    try {
+      const filas = await Resultados.listarEjecuciones({ limite: Number(limite) });
+      res.set("Cache-Control", "no-store");
+      return res.json({ exito: true, datos: filas });
+    } catch (error) {
+      return responderError(res, "consultar la bitácora del motor", error);
+    }
+  },
+
+  // Rastro de la exportación a CSV del resumen o del detalle: solo el tipo y el número de filas (sin datos personales)
+  async registrarExportacion(req, res) {
+    const cuerpo = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : {};
+    if (!Number.isInteger(cuerpo.filas) || cuerpo.filas < 0 || cuerpo.filas > TOPE_EXPORTACION) {
+      return responder400(res, `filas debe ser un entero entre 0 y ${TOPE_EXPORTACION}`);
+    }
+    if (cuerpo.tipo !== "resumen" && cuerpo.tipo !== "detalle") return responder400(res, "tipo debe ser resumen o detalle");
+    try {
+      // Sin el atrapa-errores de auditar(): si la bitácora falla, la pantalla debe saberlo
+      const ip = ipDeLaPeticion(req);
+      await Auditoria.crear({
+        usuario_id: usuarioDe(req),
+        modulo: "rh",
+        tabla: "asistencia_diaria",
+        registro_id: "exportacion",
+        accion: "EXPORTAR_ASISTENCIA",
+        valores_previos: null,
+        valores_nuevos: { tipo: cuerpo.tipo, filas: cuerpo.filas },
+        ip_origen: ip ? ip.slice(0, 45) : null,
+        user_agent: req.headers["user-agent"] ? String(req.headers["user-agent"]).slice(0, 255) : null,
+      });
+      return res.status(201).json({ exito: true, mensaje: "Exportación registrada" });
+    } catch (error) {
+      return responderError(res, "registrar la exportación", error);
     }
   },
 
@@ -344,7 +406,7 @@ const Controlador = {
         exito: true,
         datos: CLAVES.map((clave) => {
           const fila = filas.find((f) => f.clave === clave) || {};
-          return { clave, valor: tipados[clave], tipo: DEFINICION[clave].tipo, editable: DEFINICION[clave].editable, descripcion: fila.descripcion || null, fecha_actualizacion: fila.fecha_actualizacion || null };
+          return { clave, valor: tipados[clave], tipo: DEFINICION[clave].tipo, editable: DEFINICION[clave].editable, minimo: DEFINICION[clave].minimo ?? null, maximo: DEFINICION[clave].maximo ?? null, descripcion: fila.descripcion || null, fecha_actualizacion: fila.fecha_actualizacion || null };
         }),
       });
     } catch (error) {

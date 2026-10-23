@@ -25,3 +25,5 @@ super_admin (permisos reales Turnos e Ingesta, consulta/edición). Código en `m
   se muestra una sola vez y no queda en DOM/storage/consola, Escape sin confirmar no cierra el diálogo de la llave, foco atrapado y devuelto, menú estricto por permiso, 403 → «sin permiso».
   Al cambiar esas pantallas hay que repetir una verificación equivalente.
 - La lógica de decisión de los diálogos vive en utils puros y probados (`validarEdicionIps`, `esErrorSinRespuesta`, `avisoTerminarPasado`, `hayCambios`, `recolectarPorClave`, `evaluarRetraso`).
+
+Continúa en `pantallas-resultados.md` (Resultados, Periodos y Parámetros).

@@ -19,3 +19,17 @@ export function nivelDePermiso(usuario, permisos, opcion) {
   }
   return nivel;
 }
+
+export const OPCION_ASISTENCIA = 'Asistencia';
+export const OPCION_EMPLEADOS = 'Empleados';
+
+/**
+ * Acceso a la gestión de resultados, periodos y parámetros: leer con Asistencia:edicion o Empleados:edicion (como la API:
+ * «RH»), escribir solo con Asistencia:edicion. Niveles undefined = aún cargando.
+ * @returns {{cargando:boolean, puedeLeer:boolean, puedeEscribir:boolean}}
+ */
+export function accesoGestionAsistencia(nivelAsistencia, nivelEmpleados) {
+  if (nivelAsistencia === undefined || nivelEmpleados === undefined) return { cargando: true, puedeLeer: false, puedeEscribir: false };
+  const puedeEscribir = nivelAsistencia === 'edicion';
+  return { cargando: false, puedeLeer: puedeEscribir || nivelEmpleados === 'edicion', puedeEscribir };
+}

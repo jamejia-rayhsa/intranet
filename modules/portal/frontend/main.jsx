@@ -44,6 +44,9 @@ import AsistenciaAsignacionesPage from '../../rh/frontend/pages/AsistenciaAsigna
 import AsistenciaMarcasPage from '../../rh/frontend/pages/AsistenciaMarcasPage';
 import AsistenciaSincronizacionPage from '../../rh/frontend/pages/AsistenciaSincronizacionPage';
 import AsistenciaLlavesPage from '../../rh/frontend/pages/AsistenciaLlavesPage';
+import AsistenciaResultadosPage from '../../rh/frontend/pages/AsistenciaResultadosPage';
+import AsistenciaPeriodosPage from '../../rh/frontend/pages/AsistenciaPeriodosPage';
+import AsistenciaParametrosPage from '../../rh/frontend/pages/AsistenciaParametrosPage';
 import PuestosPage from '../../rh/frontend/pages/PuestosPage';
 import DepartamentosPage from '../../rh/frontend/pages/DepartamentosPage';
 import AreasPage from '../../rh/frontend/pages/AreasPage';
@@ -77,6 +80,9 @@ const BREADCRUMBS = {
   '/rh/asistencia/marcas':        ['Recursos Humanos', 'Asistencia · Marcas'],
   '/rh/asistencia/sincronizacion': ['Recursos Humanos', 'Asistencia · Sincronización'],
   '/rh/asistencia/llaves':        ['Recursos Humanos', 'Asistencia · Llaves de ingesta'],
+  '/rh/asistencia/resultados':    ['Recursos Humanos', 'Asistencia · Resultados'],
+  '/rh/asistencia/periodos':      ['Recursos Humanos', 'Asistencia · Periodos'],
+  '/rh/asistencia/parametros':    ['Recursos Humanos', 'Asistencia · Parámetros'],
   '/auditoria':          ['Transversal', 'Auditoría'],
   '/auditoria/logs':     ['Transversal', 'Bitácora'],
   '/comercial':          ['Comercial', 'Dashboard'],
@@ -184,6 +190,9 @@ function AppRutas() {
         <Route path="/rh/asistencia/marcas" element={<RutaProtegida><AsistenciaMarcasPage /></RutaProtegida>} />
         <Route path="/rh/asistencia/sincronizacion" element={<RutaProtegida><AsistenciaSincronizacionPage /></RutaProtegida>} />
         <Route path="/rh/asistencia/llaves" element={<RutaProtegida><AsistenciaLlavesPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/resultados" element={<RutaProtegida><AsistenciaResultadosPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/periodos" element={<RutaProtegida><AsistenciaPeriodosPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/parametros" element={<RutaProtegida><AsistenciaParametrosPage /></RutaProtegida>} />
         <Route path="/rh/puestos" element={<RutaProtegida><PuestosPage /></RutaProtegida>} />
         <Route path="/rh/departamentos" element={<RutaProtegida><DepartamentosPage /></RutaProtegida>} />
         <Route path="/rh/areas" element={<RutaProtegida><AreasPage /></RutaProtegida>} />

@@ -104,6 +104,9 @@ const RH_LECTURA = async (req, res, next) => {
   }
 };
 router.get("/resultados", LEER, ControladorMotor.resultados);
+router.get("/resultados/dia", LEER, ControladorMotor.detalleDia);
+router.post("/resultados/exportaciones", LEER, RH_LECTURA, ControladorMotor.registrarExportacion);
+router.get("/ejecuciones", LEER, RH_LECTURA, ControladorMotor.ejecuciones);
 router.get("/resumen", LEER, ControladorMotor.resumen);
 router.get("/periodos", LEER, ControladorMotor.periodos);
 router.post("/periodos/:id/cerrar", ESCRIBIR_ASISTENCIA, validarId("id"), ControladorMotor.cerrarPeriodo);

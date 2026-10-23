@@ -61,16 +61,20 @@ const AsistenciaResultados = {
   async resumen({ ids, departamentoId, desde, hasta, limite, offset }, cliente = grupo) {
     const conteos = ESTATUS.map((s) => `COUNT(*) FILTER (WHERE d.estatus = '${s}')::int AS ${s}`).join(", ");
     const r = await cliente.query(
-      `SELECT d.empleado_id, ${NOMBRE_EMPLEADO}, e.departamento_id, ${conteos},
+      `SELECT d.empleado_id, ${NOMBRE_EMPLEADO}, e.departamento_id, dep.nombre AS departamento, ${conteos},
+              COUNT(*) FILTER (WHERE d.primera_marca IS NOT NULL)::int AS dias_con_marcas,
+              COUNT(*) FILTER (WHERE d.estatus = 'falta' AND d.primera_marca IS NOT NULL)::int AS faltas_con_marcas,
+              COUNT(*) FILTER (WHERE d.estatus = 'incompleta' AND d.detalle->'banderas' @> '"ultima_marca_en_comida"'::jsonb)::int AS incompletas_comida,
               COUNT(*)::int AS dias, COALESCE(SUM(d.minutos_retardo) FILTER (WHERE d.estatus IN ('retardo', 'justificada')), 0)::int AS minutos_retardo,
               COALESCE(SUM(d.minutos_salida_anticipada), 0)::int AS minutos_salida_anticipada,
               COUNT(*) OVER() AS total
        FROM asistencia_diaria d
        JOIN empleados e ON e.id = d.empleado_id
+       LEFT JOIN departamentos dep ON dep.id = e.departamento_id
        WHERE d.fecha BETWEEN $2::date AND $3::date
          AND ($1::int[] IS NULL OR d.empleado_id = ANY($1::int[]))
          AND ($4::int IS NULL OR e.departamento_id = $4::int)
-       GROUP BY d.empleado_id, e.id
+       GROUP BY d.empleado_id, e.id, dep.id
        ORDER BY e.apellido_paterno, e.nombre, d.empleado_id
        LIMIT $5 OFFSET $6`,
       [ids, desde, hasta, departamentoId || null, limite, offset],
@@ -84,9 +88,14 @@ const AsistenciaResultados = {
       `SELECT p.id, to_char(p.fecha_inicio, 'YYYY-MM-DD') AS fecha_inicio, to_char(p.fecha_fin, 'YYYY-MM-DD') AS fecha_fin,
               p.estado, p.cerrado_en, p.cerrado_por, p.tipo_cierre, p.reabierto_en, p.reabierto_por, p.reabierto_motivo,
               p.veces_reabierto, p.no_cerrar_automatico,
+              NULLIF(concat_ws(' ', uc.nombre, uc.apellido), '') AS cerrado_por_nombre,
+              NULLIF(concat_ws(' ', ur.nombre, ur.apellido), '') AS reabierto_por_nombre,
+              (SELECT COUNT(*)::int FROM asistencia_diaria x WHERE x.periodo_id = p.id AND x.estatus = 'pendiente') AS dias_pendientes,
               (SELECT COUNT(*)::int FROM asistencia_ajustes_pendientes a WHERE a.periodo_id = p.id AND a.resuelto_en IS NULL) AS ajustes_pendientes,
               COUNT(*) OVER() AS total
        FROM asistencia_periodos p
+       LEFT JOIN usuarios uc ON uc.id = p.cerrado_por
+       LEFT JOIN usuarios ur ON ur.id = p.reabierto_por
        WHERE ($1::text IS NULL OR p.estado = $1::text)
        ORDER BY p.fecha_inicio DESC LIMIT $2 OFFSET $3`,
       [estado || null, limite, offset],
@@ -96,6 +105,8 @@ const AsistenciaResultados = {
       const publica = { ...f };
       delete publica.reabierto_motivo;
       delete publica.reabierto_por;
+      delete publica.reabierto_por_nombre;
+      delete publica.cerrado_por_nombre;
       return publica;
     });
     return { filas, total: r.rows[0] ? Number(r.rows[0].total) : 0 };
@@ -258,6 +269,94 @@ const AsistenciaResultados = {
       [empleadoId, fecha],
     );
     return r.rows[0] || null;
+  },
+
+  /**
+   * Detalle de UN día: fila calculada con el snapshot del turno, las marcas del día local de México (más el día
+   * siguiente si el turno cruza la medianoche), los cruces (vacaciones, permiso, festivo, justificación) y el estado
+   * del periodo. null si el día no tiene resultado. `esRH` = false oculta quién justificó.
+   */
+  async detalleDia({ empleadoId, fecha, esRH = false }, cliente = grupo) {
+    const d = await cliente.query(
+      `SELECT d.id, d.empleado_id, to_char(d.fecha, 'YYYY-MM-DD') AS fecha, d.estatus, d.minutos_retardo, d.minutos_salida_anticipada,
+              d.primera_marca, d.ultima_marca, d.turno_id, d.turno_nombre, d.origen_turno, d.departamento_id,
+              to_char(d.entrada_programada, 'HH24:MI') AS entrada_programada, to_char(d.salida_programada, 'HH24:MI') AS salida_programada,
+              d.cruza_medianoche, d.tolerancia_retardo_min, d.tolerancia_salida_min, d.umbral_falta_min,
+              d.ventana_entrada_antes_min, d.ventana_entrada_despues_min, d.ventana_salida_antes_min, d.ventana_salida_despues_min,
+              to_char(d.descanso_inicio, 'HH24:MI') AS descanso_inicio, d.descanso_min,
+              d.periodo_id, d.marcas_usadas, d.detalle, d.version_calculo, d.calculado_en,
+              d.solicitud_vacaciones_id, d.permiso_id, d.calendario_id, d.incidencia_id,
+              p.estado AS periodo_estado, to_char(p.fecha_inicio, 'YYYY-MM-DD') AS periodo_inicio, to_char(p.fecha_fin, 'YYYY-MM-DD') AS periodo_fin,
+              ${NOMBRE_EMPLEADO}, e.departamento_id AS departamento_actual_id, dep.nombre AS departamento
+       FROM asistencia_diaria d
+       JOIN empleados e ON e.id = d.empleado_id
+       LEFT JOIN departamentos dep ON dep.id = e.departamento_id
+       LEFT JOIN asistencia_periodos p ON p.id = d.periodo_id
+       WHERE d.empleado_id = $1 AND d.fecha = $2::date`,
+      [empleadoId, fecha],
+    );
+    const dia = d.rows[0];
+    if (!dia) return null;
+    const dias = dia.cruza_medianoche ? 2 : 1;
+    const [marcas, vac, per, fes, inc] = await Promise.all([
+      cliente.query(
+        `SELECT m.id, m.marca_ts, m.terminal_alias, m.terminal_sn
+         FROM asistencia_marcas m
+         WHERE m.empleado_id = $1
+           AND m.marca_ts >= ($2::date::timestamp AT TIME ZONE 'America/Mexico_City')
+           AND m.marca_ts < (($2::date + $3::int)::timestamp AT TIME ZONE 'America/Mexico_City')
+         ORDER BY m.marca_ts, m.id LIMIT 100`,
+        [empleadoId, fecha, dias],
+      ),
+      dia.solicitud_vacaciones_id
+        ? cliente.query(
+            `SELECT id, to_char(fecha_inicial, 'YYYY-MM-DD') AS fecha_inicial, to_char(fecha_final, 'YYYY-MM-DD') AS fecha_final, estatus
+             FROM solicitudes_vacaciones WHERE id = $1`,
+            [dia.solicitud_vacaciones_id],
+          )
+        : { rows: [] },
+      dia.permiso_id
+        ? cliente.query(
+            `SELECT id, tipo, to_char(fecha_inicio, 'YYYY-MM-DD') AS fecha_inicio, to_char(fecha_fin, 'YYYY-MM-DD') AS fecha_fin, estatus
+             FROM permisos_ausencia WHERE id = $1`,
+            [dia.permiso_id],
+          )
+        : { rows: [] },
+      dia.calendario_id
+        ? cliente.query(`SELECT id, nombre, tipo FROM calendario_laboral WHERE id = $1`, [dia.calendario_id])
+        : { rows: [] },
+      cliente.query(
+        `SELECT i.id, i.motivo, i.activa, i.fecha_creacion, ${esRH ? "NULLIF(concat_ws(' ', u.nombre, u.apellido), '')" : "NULL::text"} AS creado_por_nombre
+         FROM asistencia_incidencias i LEFT JOIN usuarios u ON u.id = i.creado_por
+         WHERE i.empleado_id = $1 AND i.fecha = $2::date AND i.tipo = 'justificacion' AND i.activa
+         ORDER BY i.id DESC LIMIT 1`,
+        [empleadoId, fecha],
+      ),
+    ]);
+    const fila = { ...dia };
+    for (const interno of ["solicitud_vacaciones_id", "permiso_id", "calendario_id", "incidencia_id", "departamento_actual_id"]) delete fila[interno];
+    return {
+      dia: fila,
+      marcas: marcas.rows,
+      cruces: {
+        vacaciones: vac.rows[0] || null,
+        permiso: per.rows[0] || null,
+        festivo: fes.rows[0] || null,
+        justificacion: inc.rows[0] || null,
+      },
+    };
+  },
+
+  /** Bitácora de las últimas ejecuciones del motor (sin datos personales; el error ya es genérico: código o tipo) */
+  async listarEjecuciones({ limite }, cliente = grupo) {
+    const r = await cliente.query(
+      `SELECT id, tipo, origen, estado, inicio, fin, to_char(desde, 'YYYY-MM-DD') AS desde, to_char(hasta, 'YYYY-MM-DD') AS hasta,
+              empleados_evaluados, dias_evaluados, dias_modificados, marcas_vinculadas, periodos_cerrados, ajustes_nuevos,
+              LEFT(error, 120) AS error
+       FROM asistencia_ejecuciones ORDER BY inicio DESC, id DESC LIMIT $1`,
+      [limite],
+    );
+    return r.rows;
   },
 
   async empleadoExiste(id, cliente = grupo) {
