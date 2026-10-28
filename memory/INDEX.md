@@ -13,6 +13,9 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-28] orquestador → decisions.md — Aclaración: las cuentas se gestionan en administración de usuarios; solo se relacionan con el empleado (sustituye el diseño con correo_corporativo)
+- [2026-10-28] orquestador → decisions.md — Cuentas de usuario de los empleados: correo corporativo y vinculación a Microsoft (petición del humano)
+- [2026-10-28] orquestador → decisions.md — Decisión: motivo de justificaciones (RH todos, jefe su equipo, empleado lo suyo) y GO a 'Mi asistencia' y 'Mi equipo'; prerrequisito de cuentas de usuario
 - [2026-10-28] [coder] → code-notes.md — F-R2B-T1/T2: drawer 641-768 px (overlay, Escape, botón Cerrar menú, foco) y animación de cierre del submenú con reduced-motion
 - [2026-10-28] [coder] → code-notes.md — Ronda final Fase 5 parte 2a (menú sin altura fija, permisos de lectura RH, CSV de detalle filtrado en servidor, verificar-motor 129/129, jest estable 15/15)
 - [2026-10-28] orquestador → decisions.md — Tester de las pantallas de resultados: menú recortado (alto) y otros 5 fallos; última ronda de correcciones
@@ -260,3 +263,4 @@
 - [2026-10-28] [tester] → decisions.md — PARA RESOLVER F-R2A-T1 (alto: `max-height: 600px` del submenú de RH oculta Resultados/Periodos/Parámetros), T2 (`/ejecuciones` sin limite → 400), T3 (label-in-name de la cuadrícula), T4 (Empleados:edicion vs Asistencia:consulta), T5 (CSV de detalle filtrado con tope), T6 (verificar-motor.js obsoleto)
 - [2026-10-28] [tester] → tests.md — Re-test: menú y layout global, permisos y CSV filtrado (HEAD 80c0a71; Chromium + Firefox, pg17 con db-init real x2, build base 12be73a lado a lado): 8 enlaces de Asistencia alcanzables a 7 anchos (68/68 + 28/28), 60 capturas lado a lado idénticas a 360/1024/1280, permisos 22/22 + UI 47/47 x2, CSV filtrado 15/15 x2, axe sin label-in-name ni target-size, jest 11/12 (flaky preexistente), eslint/build OK; 2 hallazgos nuevos
 - [2026-10-28] [tester] → decisions.md — PARA RESOLVER F-R2B-T1 (641-768 px: el menú abre pero no cierra sin navegar) y F-R2B-T2 (se perdió la animación de cierre de los grupos)
+- [2026-10-28] [coder] Fase 5 parte 2b: Mi asistencia y Mi equipo (solo lectura) -> code-notes.md; docs/asistencia/mi-asistencia.md

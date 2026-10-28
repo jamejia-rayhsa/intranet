@@ -83,8 +83,18 @@ function leerRango(origen) {
 const respuestaPaginada = (res, filas, total, pag) =>
   res.json({ exito: true, datos: filas, paginacion: { pagina: pag.pagina, limite: pag.limite, total } });
 
-/** { todos: true } (RH) | { ids } propio + subordinados directos | { vacio: true } sin ficha de empleado */
-async function alcanceDeLectura(req, desde) {
+/**
+ * { todos: true } (RH) | { ids } propio + subordinados directos | { vacio: true } sin ficha de empleado.
+ * `soloEquipo` (pantalla «Mi equipo»): SOLO los subordinados directos vigentes, sin el propio empleado y sin importar el
+ * rol: un RH que además es jefe ve ahí a su equipo, no a toda la empresa. Con `soloEquipo` nunca hay `todos`.
+ */
+async function alcanceDeLectura(req, desde, { soloEquipo = false } = {}) {
+  if (soloEquipo) {
+    const jefe = await Empleado.obtenerPorUsuarioId(req.user.usuario_id);
+    if (!jefe) return { vacio: true };
+    const ids = (await Resultados.idsVisibles(jefe.id, desde)).filter((id) => id !== jefe.id);
+    return { ids, propio: jefe };
+  }
   if (
     (await tienePermiso(req.user, "rh", "Empleados", "edicion")) ||
     (await tienePermiso(req.user, "rh", "Asistencia", "edicion"))
@@ -94,6 +104,16 @@ async function alcanceDeLectura(req, desde) {
   const propio = await Empleado.obtenerPorUsuarioId(req.user.usuario_id);
   if (!propio) return { vacio: true };
   return { ids: await Resultados.idsVisibles(propio.id, desde), propio };
+}
+
+const esRHDeLectura = async (req) =>
+  (await tienePermiso(req.user, "rh", "Empleados", "edicion")) || (await tienePermiso(req.user, "rh", "Asistencia", "edicion"));
+
+// ?equipo=1 pide solo a los subordinados directos (pantalla «Mi equipo»); cualquier otro valor se rechaza
+function leerSoloEquipo(query) {
+  if (query.equipo === undefined) return { soloEquipo: false };
+  if (query.equipo !== "1") return { error: "equipo solo admite el valor 1" };
+  return { soloEquipo: true };
 }
 
 const usuarioDe = (req) => req.user && (req.user.usuario_id || req.user.id);
@@ -106,8 +126,10 @@ const Controlador = {
     if (pag.error) return responder400(res, pag.error);
     const { empleado_id: empleadoParam } = req.query;
     if (empleadoParam !== undefined && !esIdValido(empleadoParam)) return responder400(res, "empleado_id debe ser un entero positivo");
+    const eq = leerSoloEquipo(req.query);
+    if (eq.error) return responder400(res, eq.error);
     try {
-      const alcance = await alcanceDeLectura(req, rango.desde);
+      const alcance = await alcanceDeLectura(req, rango.desde, eq);
       if (alcance.vacio) return denegar(res);
       let ids = null;
       if (empleadoParam !== undefined) {
@@ -117,7 +139,9 @@ const Controlador = {
       } else if (!alcance.todos) {
         ids = alcance.ids;
       }
-      const r = await Resultados.listarResultados({ ids, desde: rango.desde, hasta: rango.hasta, limite: pag.limite, offset: pag.offset });
+      const r = await Resultados.listarResultados({
+        ids, desde: rango.desde, hasta: rango.hasta, limite: pag.limite, offset: pag.offset, esRH: Boolean(alcance.todos),
+      });
       return respuestaPaginada(res, r.filas, r.total, pag);
     } catch (error) {
       return responderError(res, "consultar los resultados de asistencia", error);
@@ -131,8 +155,10 @@ const Controlador = {
     if (pag.error) return responder400(res, pag.error);
     const { departamento_id: depto } = req.query;
     if (depto !== undefined && !esIdValido(depto)) return responder400(res, "departamento_id debe ser un entero positivo");
+    const eq = leerSoloEquipo(req.query);
+    if (eq.error) return responder400(res, eq.error);
     try {
-      const alcance = await alcanceDeLectura(req, rango.desde);
+      const alcance = await alcanceDeLectura(req, rango.desde, eq);
       if (alcance.vacio) return denegar(res);
       const r = await Resultados.resumen({
         ids: alcance.todos ? null : alcance.ids,
@@ -141,6 +167,7 @@ const Controlador = {
         hasta: rango.hasta,
         limite: pag.limite,
         offset: pag.offset,
+        esRH: Boolean(alcance.todos),
       });
       return respuestaPaginada(res, r.filas, r.total, pag);
     } catch (error) {
@@ -239,7 +266,7 @@ const Controlador = {
     if (estado !== undefined && estado !== "abierto" && estado !== "cerrado") return responder400(res, "estado debe ser abierto o cerrado");
     try {
       // quién reabrió y por qué solo lo ve RH (Empleados:edicion o Asistencia:edicion)
-      const esRH = (await tienePermiso(req.user, "rh", "Empleados", "edicion")) || (await tienePermiso(req.user, "rh", "Asistencia", "edicion"));
+      const esRH = await esRHDeLectura(req);
       const r = await Resultados.listarPeriodos({ estado, limite: pag.limite, offset: pag.offset, esRH });
       return respuestaPaginada(res, r.filas, r.total, pag);
     } catch (error) {

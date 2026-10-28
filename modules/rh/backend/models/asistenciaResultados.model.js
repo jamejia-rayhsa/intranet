@@ -16,6 +16,15 @@ const sinTotal = (fila) => {
   return copia;
 };
 
+// Campos internos que solo necesita RH (ids de otras tablas, versión del cálculo, marcas usadas): quien consulta lo
+// propio o a su equipo no los recibe
+const CAMPOS_INTERNOS_DIA = ["id", "turno_id", "departamento_id", "periodo_id", "marcas_usadas", "version_calculo"];
+const sinInternos = (fila, campos) => {
+  const copia = { ...fila };
+  for (const c of campos) delete copia[c];
+  return copia;
+};
+
 const LIMITE_MARCAS_DIA = 100;
 const NOMBRE_EMPLEADO = `e.nombre, e.apellido_paterno, e.apellido_materno, e.numero_nomina`;
 
@@ -38,8 +47,8 @@ const AsistenciaResultados = {
     return [empleadoPropioId, ...r.rows.map((f) => f.id)];
   },
 
-  /** ids: null = todos (RH). Devuelve { filas, total }. */
-  async listarResultados({ ids, desde, hasta, limite, offset }, cliente = grupo) {
+  /** ids: null = todos (RH). `esRH` = false (por omisión) quita los ids internos. Devuelve { filas, total }. */
+  async listarResultados({ ids, desde, hasta, limite, offset, esRH = false }, cliente = grupo) {
     const r = await cliente.query(
       `SELECT d.id, d.empleado_id, ${NOMBRE_EMPLEADO}, to_char(d.fecha, 'YYYY-MM-DD') AS fecha, d.estatus,
               d.minutos_retardo, d.minutos_salida_anticipada, d.primera_marca, d.ultima_marca,
@@ -56,7 +65,8 @@ const AsistenciaResultados = {
        LIMIT $4 OFFSET $5`,
       [ids, desde, hasta, limite, offset],
     );
-    return { filas: r.rows.map(sinTotal), total: r.rows[0] ? Number(r.rows[0].total) : 0 };
+    const filas = r.rows.map(sinTotal);
+    return { filas: esRH ? filas : filas.map((f) => sinInternos(f, CAMPOS_INTERNOS_DIA)), total: r.rows[0] ? Number(r.rows[0].total) : 0 };
   },
 
   /**
@@ -87,7 +97,7 @@ const AsistenciaResultados = {
   },
 
   /** Conteos por empleado y estatus */
-  async resumen({ ids, departamentoId, desde, hasta, limite, offset }, cliente = grupo) {
+  async resumen({ ids, departamentoId, desde, hasta, limite, offset, esRH = false }, cliente = grupo) {
     const conteos = ESTATUS.map((s) => `COUNT(*) FILTER (WHERE d.estatus = '${s}')::int AS ${s}`).join(", ");
     const r = await cliente.query(
       `SELECT d.empleado_id, ${NOMBRE_EMPLEADO}, e.departamento_id, dep.nombre AS departamento, ${conteos},
@@ -108,10 +118,11 @@ const AsistenciaResultados = {
        LIMIT $5 OFFSET $6`,
       [ids, desde, hasta, departamentoId || null, limite, offset],
     );
-    return { filas: r.rows.map(sinTotal), total: r.rows[0] ? Number(r.rows[0].total) : 0 };
+    const filas = r.rows.map(sinTotal);
+    return { filas: esRH ? filas : filas.map((f) => sinInternos(f, ["departamento_id"])), total: r.rows[0] ? Number(r.rows[0].total) : 0 };
   },
 
-  /** esRH = false oculta quién reabrió y por qué (datos de gestión) */
+  /** esRH = false oculta los datos de gestión (quién cerró o reabrió, motivo, conteos globales) */
   async listarPeriodos({ estado, limite, offset, esRH = false }, cliente = grupo) {
     const r = await cliente.query(
       `SELECT p.id, to_char(p.fecha_inicio, 'YYYY-MM-DD') AS fecha_inicio, to_char(p.fecha_fin, 'YYYY-MM-DD') AS fecha_fin,
@@ -131,13 +142,12 @@ const AsistenciaResultados = {
     );
     const filas = r.rows.map(sinTotal).map((f) => {
       if (esRH) return f;
-      const publica = { ...f };
-      delete publica.reabierto_motivo;
-      delete publica.reabierto_por;
-      delete publica.reabierto_por_nombre;
-      delete publica.cerrado_por_nombre;
-      delete publica.cerrado_por;
-      return publica;
+      // Sin datos de gestión: quién cerró o reabrió, el motivo, el tipo de cierre y los conteos del periodo (días pendientes y
+      // ajustes cuentan a TODOS los empleados: serían datos de otras personas)
+      return sinInternos(f, [
+        "reabierto_motivo", "reabierto_por", "reabierto_por_nombre", "cerrado_por_nombre", "cerrado_por", "tipo_cierre",
+        "no_cerrar_automatico", "dias_pendientes", "ajustes_pendientes",
+      ]);
     });
     return { filas, total: r.rows[0] ? Number(r.rows[0].total) : 0 };
   },
@@ -374,18 +384,23 @@ const AsistenciaResultados = {
       comida: (dia.detalle && dia.detalle.comida) || null,
       cruza: Boolean(dia.cruza_medianoche),
     });
-    const fila = { ...dia };
-    for (const interno of ["solicitud_vacaciones_id", "permiso_id", "calendario_id", "incidencia_id", "departamento_actual_id"]) delete fila[interno];
+    const fila = sinInternos(dia, ["solicitud_vacaciones_id", "permiso_id", "calendario_id", "incidencia_id", "departamento_actual_id"]);
+    const conRol = lista.map((m) => ({ ...m, rol: roles[String(m.id)] || "otra" }));
+    const cruces = {
+      vacaciones: vac.rows[0] || null,
+      permiso: per.rows[0] || null,
+      festivo: fes.rows[0] || null,
+      justificacion: inc.rows[0] || null,
+    };
+    if (esRH) return { dia: fila, marcas: conRol, marcas_truncadas: truncadas, cruces };
+    // Quien consulta lo propio o a su equipo: sin ids internos (del día, del turno, de las marcas, de los cruces). El motivo
+    // de la justificación SÍ se entrega (decisión del humano); quién la hizo no (la consulta ya lo devuelve nulo)
+    const sinId = (x) => (x ? sinInternos(x, ["id"]) : null);
     return {
-      dia: fila,
-      marcas: lista.map((m) => ({ ...m, rol: roles[String(m.id)] || "otra" })),
+      dia: sinInternos(fila, CAMPOS_INTERNOS_DIA),
+      marcas: conRol.map((m) => sinInternos(m, ["id"])),
       marcas_truncadas: truncadas,
-      cruces: {
-        vacaciones: vac.rows[0] || null,
-        permiso: per.rows[0] || null,
-        festivo: fes.rows[0] || null,
-        justificacion: inc.rows[0] || null,
-      },
+      cruces: { vacaciones: sinId(cruces.vacaciones), permiso: sinId(cruces.permiso), festivo: sinId(cruces.festivo), justificacion: sinId(cruces.justificacion) },
     };
   },
 

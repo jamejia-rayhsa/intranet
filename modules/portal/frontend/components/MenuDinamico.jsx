@@ -1,12 +1,15 @@
 import { Fragment, useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { usarAuth } from '../context/AuthContext';
-import { tieneAccesoMenu } from '../utils/menuAcceso';
+import { tieneAccesoMenu, visibleSegunContexto } from '../utils/menuAcceso';
+import useContextoAsistencia from '../../../rh/frontend/hooks/useContextoAsistencia';
 
 const NOMBRE_EMPRESA = import.meta.env.VITE_NOMBRE_EMPRESA || 'Intranet';
 
 // Lectura de la gestión de asistencia (resultados, periodos, parámetros): RH = Asistencia:edicion o Empleados:edicion
 const REQUIERE_GESTION_ASISTENCIA = [['Asistencia', 'edicion'], ['Empleados', 'edicion']];
+// «Mi asistencia» y «Mi equipo»: cualquier nivel de Asistencia (consulta basta); además dependen del contexto del servidor
+const REQUIERE_CONSULTA_ASISTENCIA = [['Asistencia', 'consulta'], ['Asistencia', 'edicion']];
 
 /**
  * Contenedor de los subitems de un grupo del menú. La altura abierta NO es fija: el CSS deja `max-height: none` cuando está
@@ -61,6 +64,9 @@ const SUB_RUTAS = {
     { path: '/rh/admin', label: 'Permisos y ausencias', opcion: 'Permisos' },
     { path: '/rh/vacaciones', label: 'Vacaciones', opcion: 'Vacaciones' },
     { path: '/rh/vacaciones/listado', label: 'Solicitudes', opcion: 'Vacaciones' },
+    // Asistencia propia y del equipo (fuera del grupo «Asistencia» de administración): según el contexto del servidor
+    { path: '/rh/asistencia/mi-asistencia', label: 'Mi asistencia', opcion: 'Asistencia', requiere: REQUIERE_CONSULTA_ASISTENCIA, contexto: 'empleado' },
+    { path: '/rh/asistencia/mi-equipo', label: 'Mi equipo', opcion: 'Asistencia', requiere: REQUIERE_CONSULTA_ASISTENCIA, contexto: 'jefe' },
     { path: '/rh/calendario', label: 'Calendario', opcion: 'Calendario' },
     { path: '/rh/areas', label: 'Áreas', opcion: 'Empleados' },
     { path: '/rh/departamentos', label: 'Departamentos', opcion: 'Departamentos' },
@@ -179,6 +185,9 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
     navigate('/inicio-sesion');
   }
 
+  // Contexto de asistencia (caché corta en cliente): solo se pide a quien tiene Asistencia:consulta
+  const consultaAsistencia = tieneAccesoMenu({ usuario, permisos, modulo: 'rh', opcion: 'Asistencia', requiere: REQUIERE_CONSULTA_ASISTENCIA });
+  const { datos: contextoAsistencia } = useContextoAsistencia({ habilitado: Boolean(usuario) && consultaAsistencia });
   const esAdmin = usuario?.roles?.some(r => ROLES_ADMIN.includes(r));
   const modulosActivos = modulos.filter(m => m.activo);
 
@@ -186,7 +195,7 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
   const modulosVisibles = modulosActivos.filter((m) => {
     const subRutas = SUB_RUTAS[m.nombre] || [];
     if (subRutas.length === 0) return true; // módulos sin sub-rutas siempre se muestran
-    return subRutas.some((sr) => tieneAcceso(m.nombre, sr.opcion, Boolean(sr.grupo), sr.requiere));
+    return subRutas.some((sr) => tieneAcceso(m.nombre, sr.opcion, Boolean(sr.grupo), sr.requiere) && visibleSegunContexto(sr.contexto, contextoAsistencia));
   });
 
   function esActivo(ruta) {
@@ -244,7 +253,7 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
 
               <Subitems abierto={estaAbierto}>
                 {subRutas
-                  .filter((sr) => tieneAcceso(m.nombre, sr.opcion, Boolean(sr.grupo), sr.requiere))
+                  .filter((sr) => tieneAcceso(m.nombre, sr.opcion, Boolean(sr.grupo), sr.requiere) && visibleSegunContexto(sr.contexto, contextoAsistencia))
                   .map((sr, i, visibles) => (
                     <Fragment key={sr.path}>
                       {sr.grupo && visibles[i - 1]?.grupo !== sr.grupo && (
