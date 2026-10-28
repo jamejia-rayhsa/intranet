@@ -5,8 +5,8 @@ import {
   resumenResultados,
   listarResultados,
   sinIdentificador,
-  listarDepartamentos,
   registrarExportacionResultados,
+  diasParaExportar,
   mensajeDeError,
 } from "../services/asistencia.service";
 import { fechaMexicoHoy, formatoLocal } from "../utils/asistenciaFechas";
@@ -66,7 +66,6 @@ export default function AsistenciaResultadosPage() {
   const [aplicado, setAplicado] = useState(null); // { desde, hasta, periodo }
   const [errorRango, setErrorRango] = useState("");
   const [departamentos, setDepartamentos] = useState([]);
-  const [errorDeptos, setErrorDeptos] = useState("");
   const [filtros, setFiltros] = useState({ departamento: "", texto: "", estatus: "", atajo: "", orden: "nombre" });
   const [pagina, setPagina] = useState(1);
 
@@ -116,9 +115,6 @@ export default function AsistenciaResultadosPage() {
         setSeleccion("rango");
       }
     });
-    listarDepartamentos()
-      .then((r) => { if (activo) setDepartamentos(r.datos || []); })
-      .catch((err) => { if (activo) setErrorDeptos(mensajeDeError(err, "No se pudieron cargar los departamentos")); });
     return () => { activo = false; };
   }, [acceso.puedeLeer, cargarPeriodos, hoy]);
 
@@ -136,6 +132,12 @@ export default function AsistenciaResultadosPage() {
       if (mia !== solicitud.current) return;
       setFilas(todas);
       setTotalServidor(total);
+      // Las opciones de departamento salen del propio resumen (sin pedir /departamentos, que exige otro permiso)
+      if (!filtros.departamento) {
+        const mapa = new Map();
+        for (const f of todas) if (f.departamento_id) mapa.set(f.departamento_id, f.departamento || `Departamento ${f.departamento_id}`);
+        setDepartamentos([...mapa].map(([id, nombre]) => ({ id, nombre })).sort((a, b) => a.nombre.localeCompare(b.nombre, "es")));
+      }
     } catch (err) {
       if (mia !== solicitud.current) return;
       setFilas([]);
@@ -257,16 +259,27 @@ export default function AsistenciaResultadosPage() {
     try {
       let csv;
       let nombre;
+      let faltantes = null;
       if (tipo === "resumen") {
         csv = construirCsvResumen(filtradas);
         nombre = nombreArchivoResumen(aplicado.desde, aplicado.hasta);
       } else {
-        const ids = new Set(filtradas.map((f) => f.empleado_id));
-        const { filas: dias, incompleto } = await pedirTodas(
-          (p) => listarResultados({ desde: aplicado.desde, hasta: aplicado.hasta, pagina: p, limite: LIMITE }),
-          TOPE_FILAS_EXPORTACION,
-        );
-        csv = construirCsvDetalle(dias.filter((d) => ids.has(d.empleado_id)), formatoLocal, TOPE_FILAS_EXPORTACION, incompleto);
+        // El servidor devuelve solo los días de los empleados filtrados, paginados por clave (id) hasta el tope
+        const empleadoIds = filtradas.map((f) => f.empleado_id);
+        let dias = [];
+        let total = 0;
+        let despues = null;
+        for (let i = 0; i < 40 && dias.length < TOPE_FILAS_EXPORTACION; i += 1) {
+          const r = await diasParaExportar({ desde: aplicado.desde, hasta: aplicado.hasta, empleado_ids: empleadoIds, limite: LIMITE, ...(despues ? { despues_id: despues } : {}) });
+          if (i === 0) total = r.total;
+          dias = dias.concat(r.datos);
+          if (!r.siguiente) break;
+          despues = r.siguiente;
+        }
+        dias.sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : nombreCompleto(a).localeCompare(nombreCompleto(b), "es")));
+        const incompleto = total > Math.min(dias.length, TOPE_FILAS_EXPORTACION);
+        faltantes = { total, exportadas: Math.min(dias.length, TOPE_FILAS_EXPORTACION) };
+        csv = construirCsvDetalle(dias, formatoLocal, TOPE_FILAS_EXPORTACION, incompleto);
         nombre = nombreArchivoDetalle(aplicado.desde, aplicado.hasta);
       }
       // Primero la bitácora: si no se puede registrar, NO se descarga nada (el archivo lleva nombres y nóminas)
@@ -279,7 +292,7 @@ export default function AsistenciaResultadosPage() {
       descargarCsv(csv.texto, nombre);
       setAvisoExport(
         csv.truncado
-          ? `Archivo INCOMPLETO: se exportaron solo ${csv.filas} filas (tope de ${TOPE_FILAS_EXPORTACION}); el archivo lo indica en su última fila. Acota el periodo o los filtros para obtener el resto.`
+          ? `Archivo INCOMPLETO: se exportaron ${csv.filas}${faltantes ? ` de ${faltantes.total}` : ""} filas (tope de ${TOPE_FILAS_EXPORTACION}); el archivo lo indica en su última fila. Reduce el rango de fechas o filtra a menos empleados para obtener el resto.`
           : `Se exportaron ${csv.filas} ${csv.filas === 1 ? "fila" : "filas"} a ${nombre}.`,
       );
     } catch (err) {
@@ -327,14 +340,13 @@ export default function AsistenciaResultadosPage() {
         )}
         <div className="asi__campo">
           <label htmlFor="res-depto">Departamento</label>
-          <select id="res-depto" value={filtros.departamento} onChange={cambiarFiltro("departamento")} disabled={Boolean(errorDeptos)}>
+          <select id="res-depto" value={filtros.departamento} onChange={cambiarFiltro("departamento")}>
             <option value="">Todos</option>
             {departamentos.map((d) => <option key={d.id} value={String(d.id)}>{d.nombre}</option>)}
           </select>
         </div>
       </div>
       {errorRango && <p className="asi__aviso asi__aviso--error" role="alert">{errorRango}</p>}
-      {errorDeptos && <p className="asi__aviso asi__aviso--error" role="alert">{errorDeptos}</p>}
       {esCerrada && <p className="asi__aviso asi__aviso--info">{AVISO_CERRADA} <Link to="/rh/asistencia/periodos">Ir a Periodos</Link></p>}
       {!esCerrada && aplicado && !aplicado.periodo && periodosCerradosEnRango.length > 0 && (
         <p className="asi__aviso asi__aviso--info">

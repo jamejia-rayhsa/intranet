@@ -19,6 +19,7 @@ const MAX_DIAS_CONSULTA = 92;
 const LIMITE_POR_OMISION = 100;
 const LIMITE_MAXIMO = 500;
 const TOPE_EXPORTACION = 15000;
+const MAX_IDS_EXPORTACION = 5000;
 const MOTIVO_REAPERTURA_MIN = 10;
 const CLAVES_CONFIRMACION_REFORZADA = ["analisis_desde", "cierre_automatico_desde", "dias_cierre"];
 const FRASE_REFORZADA = "CAMBIAR";
@@ -166,9 +167,32 @@ const Controlador = {
     }
   },
 
+  // Días de los empleados ya filtrados en pantalla, para el CSV de detalle: paginación por clave (id) y total real.
+  // POST solo por el tamaño de la lista de empleados; no escribe nada.
+  async diasParaExportar(req, res) {
+    const cuerpo = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : {};
+    const rango = leerRango(cuerpo);
+    if (rango.error) return responder400(res, rango.error);
+    const ids = cuerpo.empleado_ids;
+    if (!Array.isArray(ids) || ids.length === 0 || ids.length > MAX_IDS_EXPORTACION || !ids.every((v) => Number.isInteger(v) && v > 0 && v <= 2147483647)) {
+      return responder400(res, `empleado_ids debe ser una lista de 1 a ${MAX_IDS_EXPORTACION} enteros positivos`);
+    }
+    const limite = cuerpo.limite === undefined ? LIMITE_MAXIMO : cuerpo.limite;
+    if (!Number.isInteger(limite) || limite < 1 || limite > LIMITE_MAXIMO) return responder400(res, `limite debe ser un entero entre 1 y ${LIMITE_MAXIMO}`);
+    const despues = cuerpo.despues_id === undefined || cuerpo.despues_id === null ? null : cuerpo.despues_id;
+    if (despues !== null && (!Number.isInteger(despues) || despues < 1 || despues > 2147483647)) return responder400(res, "despues_id debe ser un entero positivo");
+    try {
+      const r = await Resultados.listarDiasPorClave({ ids: [...new Set(ids)], desde: rango.desde, hasta: rango.hasta, despuesId: despues, limite });
+      res.set("Cache-Control", "no-store");
+      return res.json({ exito: true, datos: r.filas, total: r.total, siguiente: r.siguiente });
+    } catch (error) {
+      return responderError(res, "consultar los días para exportar", error);
+    }
+  },
+
   // Bitácora de las últimas ejecuciones del motor (gestión: RH)
   async ejecuciones(req, res) {
-    const limite = req.query.limite === undefined ? 20 : req.query.limite;
+    const limite = req.query.limite === undefined ? "20" : req.query.limite; // por omisión 20 (máximo 100)
     if (typeof limite !== "string" || !/^\d{1,3}$/.test(limite) || Number(limite) < 1 || Number(limite) > 100) {
       return responder400(res, "limite debe ser un entero entre 1 y 100");
     }

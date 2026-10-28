@@ -6,7 +6,7 @@ Rutas bajo `/rh/asistencia/` (grupo «Asistencia» del menú de RH): `resultados
 
 ## Quién ve qué
 
-- **Leer** (resultados de todos, periodos, parámetros, sin identificador, ajustes, bitácora): `Asistencia:edicion` o `Empleados:edicion` (rh_admin y super_admin). **Escribir** (justificar, anular, cerrar, reabrir,
+- **Leer** (resultados de todos, periodos, parámetros, sin identificador, ajustes, bitácora): `Asistencia:edicion` o `Empleados:edicion` (rh_admin y super_admin), **sin exigir además `Asistencia:consulta`** (la API acepta cualquiera de las dos; un rol con solo `Empleados:edicion` ve las pantallas sin 403). Las lecturas compartidas (`/resultados`, `/resumen`, `/periodos`, `/resultados/dia`) siguen abiertas con `Asistencia:consulta` y alcance propio/subordinados. El filtro de departamento sale del propio resumen (no pide `/departamentos`). **Escribir** (justificar, anular, cerrar, reabrir,
   recalcular, resolver ajustes, guardar parámetros): `Asistencia:edicion`. Un rol con solo `Empleados:edicion` ve todo en solo lectura. `rh_empleado`, `portal_admin`, jefes y empleados no ven las tres entradas
   del menú y las rutas responden «No tienes permiso» (la API da 403 en lo de gestión; los endpoints de resultados siguen limitados a su alcance).
 - El menú usa el modo estricto del grupo y exige el tipo `edicion` (el `Asistencia:consulta` de `rh_empleado` no basta).
@@ -17,7 +17,8 @@ Rutas bajo `/rh/asistencia/` (grupo «Asistencia» del menú de RH): `resultados
 |---|---|---|
 | `GET /resultados/dia?empleado_id&fecha` | `Asistencia:consulta` + alcance (como `/resultados`; un jefe solo ve a sus subordinados directos) | día con snapshot del turno, marcas del día local con su `rol` (entrada, salida, comida, duplicada u otra: lo calcula `clasificarMarcas` del motor, no la pantalla; el siguiente día también si el turno cruza la medianoche; tope 100 con `marcas_truncadas`; `terminal_sn` solo para RH), cruces (vacaciones, permiso, festivo, justificación activa). Quién justificó solo lo ve RH. 404 si el día no tiene resultado |
 | `GET /periodos/:id/contadores` | RH (lectura) | contadores FRESCOS del cierre: `dias_pendientes`, `ajustes_pendientes`, `sin_identificador` |
-| `GET /ejecuciones?limite` (1-100, 20) | RH (lectura) | bitácora del motor (sin datos personales; error recortado a 120 caracteres) |
+| `POST /resultados/dias` `{desde,hasta,empleado_ids,limite,despues_id}` | RH (lectura) | días de los empleados ya filtrados para el CSV de detalle, paginados por clave (id) con `total` real en la primera página y `siguiente`; hasta 5 000 empleados |
+| `GET /ejecuciones?limite` (1-100, 20 por omisión) | RH (lectura) | bitácora del motor (sin datos personales; error recortado a 120 caracteres) |
 | `POST /resultados/exportaciones` `{tipo: resumen\|detalle, filas}` | RH (lectura) | rastro de la exportación en auditoría (`EXPORTAR_ASISTENCIA`, solo tipo y filas, tope 15 000). Si la bitácora falla responde 500 y la pantalla NO descarga el archivo |
 | `GET /resumen` | sin cambio de permisos | ahora trae `departamento`, `dias_con_marcas`, `faltas_con_marcas` e `incompletas_comida` |
 | `GET /periodos` | sin cambio de permisos | ahora trae `dias_pendientes`; `cerrado_por`, los nombres de quien cerró/reabrió y el motivo solo para RH. La lectura de quincenas sigue abierta a quien tenga `Asistencia:consulta`; el 403 de «gestión» aplica a la pantalla y a sus escrituras y lecturas de gestión |
@@ -65,13 +66,17 @@ Comida (desde < hasta, HH:MM), días de cierre (0-30), cierre automático desde,
 
 ## Exportación
 
-CSV con BOM UTF-8, saltos CRLF, fórmulas neutralizadas (también con espacios antes del signo; un nombre que empiece con - o + sale con ' al inicio) y tope de 15 000 filas. **Se audita antes de descargar** (si la bitácora falla no se entrega el archivo). Si se corta (tope o datos incompletos) la pantalla lo avisa y la última fila del archivo dice «Se truncó a N filas». Incluye nombre y nómina (decisión confirmada: RH ya ve esos datos en pantalla) y queda en auditoría con solo el tipo y el número de filas.
+CSV con BOM UTF-8, saltos CRLF, fórmulas neutralizadas (también con espacios antes del signo; un nombre que empiece con - o + sale con ' al inicio) y tope de 15 000 filas. **Se audita antes de descargar** (si la bitácora falla no se entrega el archivo). El detalle se pide al servidor ya filtrado (empleado, departamento, estatus, atajo) y paginado por clave hasta el tope; si se corta, la pantalla dice cuántas filas se exportaron de cuántas hay y la última fila del archivo dice «Se truncó a N filas». Acotar el rango o filtrar a menos empleados sí ayuda. Incluye nombre y nómina (decisión confirmada: RH ya ve esos datos en pantalla) y queda en auditoría con solo el tipo y el número de filas.
 
 ## Pendiente / documentado (revisión R2A)
 
-- R2A-11d: no hay E2E de Playwright en el repo (no hay dependencia); se repite el harness externo. R2A-15: el motivo de una justificación lo ven también jefe y empleado (a la espera de una decisión del humano). R2A-6: la exportación de detalle pide los días de todos los empleados y filtra en el cliente (se avisa si quedan incompletos). R2A-5: el número de filas auditado lo declara el cliente.
+- R2A-11d: no hay E2E de Playwright en el repo (no hay dependencia); se repite el harness externo. R2A-15: el motivo de una justificación lo ven también jefe y empleado (a la espera de una decisión del humano). R2A-5: el número de filas auditado lo declara el cliente.
 
 ## Pruebas
 
 Jest: `asistenciaResultados.util.test.js` (utils puros) y `asistenciaResultadosRH.api.test.js` (matriz de permisos, alcance, validaciones, auditoría, 500 genéricos). No hay pruebas de componente ni E2E en el repo: se verificó con un *harness externo*
 (Vite sobre el `main.jsx` real con `lib/supabase` simulado, backend real, Postgres desechable y Chromium + axe-core). Al cambiar estas pantallas hay que repetir una verificación equivalente (filtros, cuadrícula con teclado, justificar/anular, cerrar/reabrir, 409, parámetros, CSV, 320/360/768).
+
+## Menú
+
+La altura abierta de un grupo del menú no es fija (`max-height: none` en CSS; `MenuDinamico` anima midiendo el contenido): cualquier número de enlaces es alcanzable y el sidebar hace scroll propio si no cabe en el viewport.

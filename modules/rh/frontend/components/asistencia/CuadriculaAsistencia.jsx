@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { construirCuadricula, celdaSiguiente, etiquetaCelda, infoEstatus, DIAS_SEMANA } from "../../utils/asistenciaResultados";
+import { construirCuadricula, celdaSiguiente, fechaLargaCelda, infoEstatus, DIAS_SEMANA } from "../../utils/asistenciaResultados";
 
 const CONSULTA_ESTRECHA = "(max-width: 600px)";
 
@@ -74,7 +74,6 @@ export default function CuadriculaAsistencia({ desde, hasta, dias, onAbrirDia, e
                   ref={(el) => { refs.current[indice] = el; }}
                   tabIndex={indice === activa ? 0 : -1}
                   className={`asr__celda asr__celda--${info.tono}${c.finDeSemana ? " asr__celda--fin" : ""}${festivo ? " asr__celda--festivo" : ""}`}
-                  aria-label={etiquetaCelda(c)}
                   onKeyDown={(e) => alTecla(e, indice)}
                   onFocus={() => setActiva(indice)}
                   aria-disabled={c.dia ? undefined : "true"}
@@ -88,6 +87,8 @@ export default function CuadriculaAsistencia({ desde, hasta, dias, onAbrirDia, e
                     <span aria-hidden="true" className="asr__icono">{info.icono}</span> {info.texto}
                   </span>
                   {c.dia && Number(c.dia.minutos_retardo) > 0 && <span className="asr__celda-min">{c.dia.minutos_retardo} min</span>}
+                  {/* el nombre accesible nace del contenido: el texto visible va primero y esto solo añade el día completo */}
+                  <span className="asi__sr">, {fechaLargaCelda(c)}</span>
                 </button>
               </div>
             );

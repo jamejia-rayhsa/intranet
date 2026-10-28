@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, useRef } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { usarAuth } from '../context/AuthContext';
 import { tieneAccesoMenu } from '../utils/menuAcceso';
@@ -7,6 +7,27 @@ const NOMBRE_EMPRESA = import.meta.env.VITE_NOMBRE_EMPRESA || 'Intranet';
 
 // Lectura de la gestión de asistencia (resultados, periodos, parámetros): RH = Asistencia:edicion o Empleados:edicion
 const REQUIERE_GESTION_ASISTENCIA = [['Asistencia', 'edicion'], ['Empleados', 'edicion']];
+
+/**
+ * Contenedor de los subitems de un grupo del menú. La altura abierta NO es fija: el CSS deja `max-height: none` cuando está
+ * abierto (cabe cualquier número de enlaces) y aquí solo se anima la apertura/cierre midiendo la altura real del contenido.
+ */
+function Subitems({ abierto, children }) {
+  const ref = useRef(null);
+  const previo = useRef(abierto);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || previo.current === abierto) return undefined;
+    previo.current = abierto;
+    const limpiar = () => { el.style.maxHeight = ''; };
+    el.style.maxHeight = abierto ? '0px' : `${el.scrollHeight}px`;
+    void el.offsetHeight; // fuerza el cálculo para que arranque la transición
+    el.style.maxHeight = abierto ? `${el.scrollHeight}px` : '0px';
+    const t = setTimeout(limpiar, 320);
+    return () => { clearTimeout(t); limpiar(); };
+  }, [abierto]);
+  return <div ref={ref} className={`sidebar-subitems${abierto ? ' abierto' : ''}`}>{children}</div>;
+}
 
 const SUB_RUTAS = {
   portal: [
@@ -202,7 +223,7 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
                 <span className={`sidebar-chevron${estaAbierto ? ' abierto' : ''}`}>›</span>
               </button>
 
-              <div className={`sidebar-subitems${estaAbierto ? ' abierto' : ''}`}>
+              <Subitems abierto={estaAbierto}>
                 {subRutas
                   .filter((sr) => tieneAcceso(m.nombre, sr.opcion, Boolean(sr.grupo), sr.requiere))
                   .map((sr, i, visibles) => (
@@ -215,7 +236,7 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
                       </Link>
                     </Fragment>
                   ))}
-              </div>
+              </Subitems>
             </div>
           );
         })}
@@ -236,7 +257,7 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
                 </span>
                 <span className={`sidebar-chevron${estaAbierto ? ' abierto' : ''}`}>›</span>
               </button>
-              <div className={`sidebar-subitems${estaAbierto ? ' abierto' : ''}`}>
+              <Subitems abierto={estaAbierto}>
                 {ADMIN_ITEMS.map(item => (
                   <Link
                     key={item.path}
@@ -246,7 +267,7 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
                     {item.label}
                   </Link>
                 ))}
-              </div>
+              </Subitems>
             </div>
           );
         })()}

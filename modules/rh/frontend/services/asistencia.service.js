@@ -74,6 +74,7 @@ export const listarResultados = ({ desde, hasta, empleadoId, pagina = 1, limite 
   if (empleadoId) p.set("empleado_id", String(empleadoId));
   return solicitar(`${base}/resultados?${p.toString()}`);
 };
+export const diasParaExportar = (datos) => solicitar(`${base}/resultados/dias`, { method: "POST", body: json(datos) });
 export const detalleDia = (empleadoId, fecha) => solicitar(`${base}/resultados/dia?empleado_id=${empleadoId}&fecha=${fecha}`);
 export const justificarDia = (datos) => solicitar(`${base}/incidencias`, { method: "POST", body: json(datos) });
 export const anularJustificacion = (id) => solicitar(`${base}/incidencias/${id}/anular`, { method: "POST", body: json({}) });

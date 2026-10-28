@@ -59,6 +59,33 @@ const AsistenciaResultados = {
     return { filas: r.rows.map(sinTotal), total: r.rows[0] ? Number(r.rows[0].total) : 0 };
   },
 
+  /**
+   * Días de un conjunto de empleados para exportar, paginados POR CLAVE (id ascendente): sin OFFSET, estables aunque el
+   * motor recalcule durante la exportación. `total` solo se calcula en la primera página (sin `despuesId`).
+   */
+  async listarDiasPorClave({ ids, desde, hasta, despuesId, limite }, cliente = grupo) {
+    const r = await cliente.query(
+      `SELECT d.id, d.empleado_id, ${NOMBRE_EMPLEADO}, to_char(d.fecha, 'YYYY-MM-DD') AS fecha, d.estatus,
+              d.minutos_retardo, d.minutos_salida_anticipada, d.primera_marca, d.ultima_marca, d.turno_nombre, d.periodo_id,
+              p.estado AS periodo_estado, d.detalle
+       FROM asistencia_diaria d
+       JOIN empleados e ON e.id = d.empleado_id
+       LEFT JOIN asistencia_periodos p ON p.id = d.periodo_id
+       WHERE d.fecha BETWEEN $2::date AND $3::date AND d.empleado_id = ANY($1::int[]) AND d.id > $4::int
+       ORDER BY d.id LIMIT $5`,
+      [ids, desde, hasta, despuesId || 0, limite],
+    );
+    let total = null;
+    if (!despuesId) {
+      const c = await cliente.query(
+        `SELECT COUNT(*)::int AS total FROM asistencia_diaria d WHERE d.fecha BETWEEN $2::date AND $3::date AND d.empleado_id = ANY($1::int[])`,
+        [ids, desde, hasta],
+      );
+      total = c.rows[0] ? c.rows[0].total : 0;
+    }
+    return { filas: r.rows, total, siguiente: r.rows.length === limite ? r.rows[r.rows.length - 1].id : null };
+  },
+
   /** Conteos por empleado y estatus */
   async resumen({ ids, departamentoId, desde, hasta, limite, offset }, cliente = grupo) {
     const conteos = ESTATUS.map((s) => `COUNT(*) FILTER (WHERE d.estatus = '${s}')::int AS ${s}`).join(", ");

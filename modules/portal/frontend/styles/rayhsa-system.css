@@ -152,7 +152,7 @@
   max-height: 0;
   transition: max-height 0.25s ease;
 }
-.rayhsa .sidebar-subitems.abierto { max-height: 600px; }
+.rayhsa .sidebar-subitems.abierto { max-height: none; } /* sin altura fija: MenuDinamico anima midiendo el contenido */
 .rayhsa .sidebar-subitems a {
   display: flex;
   align-items: center;
@@ -1653,7 +1653,7 @@
 .rayhsa-drawer .sidebar-chevron { font-size: 1rem; color: rgba(255,255,255,0.4); transition: transform 0.2s; line-height: 1; }
 .rayhsa-drawer .sidebar-chevron.abierto { transform: rotate(90deg); color: rgba(255,255,255,0.7); }
 .rayhsa-drawer .sidebar-subitems { overflow: hidden; max-height: 0; transition: max-height 0.25s ease; }
-.rayhsa-drawer .sidebar-subitems.abierto { max-height: 600px; }
+.rayhsa-drawer .sidebar-subitems.abierto { max-height: none; }
 .rayhsa-drawer .sidebar-subitems a {
   display: flex; align-items: center;
   padding: 0.48rem 1.25rem 0.48rem 2.85rem;
@@ -2325,3 +2325,10 @@
   .rayhsa-modal__acciones-meta { display: none; }
 }
 
+
+/* Ventana de escritorio entre 641 y 768 px: globales.css esconde el sidebar (≤ 768) pero el botón de menú solo existía hasta
+   640 px, así que el menú quedaba inalcanzable y el contenido con un hueco de 196 px. Se muestra el botón y el contenido ocupa todo. */
+@media (min-width: 641px) and (max-width: 768px) {
+  .rayhsa:not(.is-tablet):not(.is-mobile) .responsive-hamburger { display: inline-flex; }
+  .rayhsa:not(.is-tablet):not(.is-mobile) .app-main { margin-left: 0; }
+}

@@ -167,7 +167,7 @@ body {
 }
 
 .sidebar-subitems.abierto {
-  max-height: 600px;
+  max-height: none;
 }
 
 .sidebar-subitems a {

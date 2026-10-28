@@ -210,6 +210,10 @@ export function etiquetaCelda(celda) {
   return `${base}: ${info.texto}${extra.length ? `. ${extra.join(', ')}` : ''}`;
 }
 
+const NOMBRES_DIA_LARGO = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+/** «viernes 2026-10-16»: texto solo para lectores de pantalla, se suma al texto visible de la celda (WCAG 2.5.3). */
+export const fechaLargaCelda = (celda) => `${NOMBRES_DIA_LARGO[celda.diaSemana - 1]} ${celda.fecha}`;
+
 /**
  * Siguiente celda con foco al pulsar una flecha (Inicio/Fin: extremos de la fila). `celdas` con `vacia`; `columnas` es 7
  * en pantallas anchas y 1 cuando la cuadrícula se apila. Salta las celdas vacías; no sale de la cuadrícula.

@@ -42,6 +42,8 @@ const ROLES = {
   jefe: { user: { usuario_id: 2, rol_id: 2, rol_nombre: "empleado" }, permisos: { Asistencia: ["consulta"] } },
   rh_empleado: { user: { usuario_id: 4, rol_id: 4, rol_nombre: "rh_empleado" }, permisos: { Asistencia: ["consulta"] } },
   rh_lectura: { user: { usuario_id: 8, rol_id: 8, rol_nombre: "rh_lectura" }, permisos: { Asistencia: ["consulta"], Empleados: ["consulta", "edicion"] } },
+  // F-R2A-T4: RH solo con Empleados:edicion (sin Asistencia:consulta) lee la gestión y no escribe
+  solo_empleados: { user: { usuario_id: 9, rol_id: 9, rol_nombre: "solo_empleados" }, permisos: { Empleados: ["consulta", "edicion"] } },
   rh_admin: { user: { usuario_id: 5, rol_id: 5, rol_nombre: "rh_admin" }, permisos: { Asistencia: ["consulta", "edicion"], Empleados: ["consulta", "edicion"] } },
   super_admin: { user: { usuario_id: 6, rol_id: 6, rol_nombre: "super_admin" }, permisos: {} },
   // grants reales de la migración 012: cualquier rol con Vacaciones/Empleados de consulta recibe Asistencia:consulta
@@ -387,5 +389,115 @@ describe("anular una justificación", () => {
     bd.estado.reglas.unshift({ re: /FROM asistencia_incidencias i WHERE i\.id = \$1 FOR UPDATE/, respuesta: { rows: [{ id: 9, empleado_id: 21, fecha: "2026-10-05", tipo: "justificacion", activa: true }] } });
     const r2 = await request(app).post("/api/asistencia/incidencias/9/anular").send({});
     expect(r2.body.mensaje).toBe("Justificación anulada");
+  });
+});
+
+describe("F-R2A-T4: un rol con SOLO Empleados:edicion lee la gestión (sin 403) y no escribe", () => {
+  beforeEach(() => {
+    como("solo_empleados");
+    bd.cuando(/FROM empleados e/, { rows: [] });
+    bd.cuando(/FROM asistencia_ajustes_pendientes/, { rows: [] });
+    Motor.listarParametros.mockResolvedValue([]);
+  });
+  it.each([
+    "/api/asistencia/resultados?desde=2026-10-01&hasta=2026-10-15",
+    "/api/asistencia/resumen?desde=2026-10-01&hasta=2026-10-15",
+    "/api/asistencia/periodos",
+    "/api/asistencia/periodos/3/contadores",
+    "/api/asistencia/ejecuciones",
+    "/api/asistencia/sin-identificador",
+    "/api/asistencia/ajustes-pendientes",
+    "/api/asistencia/parametros",
+    DIA,
+  ])("GET %s -> 200", async (url) => {
+    const r = await get(url);
+    expect(r.status).toBe(200);
+  });
+  it("sin ficha de empleado el detalle de un día igual lo ve (RH ve a todos)", async () => {
+    expect((await get(DIA)).status).toBe(200);
+  });
+  it("POST de lectura de gestión (exportaciones y días) -> 2xx", async () => {
+    expect((await request(app).post("/api/asistencia/resultados/exportaciones").send({ tipo: "resumen", filas: 1 })).status).toBe(201);
+    expect((await request(app).post("/api/asistencia/resultados/dias").send({ desde: "2026-10-01", hasta: "2026-10-15", empleado_ids: [21] })).status).toBe(200);
+  });
+  it.each([
+    ["post", "/api/asistencia/periodos/3/cerrar", { esperados: { ajustes_pendientes: 0, sin_identificador: 0 } }],
+    ["post", "/api/asistencia/periodos/3/reabrir", { motivo: "motivo suficiente" }],
+    ["post", "/api/asistencia/recalcular", { desde: "2026-10-01", hasta: "2026-10-02" }],
+    ["put", "/api/asistencia/parametros", { comida_hasta: "15:00" }],
+    ["post", "/api/asistencia/incidencias", { empleado_id: 21, fecha: "2026-10-05", motivo: "motivo suficiente" }],
+    ["post", "/api/asistencia/ajustes-pendientes/1/resolver", {}],
+  ])("%s %s -> 403 (la escritura sigue siendo solo de Asistencia:edicion)", async (metodo, url, cuerpo) => {
+    expect((await request(app)[metodo](url).send(cuerpo)).status).toBe(403);
+    expect(Motor.guardarParametros).not.toHaveBeenCalled();
+  });
+  it("un rol sin Empleados:edicion ni Asistencia sigue sin acceso a la gestión (403)", async () => {
+    como("portal_admin");
+    for (const u of ["/api/asistencia/parametros", "/api/asistencia/ejecuciones", "/api/asistencia/sin-identificador", "/api/asistencia/periodos/3/contadores"]) expect((await get(u)).status).toBe(403);
+    como("empleado");
+    expect((await request(app).post("/api/asistencia/resultados/dias").send({ desde: "2026-10-01", hasta: "2026-10-15", empleado_ids: [21] })).status).toBe(403);
+  });
+  it("sin ningún permiso de asistencia ni de empleados: 403 también en lecturas compartidas", async () => {
+    mockUser = { usuario_id: 11, rol_id: 11, rol_nombre: "otro" };
+    bd.estado.permisos = { Vacaciones: ["consulta"] };
+    expect((await get("/api/asistencia/periodos")).status).toBe(403);
+    expect((await get("/api/asistencia/resultados?desde=2026-10-01&hasta=2026-10-15")).status).toBe(403);
+  });
+});
+
+describe("GET /ejecuciones: límite por omisión", () => {
+  it("sin limite usa 20 y con limite 100 acepta; 101 es 400", async () => {
+    expect((await get("/api/asistencia/ejecuciones")).status).toBe(200);
+    expect(bd.sqls().find((l) => /asistencia_ejecuciones/.test(l.sql)).params).toEqual([20]);
+    expect((await get("/api/asistencia/ejecuciones?limite=100")).status).toBe(200);
+    expect((await get("/api/asistencia/ejecuciones?limite=101")).status).toBe(400);
+  });
+});
+
+describe("POST /resultados/dias (CSV de detalle filtrado, paginación por clave)", () => {
+  const post = (c) => request(app).post("/api/asistencia/resultados/dias").send(c);
+  const base = { desde: "2026-10-01", hasta: "2026-10-15", empleado_ids: [21, 22, 21] };
+  beforeEach(() => {
+    bd.estado.reglas.unshift({ re: /AND d\.id > \$4::int/, respuesta: { rows: [{ id: 7 }, { id: 9 }] } });
+    bd.estado.reglas.unshift({ re: /SELECT COUNT\(\*\)::int AS total FROM asistencia_diaria d WHERE/, respuesta: { rows: [{ total: 321 }] } });
+  });
+  it("primera página: total real, ids sin repetir, parámetros enlazados y siguiente = último id si la página se llenó", async () => {
+    const r = await post({ ...base, limite: 2 });
+    expect(r.status).toBe(200);
+    expect(r.body.total).toBe(321);
+    expect(r.body.siguiente).toBe(9);
+    const q = bd.sqls().find((l) => /AND d\.id > \$4::int/.test(l.sql));
+    expect(q.params).toEqual([[21, 22], "2026-10-01", "2026-10-15", 0, 2]);
+    expect(q.sql).toMatch(/ORDER BY d\.id LIMIT \$5/);
+  });
+  it("páginas siguientes (despues_id) no recalculan el total y la última devuelve siguiente null", async () => {
+    const r = await post({ ...base, limite: 5, despues_id: 9 });
+    expect(r.body.total).toBeNull();
+    expect(r.body.siguiente).toBeNull();
+    expect(bd.sqls().some((l) => /SELECT COUNT/.test(l.sql))).toBe(false);
+    expect(bd.sqls().find((l) => /AND d\.id > \$4::int/.test(l.sql)).params[3]).toBe(9);
+  });
+  it.each([
+    [{ ...base, empleado_ids: [] }], [{ ...base, empleado_ids: "21" }], [{ ...base, empleado_ids: [0] }], [{ ...base, empleado_ids: ["1"] }],
+    [{ ...base, empleado_ids: Array.from({ length: 5001 }, (_, i) => i + 1) }], [{ ...base, limite: 501 }], [{ ...base, limite: 0 }],
+    [{ ...base, despues_id: -1 }], [{ ...base, despues_id: "9" }], [{ ...base, desde: "2026-01-01", hasta: "2026-12-31" }], [{ ...base, desde: "x" }],
+  ])("entrada inválida -> 400 sin consultar", async (c) => {
+    expect((await post(c)).status).toBe(400);
+    expect(bd.sqls().some((l) => /asistencia_diaria d/.test(l.sql))).toBe(false);
+  });
+  it.each(["empleado", "jefe", "rh_empleado", "portal_admin"])("%s -> 403", async (rol) => {
+    como(rol);
+    expect((await post(base)).status).toBe(403);
+  });
+});
+
+describe("el menú y el aviso de la cuadrícula (estructura)", () => {
+  const fs = require("fs");
+  const path = require("path");
+  it("la cuadrícula no usa aria-label en las celdas (el nombre sale del contenido visible) y el submenú no tiene altura fija", () => {
+    const celda = fs.readFileSync(path.join(__dirname, "../../frontend/components/asistencia/CuadriculaAsistencia.jsx"), "utf8");
+    expect(celda).not.toMatch(/<button[^>]*aria-label/s);
+    const css = fs.readFileSync(path.join(__dirname, "../../../portal/frontend/styles/rayhsa-system.css"), "utf8") + fs.readFileSync(path.join(__dirname, "../../../portal/frontend/styles/globales.css"), "utf8");
+    expect(css).not.toMatch(/sidebar-subitems\.abierto\s*\{[^}]*max-height:\s*\d+px/);
   });
 });

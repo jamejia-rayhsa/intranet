@@ -103,22 +103,40 @@ const RH_LECTURA = async (req, res, next) => {
     return res.status(500).json({ exito: false, mensaje: "Error al verificar permisos" });
   }
 };
-router.get("/resultados", LEER, ControladorMotor.resultados);
-router.get("/resultados/dia", LEER, ControladorMotor.detalleDia);
-router.post("/resultados/exportaciones", LEER, RH_LECTURA, ControladorMotor.registrarExportacion);
-router.get("/ejecuciones", LEER, RH_LECTURA, ControladorMotor.ejecuciones);
-router.get("/resumen", LEER, ControladorMotor.resumen);
-router.get("/periodos", LEER, ControladorMotor.periodos);
-router.get("/periodos/:id/contadores", LEER, RH_LECTURA, validarId("id"), ControladorMotor.contadoresCierre);
+// Lecturas compartidas (alcance propio/subordinados para quien tiene Asistencia:consulta) y de gestión de RH: RH =
+// Empleados:edicion o Asistencia:edicion SIN exigir además Asistencia:consulta
+const LEER_O_RH = async (req, res, next) => {
+  if (!req.user) return res.status(401).json({ exito: false, mensaje: "Usuario no autenticado" });
+  try {
+    if (
+      (await tienePermiso(req.user, "rh", "Asistencia", "consulta")) ||
+      (await tienePermiso(req.user, "rh", "Empleados", "edicion"))
+    ) {
+      return next();
+    }
+    return res.status(403).json({ exito: false, mensaje: "No tienes permisos suficientes" });
+  } catch (error) {
+    console.error(`[AsistenciaMotor] Error al verificar permisos: ${(error && (error.code || error.name)) || "Error"}`);
+    return res.status(500).json({ exito: false, mensaje: "Error al verificar permisos" });
+  }
+};
+router.get("/resultados", LEER_O_RH, ControladorMotor.resultados);
+router.get("/resultados/dia", LEER_O_RH, ControladorMotor.detalleDia);
+router.post("/resultados/dias", RH_LECTURA, ControladorMotor.diasParaExportar);
+router.post("/resultados/exportaciones", RH_LECTURA, ControladorMotor.registrarExportacion);
+router.get("/ejecuciones", RH_LECTURA, ControladorMotor.ejecuciones);
+router.get("/resumen", LEER_O_RH, ControladorMotor.resumen);
+router.get("/periodos", LEER_O_RH, ControladorMotor.periodos);
+router.get("/periodos/:id/contadores", RH_LECTURA, validarId("id"), ControladorMotor.contadoresCierre);
 router.post("/periodos/:id/cerrar", ESCRIBIR_ASISTENCIA, validarId("id"), ControladorMotor.cerrarPeriodo);
 router.post("/periodos/:id/reabrir", ESCRIBIR_ASISTENCIA, validarId("id"), ControladorMotor.reabrirPeriodo);
 router.post("/recalcular", ESCRIBIR_ASISTENCIA, ControladorMotor.recalcular);
-router.get("/sin-identificador", LEER, RH_LECTURA, ControladorMotor.sinIdentificador);
-router.get("/ajustes-pendientes", LEER, RH_LECTURA, ControladorMotor.ajustes);
+router.get("/sin-identificador", RH_LECTURA, ControladorMotor.sinIdentificador);
+router.get("/ajustes-pendientes", RH_LECTURA, ControladorMotor.ajustes);
 router.post("/ajustes-pendientes/:id/resolver", ESCRIBIR_ASISTENCIA, validarId("id"), ControladorMotor.resolverAjuste);
 router.post("/incidencias", ESCRIBIR_ASISTENCIA, ControladorMotor.justificar);
 router.post("/incidencias/:id/anular", ESCRIBIR_ASISTENCIA, validarId("id"), ControladorMotor.anularIncidencia);
-router.get("/parametros", LEER, RH_LECTURA, ControladorMotor.obtenerParametros);
+router.get("/parametros", RH_LECTURA, ControladorMotor.obtenerParametros);
 router.put("/parametros", ESCRIBIR_ASISTENCIA, ControladorMotor.actualizarParametros);
 
 module.exports = router;

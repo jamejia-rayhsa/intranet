@@ -721,13 +721,23 @@ async function principal() {
   comprobar("la reapertura quedó en la auditoría", audit.includes("REABRIR_PERIODO"));
   // cierre manual de RH sobre una quincena ya vencida de verdad (1-15 oct): recalcula y congela
   const idOct = (await q("SELECT id FROM asistencia_periodos WHERE fecha_inicio = '2026-10-01'")).rows[0].id;
-  const cerr = await http(backend, "POST", `/api/asistencia/periodos/${idOct}/cerrar`, U.rh_admin.token);
+  // contrato nuevo: el cierre lleva lo que RH vio (contadores frescos) y un día pendiente lo impide
+  const esperadosDe = async (id) => {
+    const c = await http(backend, "GET", `/api/asistencia/periodos/${id}/contadores`, U.rh_admin.token);
+    return { esperados: { ajustes_pendientes: c.json.datos.ajustes_pendientes, sin_identificador: c.json.datos.sin_identificador } };
+  };
+  comprobar("cerrar sin `esperados` -> 400", (await http(backend, "POST", `/api/asistencia/periodos/${idOct}/cerrar`, U.rh_admin.token, {})).estado === 400);
+  await q("UPDATE asistencia_diaria SET estatus = 'pendiente' WHERE id = (SELECT id FROM asistencia_diaria WHERE periodo_id = $1 ORDER BY id LIMIT 1)", [idOct]);
+  const conPend = await http(backend, "POST", `/api/asistencia/periodos/${idOct}/cerrar`, U.rh_admin.token, await esperadosDe(idOct));
+  comprobar("un día pendiente impide cerrar (409 con_pendientes) y no cierra", conPend.estado === 409 && conPend.json.codigo === "con_pendientes" && (await q("SELECT estado FROM asistencia_periodos WHERE id = $1", [idOct])).rows[0].estado === "abierto", JSON.stringify(conPend));
+  await Motor.recalcular({ desde: "2026-10-01", hasta: "2026-10-15", ...opciones });
+  const cerr = await http(backend, "POST", `/api/asistencia/periodos/${idOct}/cerrar`, U.rh_admin.token, await esperadosDe(idOct));
   comprobar("RH cierra a mano 1-15 oct (200, tipo manual, con usuario)", cerr.estado === 200 &&
     (await q("SELECT tipo_cierre, cerrado_por FROM asistencia_periodos WHERE id = $1", [idOct])).rows.every((r) => r.tipo_cierre === "manual" && r.cerrado_por === U.rh_admin.id), JSON.stringify(cerr));
   comprobar("cerrar de nuevo -> 409; cerrar una quincena que no terminó (16-31 oct reabierta) -> 409; sin permiso -> 403",
-    (await http(backend, "POST", `/api/asistencia/periodos/${idOct}/cerrar`, U.rh_admin.token)).estado === 409 &&
-    (await http(backend, "POST", `/api/asistencia/periodos/${idCerrado}/cerrar`, U.rh_admin.token)).estado === 409 &&
-    (await http(backend, "POST", `/api/asistencia/periodos/${idOct}/cerrar`, U.jefe.token)).estado === 403);
+    (await http(backend, "POST", `/api/asistencia/periodos/${idOct}/cerrar`, U.rh_admin.token, await esperadosDe(idOct))).estado === 409 &&
+    (await http(backend, "POST", `/api/asistencia/periodos/${idCerrado}/cerrar`, U.rh_admin.token, await esperadosDe(idCerrado))).estado === 409 &&
+    (await http(backend, "POST", `/api/asistencia/periodos/${idOct}/cerrar`, U.jefe.token, { esperados: { ajustes_pendientes: 0, sin_identificador: 0 } })).estado === 403);
   const hOct = (await q("SELECT md5(string_agg(to_jsonb(d)::text, '|' ORDER BY empleado_id, fecha)) AS h FROM asistencia_diaria d WHERE periodo_id = $1", [idOct])).rows[0].h;
   await Motor.recalcular({ desde: ANALISIS_DESDE, hasta: HOY, ...opciones });
   comprobar("lo cerrado a mano tampoco cambia con un recálculo posterior", (await q("SELECT md5(string_agg(to_jsonb(d)::text, '|' ORDER BY empleado_id, fecha)) AS h FROM asistencia_diaria d WHERE periodo_id = $1", [idOct])).rows[0].h === hOct);
@@ -790,8 +800,11 @@ async function principal() {
   comprobar("GET /ajustes-pendientes devuelve los ajustes detectados", ajPend.estado === 200 && ajPend.json.paginacion.total > 0);
   const resuelto = await http(backend, "POST", `/api/asistencia/ajustes-pendientes/${ajPend.json.datos[0].id}/resolver`, U.rh_admin.token, { nota: "Revisado" });
   comprobar("resolver un ajuste (200) y repetirlo (409)", resuelto.estado === 200 && (await http(backend, "POST", `/api/asistencia/ajustes-pendientes/${ajPend.json.datos[0].id}/resolver`, U.rh_admin.token, {})).estado === 409);
-  const par = await http(backend, "PUT", "/api/asistencia/parametros", U.rh_admin.token, { dias_cierre: 4 });
-  comprobar("PUT /parametros valida rangos (400) y guarda (200)", (await http(backend, "PUT", "/api/asistencia/parametros", U.rh_admin.token, { dias_cierre: 99 })).estado === 400 && par.estado === 200 &&
+  // contrato nuevo: dias_cierre exige la confirmación reforzada también en el servidor
+  comprobar("PUT /parametros de dias_cierre sin `confirmacion` -> 400 y no guarda", (await http(backend, "PUT", "/api/asistencia/parametros", U.rh_admin.token, { dias_cierre: 4 })).estado === 400 &&
+    (await q("SELECT valor FROM asistencia_parametros WHERE clave = 'dias_cierre'")).rows[0].valor === "3");
+  const par = await http(backend, "PUT", "/api/asistencia/parametros", U.rh_admin.token, { dias_cierre: 4, confirmacion: "CAMBIAR" });
+  comprobar("PUT /parametros valida rangos (400) y guarda (200)", (await http(backend, "PUT", "/api/asistencia/parametros", U.rh_admin.token, { dias_cierre: 99, confirmacion: "CAMBIAR" })).estado === 400 && par.estado === 200 &&
     (await q("SELECT valor FROM asistencia_parametros WHERE clave = 'dias_cierre'")).rows[0].valor === "4");
   await q("UPDATE asistencia_parametros SET valor = '3' WHERE clave = 'dias_cierre'");
   const rcApi = await http(backend, "POST", "/api/asistencia/recalcular", U.rh_admin.token, { desde: "2026-09-01", hasta: "2026-09-10" });
