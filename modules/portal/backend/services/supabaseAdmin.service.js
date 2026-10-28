@@ -67,8 +67,10 @@ async function solicitar(metodo, ruta, { cuerpo, conClave = true } = {}) {
       `HTTP ${resp.status}`;
     const e = new Error(`Supabase Auth: ${detalle}`);
     e.status = resp.status;
-    // Error HTTP explícito de GoTrue: garantiza que NO aplicó el cambio (único caso que se compensa)
-    e.definitivo = true;
+    // Solo un rechazo 4xx (salvo 408 y 429) garantiza que GoTrue NO aplicó el cambio. Un 5xx (o un 502/503/504 de un proxy
+    // intermedio) puede llegar DESPUÉS de que GoTrue aplicó el cambio: resultado INCIERTO, no se compensa.
+    if (resp.status >= 400 && resp.status < 500 && resp.status !== 408 && resp.status !== 429) e.definitivo = true;
+    else e.incierto = true;
     throw e;
   }
   return datos;
@@ -81,6 +83,13 @@ const SupabaseAdmin = {
     else if (password) cuerpo.password = password;
     if (metadata) cuerpo.user_metadata = metadata;
     const datos = await solicitar("POST", "/admin/users", { cuerpo });
+    // 2xx sin JSON válido o sin id: no se sabe si GoTrue creó el usuario
+    if (!datos || typeof datos.id !== "string" || !datos.id) {
+      const e = new Error("Respuesta de Supabase Auth sin identificador de usuario");
+      e.status = 502;
+      e.incierto = true;
+      throw e;
+    }
     return { id: datos.id };
   },
 
@@ -102,6 +111,21 @@ const SupabaseAdmin = {
       const usuarios = (datos && datos.users) || [];
       const hallado = usuarios.find((u) => (u.email || "").toLowerCase() === objetivo);
       if (hallado) return { id: hallado.id, email: hallado.email };
+      if (usuarios.length < porPagina) break;
+    }
+    return null;
+  },
+
+  // Usuario completo (con user_metadata) por correo exacto (sin distinguir mayúsculas), o null. Recorre las páginas del listado
+  // (tope 50 x 1000): solo se usa para reparar filas de la importación, no por fila en el camino normal.
+  async obtenerPorCorreo(correo) {
+    const objetivo = String(correo).toLowerCase();
+    const porPagina = 1000;
+    for (let pagina = 1; pagina <= 50; pagina++) {
+      const datos = await solicitar("GET", `/admin/users?page=${pagina}&per_page=${porPagina}`);
+      const usuarios = (datos && datos.users) || [];
+      const hallado = usuarios.find((u) => (u.email || "").toLowerCase() === objetivo);
+      if (hallado) return hallado;
       if (usuarios.length < porPagina) break;
     }
     return null;

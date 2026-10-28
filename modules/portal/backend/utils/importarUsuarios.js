@@ -13,8 +13,9 @@ const MAX_NOMBRE = 100;
 const MAX_NOMINA = 50;
 
 const CURP_RE = /^[A-ZÑ0-9]{18}$/;
-// Parte local conservadora (sin comillas, espacios ni controles): un correo corporativo real nunca las necesita
-const LOCAL_RE = /^[a-z0-9][a-z0-9._+'-]{0,63}$/;
+// Regla de la parte local: letras minúsculas, dígitos, punto, guion bajo, guion y '+' (alias). NO se aceptan apóstrofe ni comillas.
+// '+' es válido en el correo, pero Microsoft 365 puede tratarlo como alias de otro buzón: se acepta y la vista previa AVISA
+const LOCAL_RE = /^[a-z0-9][a-z0-9._+-]{0,63}$/;
 const PRECISION = "celda numérica de 16 o más dígitos: Excel perdió la precisión; guarda la columna como Texto";
 
 const esObjeto = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
@@ -115,7 +116,8 @@ function prepararFilasUsuarios(filasCrudas) {
     };
     if (r.error) return { indice, numero, error: r.error, visible };
     r.fila.fila = numero;
-    return { indice, numero, fila: r.fila, visible };
+    const huella = typeof cruda._huella === "string" ? cruda._huella : "";
+    return { indice, numero, fila: r.fila, visible, huella };
   });
   const vistos = { correo: new Map(), curp: new Map(), nomina: new Map() };
   for (const s of salida) {
@@ -178,8 +180,10 @@ function resolverEmpleado(fila, porCurp, porNomina) {
   return { empleado, avisos };
 }
 
+const tieneAlias = (correo) => String(correo).split("@")[0].includes("+");
+
 module.exports = {
-  MAX_FILAS_IMPORTAR_USUARIOS, DOMINIO_PERMITIDO, ROL_IMPORTADO, CURP_RE,
+  tieneAlias, MAX_FILAS_IMPORTAR_USUARIOS, DOMINIO_PERMITIDO, ROL_IMPORTADO, CURP_RE,
   validarCorreoCorporativo, prepararFilaUsuario, prepararFilasUsuarios, resolverEmpleado, nombreCompatible, nombreDeEmpleado,
   sinCeros, nominaClave,
 };

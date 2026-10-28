@@ -32,6 +32,8 @@ jest.mock("../models/usuarioImportacion.model", () => {
 jest.mock("../../../rh/backend/utils/auditoriaImportacion", () => ({ auditarImportacion: jest.fn(async () => {}) }));
 
 const Modelo = require("../models/usuarioImportacion.model");
+const { prepararFilaUsuario } = require("../utils/importarUsuarios");
+const { crearHuella } = require("../utils/huellaVistaPrevia");
 const { auditarImportacion } = require("../../../rh/backend/utils/auditoriaImportacion");
 
 const app = express();
@@ -39,6 +41,8 @@ app.use(express.json());
 app.use("/api/usuarios", require("../routes/usuario.routes"));
 
 const fila = (i = 0) => ({ _fila: i + 2, correo: `u${i}@rayhsa.com.mx`, nombre: "Ana", apellido: "Prueba", numero_nomina: String(100 + i) });
+// Fila con la huella que devolvería la vista previa de este usuario (super_admin = usuario_id 2)
+const conHuella = (f, usuarioId = 2) => { const r = prepararFilaUsuario(f).fila; r.fila = f._fila; return { ...f, _huella: crearHuella(usuarioId, r) }; };
 const llamar = (token, ruta, cuerpo) => {
   const r = request(app).post(`/api/usuarios${ruta}`);
   if (token) r.set("Authorization", `Bearer ${token}`);
@@ -78,6 +82,7 @@ describe("vista previa", () => {
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ exito: true, datos: { filas: [], resumen: { total: 1 }, rol: "rh_empleado" } });
     expect(Modelo.vistaPrevia.mock.calls[0][0][0].fila.correo).toBe("u0@rayhsa.com.mx");
+    expect(Modelo.vistaPrevia.mock.calls[0][1]).toBe(2);
   });
   it.each([[{}], [{ filas: [] }], [{ filas: "x" }], [{ filas: Array.from({ length: 201 }, (_, i) => fila(i)) }]])("400 con el cuerpo %#", async (cuerpo) => {
     const r = await llamar("token-super_admin", "/importar/vista-previa", cuerpo);
@@ -114,11 +119,39 @@ describe("importar (aplicar)", () => {
     ],
   };
 
-  it("exige la confirmación explícita", async () => {
-    const r = await llamar("token-super_admin", "/importar", { filas: [fila()] });
+  it("la vista previa es obligatoria TAMBIÉN en el servidor: sin huella, con huella de otro usuario, de otra fila o vencida no se aplica nada", async () => {
+    const buena = conHuella(fila());
+    const casos = {
+      "sin huella": fila(),
+      "huella de otro usuario": conHuella(fila(), 99),
+      "fila modificada después de verificar": { ...buena, nombre: "Otro nombre" },
+      "huella basura": { ...fila(), _huella: "123.abc" },
+      "huella de otra fila": { ...fila(1), _huella: buena._huella },
+    };
+    for (const [nombre, f] of Object.entries(casos)) {
+      const r = await llamar("token-super_admin", "/importar", { filas: [f], confirmar: true });
+      expect([nombre, r.status]).toEqual([nombre, 400]);
+      expect(r.body.mensaje).toMatch(/vista previa/);
+    }
+    expect(Modelo.aplicar).not.toHaveBeenCalled();
+    Modelo.aplicar.mockResolvedValue({ creadas: 0, omitidas: 0, errores: 0, verificar: 0, filas: [] });
+    expect((await llamar("token-super_admin", "/importar", { filas: [buena], confirmar: true })).status).toBe(200);
+  });
+  it("una sola fila sin huella frena TODO el lote", async () => {
+    const r = await llamar("token-super_admin", "/importar", { filas: [conHuella(fila()), fila(1)], confirmar: true });
     expect(r.status).toBe(400);
     expect(Modelo.aplicar).not.toHaveBeenCalled();
-    expect((await llamar("token-super_admin", "/importar", { filas: [fila()], confirmar: "true" })).status).toBe(400);
+  });
+  it("las filas con error de lectura no necesitan huella (no escriben nada)", async () => {
+    Modelo.aplicar.mockResolvedValue({ creadas: 0, omitidas: 0, errores: 1, verificar: 0, filas: [] });
+    const r = await llamar("token-super_admin", "/importar", { filas: [{ _fila: 2, correo: "x@gmail.com", nombre: "A", apellido: "B", numero_nomina: "1" }], confirmar: true });
+    expect(r.status).toBe(200);
+  });
+  it("exige la confirmación explícita", async () => {
+    const r = await llamar("token-super_admin", "/importar", { filas: [conHuella(fila())] });
+    expect(r.status).toBe(400);
+    expect(Modelo.aplicar).not.toHaveBeenCalled();
+    expect((await llamar("token-super_admin", "/importar", { filas: [conHuella(fila())], confirmar: "true" })).status).toBe(400);
   });
   it.each([[{ confirmar: true }], [{ confirmar: true, filas: [] }], [{ confirmar: true, filas: Array.from({ length: 201 }, (_, i) => fila(i)) }]])("400 con el cuerpo %#", async (cuerpo) => {
     expect((await llamar("token-super_admin", "/importar", cuerpo)).status).toBe(400);
@@ -126,7 +159,7 @@ describe("importar (aplicar)", () => {
   });
   it("responde con la forma del importador y el detalle por fila", async () => {
     Modelo.aplicar.mockResolvedValue(resultado);
-    const r = await llamar("token-super_admin", "/importar", { filas: [fila()], confirmar: true });
+    const r = await llamar("token-super_admin", "/importar", { filas: [conHuella(fila())], confirmar: true });
     expect(r.status).toBe(200);
     const d = r.body.datos;
     expect(d).toMatchObject({ insertados: 1, duplicados: 1, verificar: 1 });
@@ -140,7 +173,7 @@ describe("importar (aplicar)", () => {
   });
   it("audita IMPORTAR_USUARIOS en el módulo portal SOLO con conteos e ids (sin correos, nombres ni motivos)", async () => {
     Modelo.aplicar.mockResolvedValue(resultado);
-    await llamar("token-super_admin", "/importar", { filas: [fila(), fila(1), fila(2), fila(3)], confirmar: true });
+    await llamar("token-super_admin", "/importar", { filas: [fila(), fila(1), fila(2), fila(3)].map((f) => conHuella(f)), confirmar: true });
     expect(auditarImportacion).toHaveBeenCalledTimes(1);
     const [, tabla, accion, conteos, registroId, modulo] = auditarImportacion.mock.calls[0];
     expect([tabla, accion, registroId, modulo]).toEqual(["usuarios", "IMPORTAR_USUARIOS", "importacion", "portal"]);
@@ -155,13 +188,13 @@ describe("importar (aplicar)", () => {
   it("409 de otra importación en curso: sin auditar", async () => {
     const { ErrorImportacionUsuarios } = Modelo;
     Modelo.aplicar.mockRejectedValue(new ErrorImportacionUsuarios(409, "Hay otra importación de usuarios en curso"));
-    const r = await llamar("token-super_admin", "/importar", { filas: [fila()], confirmar: true });
+    const r = await llamar("token-super_admin", "/importar", { filas: [conHuella(fila())], confirmar: true });
     expect(r.status).toBe(409);
     expect(auditarImportacion).not.toHaveBeenCalled();
   });
   it("error inesperado: 500 genérico", async () => {
     Modelo.aplicar.mockRejectedValue(new Error("connection refused db-interno"));
-    const r = await llamar("token-super_admin", "/importar", { filas: [fila()], confirmar: true });
+    const r = await llamar("token-super_admin", "/importar", { filas: [conHuella(fila())], confirmar: true });
     expect(r.status).toBe(500);
     expect(JSON.stringify(r.body)).not.toMatch(/db-interno|refused/);
   });

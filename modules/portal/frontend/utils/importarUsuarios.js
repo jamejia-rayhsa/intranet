@@ -25,7 +25,8 @@ export const FILAS_EJEMPLO_USUARIOS = [
 export const ETIQUETAS_RESULTADO_USUARIOS = {
   insertados: 'Cuentas creadas',
   duplicados: 'Omitidas (ya existen)',
-  interrupcion: 'Revisa la lista de usuarios antes de volver a importar: las cuentas ya creadas se omiten al reimportar, pero una fila "por verificar" queda inactiva y sin vincular hasta que la revises.',
+  contrasteAlto: true,
+  interrupcion: 'Vuelve a importar el mismo archivo: las cuentas ya creadas se omiten y una fila "por verificar" se completa (se consulta Supabase Auth y, si la cuenta se creó en una importación, se adopta).',
 };
 
 export const AVISO_IMPORTACION_USUARIOS =
@@ -38,17 +39,6 @@ export const AVISO_IMPORTACION_USUARIOS =
 export function puedeImportarUsuarios(usuario) {
   if (!usuario) return false;
   return usuario.rol_nombre === 'super_admin' || (Array.isArray(usuario.roles) && usuario.roles.includes('super_admin'));
-}
-
-// Texto del problema del archivo (o '' si cumple los topes de 200 filas y 1 MB).
-export function validarLimitesArchivo({ bytes, filas }) {
-  if (typeof bytes === 'number' && bytes > MAX_BYTES_ARCHIVO_USUARIOS) {
-    return `El archivo pesa más de 1 MB (${(bytes / 1024 / 1024).toFixed(1)} MB). Divídelo en archivos más pequeños.`;
-  }
-  if (typeof filas === 'number' && filas > MAX_FILAS_USUARIOS) {
-    return `El archivo tiene ${filas} filas; el máximo es ${MAX_FILAS_USUARIOS} por importación. Divídelo en varios archivos.`;
-  }
-  return '';
 }
 
 export const ETIQUETAS_ESTADO_USUARIOS = { crear: 'Se creará', omitir: 'Se omitirá', error: 'Error' };
@@ -79,13 +69,23 @@ export function textoBotonAplicar(resumen) {
   return `Crear ${resumen.crear} ${resumen.crear === 1 ? 'cuenta' : 'cuentas'}`;
 }
 
-// Cuerpo de la vista previa y de la aplicación: solo las claves de las columnas (sin campos internos como __errores).
-export function filasParaServidor(filas) {
+// Cuerpo de la vista previa y de la aplicación: solo las claves de las columnas (sin campos internos como __errores). `huellas`
+// (Map fila -> huella de la vista previa del servidor) se adjunta como `_huella`: el servidor la exige para aplicar la fila.
+export function filasParaServidor(filas, huellas) {
   const claves = COLUMNAS_USUARIOS.map((c) => c.clave);
   return (Array.isArray(filas) ? filas : []).map((f) => {
     const limpia = { _fila: f._fila };
     claves.forEach((k) => { if (f[k] !== undefined && f[k] !== '') limpia[k] = f[k]; });
     if (Array.isArray(f._precision) && f._precision.length) limpia._precision = f._precision;
+    const h = huellas && typeof huellas.get === 'function' ? huellas.get(f._fila) : undefined;
+    if (typeof h === 'string' && h) limpia._huella = h;
     return limpia;
   });
+}
+
+// Map fila -> huella a partir de la respuesta de la vista previa
+export function huellasDeVerificacion(datos) {
+  const mapa = new Map();
+  (datos && Array.isArray(datos.filas) ? datos.filas : []).forEach((f) => { if (f && typeof f.huella === 'string' && f.huella) mapa.set(f.fila, f.huella); });
+  return mapa;
 }

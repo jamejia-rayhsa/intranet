@@ -324,10 +324,11 @@ export function nombreDeError(e) {
   return '';
 }
 
-function celdaCsv(valor) {
+// Celda CSV entre comillas, con `"` duplicadas y neutralizada contra fórmulas de Excel: si el texto (tras espacios o tabuladores
+// iniciales) empieza con =, +, - o @, o empieza con tabulador o retorno de carro, se antepone un apóstrofo.
+export function celdaCsv(valor) {
   let s = valor === null || valor === undefined ? '' : String(valor);
-  // Evita que Excel interprete el texto como fórmula.
-  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  if (/^[\t\r]/.test(s) || /^[ \t\r\n]*[=+\-@]/.test(s)) s = "'" + s;
   return '"' + s.replace(/"/g, '""') + '"';
 }
 

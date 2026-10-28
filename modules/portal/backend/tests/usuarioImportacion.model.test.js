@@ -19,8 +19,14 @@ function mockResponder(sql, p) {
     return { rows: r ? [{ id: r.id }] : [] };
   }
   if (/FROM usuarios WHERE LOWER\(correo\) = ANY/.test(t)) {
-    return { rows: estado.usuarios.filter((u) => p[0].includes(u.correo.toLowerCase())).map((u) => ({ correo_l: u.correo.toLowerCase(), con_auth: u.auth_uid !== null })) };
+    return {
+      rows: estado.usuarios.filter((u) => p[0].includes(u.correo.toLowerCase())).map((u) => ({
+        id: u.id, correo_l: u.correo.toLowerCase(), con_auth: u.auth_uid !== null, activo: u.activo, auth_tipo: u.auth_tipo,
+        sin_rol: !estado.usuario_rol.some((r) => r.usuario_id === u.id), sin_empleado: !estado.empleados.some((e) => e.usuario_id === u.id),
+      })),
+    };
   }
+  if (/FROM usuarios WHERE auth_uid = \$1/.test(t)) return { rows: estado.usuarios.filter((u) => u.auth_uid === p[0]).map((u) => ({ id: u.id })) };
   const colE = (e) => ({ ...e, curp_u: (e.curp || "").toUpperCase() });
   if (/FROM empleados WHERE UPPER\(curp\)/.test(t)) return { rows: estado.empleados.filter((e) => p[0].includes((e.curp || "").toUpperCase())).map(colE) };
   if (/FROM empleados WHERE LOWER\(BTRIM\(numero_nomina\)\)/.test(t)) {
@@ -62,7 +68,11 @@ jest.mock("../config/database", () => {
         return {
           query: async (sql, p) => {
             if (/^BEGIN/.test(sql)) { copia = mockClonar(); return { rows: [] }; }
-            if (/^COMMIT/.test(sql)) { copia = null; return { rows: [] }; }
+            if (/^COMMIT/.test(sql)) {
+              mockEstado.commits = (mockEstado.commits || 0) + 1;
+              if (mockEstado.falla.commit === true || mockEstado.falla.commit === mockEstado.commits) { copia = null; throw new Error("conexión perdida en COMMIT"); }
+              copia = null; return { rows: [] };
+            }
             if (/^ROLLBACK/.test(sql)) {
               if (copia) Object.assign(mockEstado, JSON.parse(JSON.stringify(copia)));
               copia = null;
@@ -96,19 +106,20 @@ jest.mock("../../../rh/backend/utils/logSeguro", () => ({ describirErrorSql: () 
 const Modelo = require("../models/usuarioImportacion.model");
 const { prepararFilasUsuarios } = require("../utils/importarUsuarios");
 
-const gotrue = { crearUsuario: jest.fn(), eliminarUsuario: jest.fn() };
+const gotrue = { crearUsuario: jest.fn(), eliminarUsuario: jest.fn(), obtenerPorCorreo: jest.fn() };
 let n;
 const filas = (...f) => prepararFilasUsuarios(f.map((x, i) => ({ _fila: i + 2, nombre: "Ana", apellido: "Prueba Ejemplo", ...x }))).filas;
 const e = (id, extra = {}) => ({ id, nombre: "Ana", apellido_paterno: "Prueba", apellido_materno: "Ejemplo", numero_nomina: String(90000 + id), curp: "", estatus: "activo", usuario_id: null, ...extra });
 
 beforeEach(() => {
   Object.assign(estado, {
-    roles: [{ id: 4, nombre: "rh_empleado" }, { id: 1, nombre: "super_admin" }], usuarios: [], usuario_rol: [], sig: 1, bitacora: [], falla: {},
+    roles: [{ id: 4, nombre: "rh_empleado" }, { id: 1, nombre: "super_admin" }], usuarios: [], usuario_rol: [], sig: 1, bitacora: [], falla: {}, commits: 0,
     empleados: [e(1), e(2, { nombre: "Luis", apellido_paterno: "Ficticio" }), e(3, { numero_nomina: "ABC" }), e(4, { numero_nomina: "ABC" })],
   });
   n = 0;
   gotrue.crearUsuario.mockReset().mockImplementation(async () => ({ id: `uid-${++n}` }));
   gotrue.eliminarUsuario.mockReset().mockResolvedValue();
+  gotrue.obtenerPorCorreo.mockReset().mockResolvedValue(null);
   jest.spyOn(console, "error").mockImplementation(() => {});
 });
 afterEach(() => jest.restoreAllMocks());
@@ -124,20 +135,20 @@ describe("vistaPrevia (solo lectura)", () => {
     const r = await Modelo.vistaPrevia(filas(
       { correo: correo("ana"), numero_nomina: "90001" },
       { correo: correo("existe"), numero_nomina: "99991" },
-      { correo: correo("incompleta"), numero_nomina: "99992" },
+      { correo: correo("incompleta"), numero_nomina: "90002" },
       { correo: correo("ambigua"), numero_nomina: "ABC" },
       { correo: correo("baja"), numero_nomina: "90005" },
       { correo: correo("concuenta"), numero_nomina: "90006" },
       { correo: "x@gmail.com", numero_nomina: "99993" },
     ));
-    expect(r.filas.map((f) => f.estado)).toEqual(["crear", "omitir", "error", "error", "error", "error", "error"]);
+    expect(r.filas.map((f) => f.estado)).toEqual(["crear", "omitir", "crear", "error", "error", "error", "error"]);
     expect(r.filas[0].empleado).toEqual({ id: 1, nombre: "Ana Prueba Ejemplo" });
-    expect(r.filas[2].motivo).toMatch(/incompleta/);
+    expect(r.filas[2].avisos.join(" ")).toMatch(/incompleta/);
     expect(r.filas[3].motivo).toMatch(/ambiguo/);
     expect(r.filas[4].motivo).toMatch(/no está activo/);
     expect(r.filas[5].motivo).toMatch(/ya tiene una cuenta/);
     expect(r.filas[6].motivo).toMatch(/dominio/);
-    expect(r.resumen).toEqual({ total: 7, crear: 1, omitir: 1, error: 5 });
+    expect(r.resumen).toEqual({ total: 7, crear: 2, omitir: 1, error: 4 });
     expect(r.rol).toBe("rh_empleado");
     expect(JSON.stringify([estado.usuarios, estado.usuario_rol, estado.empleados])).toBe(antes);
     expect(gotrue.crearUsuario).not.toHaveBeenCalled();
@@ -236,15 +247,66 @@ describe("aplicar", () => {
   });
 
   describe("fallos de GoTrue", () => {
-    it("error HTTP definitivo (422): se borra la reserva local, no queda nada y el empleado sigue sin cuenta", async () => {
+    it("422 de una cuenta que NO creó una importación: error 'preexistente, no se adopta'; se borra la reserva y no se toca GoTrue", async () => {
       gotrue.crearUsuario.mockRejectedValue(Object.assign(new Error("Supabase Auth: dato interno ana@rayhsa.com.mx"), { status: 422, definitivo: true }));
+      gotrue.obtenerPorCorreo.mockResolvedValue({ id: "uid-ajeno", email: correo("ana"), user_metadata: { nombre: "Ana" } });
       const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
       expect(r.filas[0].estado).toBe("error");
-      expect(r.filas[0].motivo).toMatch(/ya tiene ese correo/);
+      expect(r.filas[0].motivo).toMatch(/preexistente, no se adopta/);
       expect(r.filas[0].motivo).not.toMatch(/ana@|dato interno/);
       expect(estado.usuarios).toHaveLength(0);
       expect(estado.empleados[0].usuario_id).toBeNull();
       expect(gotrue.eliminarUsuario).not.toHaveBeenCalled();
+    });
+    it("422 con una cuenta que ya usa OTRA fila local: tampoco se adopta", async () => {
+      estado.usuarios.push({ id: 90, correo: "otro@rayhsa.com.mx", nombre: "O", apellido: "T", auth_tipo: "ms365", activo: true, auth_uid: "uid-x" });
+      gotrue.crearUsuario.mockRejectedValue(Object.assign(new Error("x"), { status: 422, definitivo: true }));
+      gotrue.obtenerPorCorreo.mockResolvedValue({ id: "uid-x", email: correo("ana"), user_metadata: { origen: "importacion_usuarios" } });
+      const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      expect(r.filas[0].estado).toBe("error");
+      expect(estado.usuarios.map((u) => u.id)).toEqual([90]);
+    });
+    it("422 con una cuenta marcada por una importación y sin fila local: se ADOPTA (queda activa, con rol y vínculo)", async () => {
+      gotrue.crearUsuario.mockRejectedValue(Object.assign(new Error("x"), { status: 422, definitivo: true }));
+      gotrue.obtenerPorCorreo.mockResolvedValue({ id: "uid-huerfano", email: correo("ana"), user_metadata: { origen: "importacion_usuarios" } });
+      const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      expect(r.filas[0]).toMatchObject({ estado: "creada", empleado_id: 1 });
+      expect(estado.usuarios[0]).toMatchObject({ auth_uid: "uid-huerfano", activo: true, auth_tipo: "ms365" });
+      expect(estado.usuario_rol).toEqual([{ usuario_id: 1, rol_id: 4 }]);
+      expect(estado.empleados[0].usuario_id).toBe(1);
+    });
+    it.each([500, 502, 504, 408, 429])("un %i de GoTrue es INCIERTO: la fila queda 'verificar' y NUNCA se borra", async (http) => {
+      gotrue.crearUsuario.mockRejectedValue(Object.assign(new Error("x"), { status: http, incierto: true }));
+      const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      expect(r.filas[0]).toMatchObject({ estado: "verificar", usuario_id: 1 });
+      expect(estado.usuarios).toHaveLength(1);
+      expect(estado.usuarios[0]).toMatchObject({ activo: false, auth_uid: null });
+      expect(gotrue.eliminarUsuario).not.toHaveBeenCalled();
+    });
+    it("la vista previa avisa del alias con '+' (sin bloquear la fila)", async () => {
+    const r = await Modelo.vistaPrevia(filas({ correo: correo("ana+rh"), numero_nomina: "90001" }));
+    expect(r.filas[0].estado).toBe("crear");
+    expect(r.filas[0].avisos.join(" ")).toMatch(/alias con '\+'/);
+  });
+  it("una excepción inesperada al llamar a GoTrue (sin marca) también es 'verificar' y no borra la fila", async () => {
+      gotrue.crearUsuario.mockRejectedValue(new TypeError("Cannot read properties of null"));
+      const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      expect(r.filas[0].estado).toBe("verificar");
+      expect(estado.usuarios).toHaveLength(1);
+    });
+    it("un fallo al consultar GoTrue para decidir la adopción también es 'verificar'", async () => {
+      gotrue.crearUsuario.mockRejectedValue(Object.assign(new Error("x"), { status: 422, definitivo: true }));
+      gotrue.obtenerPorCorreo.mockRejectedValue(Object.assign(new Error("t"), { status: 503, incierto: true }));
+      const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      expect(r.filas[0].estado).toBe("verificar");
+      expect(estado.usuarios).toHaveLength(1);
+    });
+    it("la cuenta se crea marcada con el origen de la importación y SIN datos internos (usuario_id)", async () => {
+      await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      const meta = gotrue.crearUsuario.mock.calls[0][0].metadata;
+      expect(meta).toMatchObject({ origen: "importacion_usuarios", nombre: "Ana" });
+      expect(meta.importacion).toMatch(/^[0-9a-f-]{36}$/);
+      expect(meta).not.toHaveProperty("usuario_id");
     });
     it("error 500 definitivo: mensaje propio sin texto de GoTrue", async () => {
       gotrue.crearUsuario.mockRejectedValue(Object.assign(new Error("SUPABASE_SERVICE_ROLE_KEY no configurada"), { status: 500, definitivo: true }));
@@ -252,20 +314,58 @@ describe("aplicar", () => {
       expect(r.filas[0].motivo).toMatch(/no está configurado/);
       expect(r.filas[0].motivo).not.toMatch(/KEY/);
     });
-    it("sin respuesta (timeout): resultado INCIERTO, no se compensa; la fila queda inactiva, sin auth_uid y sin vínculo, y un reintento la reporta", async () => {
+    it("sin respuesta (timeout): INCIERTO, no se compensa; la fila queda inactiva, sin auth_uid y sin vínculo", async () => {
       gotrue.crearUsuario.mockRejectedValue(Object.assign(new Error("Tiempo agotado"), { status: 503, incierto: true }));
       const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
       expect(r).toMatchObject({ creadas: 0, verificar: 1 });
       expect(r.filas[0]).toMatchObject({ estado: "verificar", usuario_id: 1 });
-      expect(r.filas[0].motivo).toMatch(/No se pudo confirmar/);
+      expect(r.filas[0].motivo).toMatch(/No se pudo confirmar.*Vuelve a importar/);
+      expect(r.filas[0].motivo).not.toMatch(/elimínala/);
       expect(estado.usuarios[0]).toMatchObject({ activo: false, auth_uid: null });
       expect(estado.usuario_rol).toHaveLength(0);
       expect(estado.empleados[0].usuario_id).toBeNull();
       expect(gotrue.eliminarUsuario).not.toHaveBeenCalled();
-      gotrue.crearUsuario.mockReset().mockResolvedValue({ id: "uid-x" });
-      const r2 = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
-      expect(r2.filas[0].estado).toBe("error");
-      expect(r2.filas[0].motivo).toMatch(/incompleta/);
+    });
+    it("REINTENTO tras un 'verificar': la vista previa lo ofrece como 'crear' con aviso y al aplicar ADOPTA la cuenta que GoTrue sí creó", async () => {
+      gotrue.crearUsuario.mockRejectedValue(Object.assign(new Error("t"), { status: 504, incierto: true }));
+      await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      gotrue.crearUsuario.mockReset();
+      gotrue.obtenerPorCorreo.mockResolvedValue({ id: "uid-creado-antes", email: correo("ana"), user_metadata: { origen: "importacion_usuarios", importacion: "x" } });
+      const vp = await Modelo.vistaPrevia(filas({ correo: correo("ana"), numero_nomina: "90001" }), 2);
+      expect(vp.filas[0].estado).toBe("crear");
+      expect(vp.filas[0].avisos.join(" ")).toMatch(/incompleta/);
+      const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      expect(r.filas[0]).toMatchObject({ estado: "creada", usuario_id: 1, empleado_id: 1 });
+      expect(r.filas[0].avisos).toEqual([]);
+      expect(gotrue.crearUsuario).not.toHaveBeenCalled();
+      expect(estado.usuarios).toHaveLength(1);
+      expect(estado.usuarios[0]).toMatchObject({ auth_uid: "uid-creado-antes", activo: true });
+      expect(estado.usuario_rol).toEqual([{ usuario_id: 1, rol_id: 4 }]);
+      expect(estado.empleados[0].usuario_id).toBe(1);
+    });
+    it("REINTENTO cuando GoTrue NO conservó la cuenta (el alta nunca llegó): se crea y se completa la misma fila", async () => {
+      gotrue.crearUsuario.mockRejectedValueOnce(Object.assign(new Error("t"), { status: 503, incierto: true }));
+      await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      expect(r.filas[0].estado).toBe("creada");
+      expect(estado.usuarios).toHaveLength(1);
+      expect(estado.usuarios[0].auth_uid).toBe("uid-1");
+    });
+    it("REINTENTO con una cuenta PREEXISTENTE en GoTrue (sin la marca de importación): error 'no se adopta' y la fila incompleta se conserva", async () => {
+      gotrue.crearUsuario.mockRejectedValueOnce(Object.assign(new Error("t"), { status: 503, incierto: true }));
+      await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      gotrue.obtenerPorCorreo.mockResolvedValue({ id: "uid-de-otro", email: correo("ana"), user_metadata: {} });
+      const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      expect(r.filas[0].estado).toBe("error");
+      expect(r.filas[0].motivo).toMatch(/preexistente, no se adopta/);
+      expect(estado.usuarios[0]).toMatchObject({ activo: false, auth_uid: null });
+      expect(estado.empleados[0].usuario_id).toBeNull();
+    });
+    it("una fila incompleta que YA tiene rol o empleado no se repara sola (error)", async () => {
+      estado.usuarios.push({ id: 60, correo: correo("ana"), nombre: "A", apellido: "B", auth_tipo: "ms365", activo: false, auth_uid: null });
+      estado.usuario_rol.push({ usuario_id: 60, rol_id: 1 });
+      const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      expect(r.filas[0].estado).toBe("error");
       expect(gotrue.crearUsuario).not.toHaveBeenCalled();
     });
     it("tras 3 respuestas inciertas seguidas se detiene: las demás filas no escriben nada", async () => {
@@ -290,7 +390,7 @@ describe("aplicar", () => {
       estado.falla.borrarFila = true;
       const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
       expect(r.filas[0]).toMatchObject({ estado: "verificar", usuario_id: 1 });
-      expect(r.filas[0].motivo).toMatch(/elimínala/);
+      expect(r.filas[0].motivo).toMatch(/vuelve a importar/);
     });
   });
 
@@ -312,6 +412,48 @@ describe("aplicar", () => {
       expect(r.filas[0]).toMatchObject({ estado: "verificar", usuario_id: 1 });
       expect(estado.usuarios[0]).toMatchObject({ auth_uid: "uid-1", activo: false });
       expect(estado.usuario_rol).toHaveLength(0);
+    });
+    it("un COMMIT sin confirmar es INCIERTO: no se borra nada en GoTrue ni en la BD (el reintento lo completa)", async () => {
+      estado.falla.commit = true;
+      const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      // el COMMIT de la reserva (paso A) ya falló: sin reserva confirmada no hay nada que borrar ni crear
+      expect(["error", "verificar"]).toContain(r.filas[0].estado);
+      expect(gotrue.eliminarUsuario).not.toHaveBeenCalled();
+    });
+    it("el COMMIT de la activación sin confirmar (la tx pudo aplicarse): 'verificar', sin borrar la cuenta de GoTrue ni la fila", async () => {
+      estado.falla.commit = 2; // 1.º COMMIT = reserva (A), 2.º = activación (C)
+      const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      expect(r.filas[0]).toMatchObject({ estado: "verificar", usuario_id: 1 });
+      expect(r.filas[0].motivo).toMatch(/No se pudo confirmar la activación/);
+      expect(gotrue.eliminarUsuario).not.toHaveBeenCalled();
+      expect(estado.usuarios).toHaveLength(1);
+    });
+    it("el vínculo se comprueba DENTRO de la transacción: si no quedó 'vinculada' se hace ROLLBACK (no queda cuenta activa)", async () => {
+      const Cuenta = require("../../../rh/backend/models/empleadoCuenta.model");
+      Cuenta.vincularEnTransaccion.mockImplementationOnce(async () => ({ vinculadas: 0, omitidas: 1, detalle: [{ usuario_id: 1, empleado_id: 1, resultado: "omitida" }] }));
+      const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      expect(r.filas[0].estado).toBe("error");
+      expect(estado.usuarios).toHaveLength(0);
+      expect(estado.usuario_rol).toHaveLength(0);
+      expect(gotrue.eliminarUsuario).toHaveBeenCalledWith("uid-1");
+    });
+    it("un error inesperado en la activación es 'verificar': no se borra la fila ni la cuenta de GoTrue (el reintento la adopta)", async () => {
+      const Cuenta = require("../../../rh/backend/models/empleadoCuenta.model");
+      Cuenta.vincularEnTransaccion.mockImplementationOnce(async () => { throw new TypeError("inesperado"); });
+      const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      expect(r.filas[0]).toMatchObject({ estado: "verificar", usuario_id: 1 });
+      expect(gotrue.eliminarUsuario).not.toHaveBeenCalled();
+      expect(estado.usuarios[0]).toMatchObject({ activo: false, auth_uid: null });
+      expect(estado.usuario_rol).toHaveLength(0);
+    });
+    it("si el vínculo falla con una cuenta ADOPTADA no se borra la cuenta de GoTrue: la fila conserva su auth_uid (inactiva)", async () => {
+      gotrue.crearUsuario.mockRejectedValue(Object.assign(new Error("x"), { status: 422, definitivo: true }));
+      gotrue.obtenerPorCorreo.mockResolvedValue({ id: "uid-huerfano", email: correo("ana"), user_metadata: { origen: "importacion_usuarios" } });
+      estado.falla.vinculo = true;
+      const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      expect(r.filas[0].estado).toBe("error");
+      expect(gotrue.eliminarUsuario).not.toHaveBeenCalled();
+      expect(estado.usuarios[0]).toMatchObject({ auth_uid: "uid-huerfano", activo: false });
     });
     it("el candado ocupado (55P03) en el paso C se informa como bloqueo y se deshace", async () => {
       const original = estado.bitacora;
@@ -339,7 +481,7 @@ describe("aplicar", () => {
     let liberar;
     gotrue.crearUsuario.mockImplementationOnce(() => new Promise((resolver) => { liberar = () => resolver({ id: "uid-1" }); }));
     const primera = Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
-    await new Promise((r) => setTimeout(r, 20));
+    while (!liberar) await new Promise((r) => setTimeout(r, 5)); // la primera ya espera a GoTrue
     await expect(Modelo.aplicar(filas({ correo: correo("luis"), nombre: "Luis", apellido: "Ficticio", numero_nomina: "90002" }), { servicio: gotrue }))
       .rejects.toMatchObject({ estado: 409, message: expect.stringMatching(/en curso/) });
     liberar();

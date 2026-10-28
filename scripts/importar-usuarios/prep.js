@@ -11,7 +11,7 @@ const { Pool } = require(`${WT}/node_modules/pg`);
 const jwt = require(`${WT}/node_modules/jsonwebtoken`);
 const pg = new Pool({ connectionString: `postgres://postgres:pw@127.0.0.1:${process.env.VERIF_PG_PORT || 55430}/postgres`, max: 4 });
 const q = (s, p) => pg.query(s, p);
-const SECRETO = "secreto-de-prueba-harness-cuentas-0123456789abcdef";
+const SECRETO = "secreto-de-prueba-harness-gotrue-0123456789abcdef";
 const GOTRUE = process.env.VERIF_GOTRUE_REAL || "http://127.0.0.1:9998";
 const CLAVE = jwt.sign({ role: "service_role", aud: "authenticated" }, "secreto-de-prueba-harness-gotrue-0123456789abcdef", { expiresIn: "6h" });
 const gt = (metodo, ruta, cuerpo) => fetch(GOTRUE + ruta, { method: metodo, headers: { apikey: CLAVE, Authorization: `Bearer ${CLAVE}`, "Content-Type": "application/json" }, body: cuerpo ? JSON.stringify(cuerpo) : undefined });

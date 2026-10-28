@@ -26,7 +26,17 @@ const api = async (rol, metodo, ruta, cuerpo, crudo) => {
   let json = null; try { json = await r.json(); } catch {}
   return { status: r.status, json };
 };
-const imp = (rol, ruta, cuerpo) => api(rol, "POST", `/usuarios/importar${ruta}`, cuerpo);
+// Aplicar SIEMPRE pasa antes por la vista previa y adjunta la huella firmada de cada fila (el servidor la exige). `cuerpo.sinHuella`: no adjuntarla
+const imp = async (rol, ruta, cuerpo) => {
+  if (ruta === "" && cuerpo && Array.isArray(cuerpo.filas) && !cuerpo.sinHuella) {
+    const vp = await api(rol, "POST", "/usuarios/importar/vista-previa", { filas: cuerpo.filas });
+    if (vp.status === 200) {
+      const m = new Map(vp.json.datos.filas.map((x) => [x.fila, x.huella]));
+      cuerpo = { ...cuerpo, filas: cuerpo.filas.map((f) => (m.get(f._fila) ? { ...f, _huella: m.get(f._fila) } : f)) };
+    }
+  } else if (cuerpo && cuerpo.sinHuella) cuerpo = { ...cuerpo, sinHuella: undefined };
+  return api(rol, "POST", `/usuarios/importar${ruta}`, cuerpo);
+};
 const CLAVE = jwt.sign({ role: "service_role", aud: "authenticated" }, "secreto-de-prueba-harness-gotrue-0123456789abcdef", { expiresIn: "3h" });
 const gt = (metodo, ruta, cuerpo, base = GOTRUE) => fetch(base + ruta, { method: metodo, headers: { apikey: CLAVE, Authorization: `Bearer ${CLAVE}`, "Content-Type": "application/json" }, body: cuerpo ? JSON.stringify(cuerpo) : undefined });
 const gotrueUsuarios = async () => (await (await gt("GET", "/admin/users?page=1&per_page=1000")).json()).users || [];
@@ -121,7 +131,7 @@ const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
   const ap3 = await imp("super_admin", "", { filas: [f(3, { _fila: 2 }), { _fila: 3, correo: "x@gmail.com", nombre: "X", apellido: "Y", numero_nomina: "N1005" }, { _fila: 4, correo: "dup@rayhsa.com.mx", nombre: "Dora", apellido: "Duplicada", numero_nomina: "DUP-1" }, { _fila: 5, correo: "baja@rayhsa.com.mx", nombre: "Beto", apellido: "Baja", numero_nomina: "BAJA1" }, { _fila: 6, correo: "cc@rayhsa.com.mx", nombre: "Cata", apellido: "ConCuenta", numero_nomina: "CCTA1" }, { _fila: 7, correo: "existe@rayhsa.com.mx", nombre: "Existe", apellido: "Previo", numero_nomina: "N1010" }, { _fila: 8, correo: "fantasma@rayhsa.com.mx", nombre: "Fan", apellido: "Tasma", numero_nomina: "N1011" }], confirmar: true });
   const d3 = ap3.json?.datos;
   ok("1 creada, 1 omitida, 5 errores y cada fila reportada con su número", d3?.insertados === 1 && d3.duplicados === 1 && d3.errores.length === 5 && d3.filas.length === 7 && d3.filas.map((x) => `${x.fila}:${x.estado}`).join() === "2:creada,3:error,4:error,5:error,6:error,7:omitida,8:error", JSON.stringify(d3?.filas?.map((x) => [x.fila, x.estado])));
-  ok("correo ya en GoTrue sin fila local: error, NO se adopta y la reserva local se borró", (await q("SELECT count(*)::int n FROM usuarios WHERE correo='fantasma@rayhsa.com.mx'")).rows[0].n === 0 && /ya tiene ese correo/.test((d3.errores.find((e) => e.fila === 8) || {}).error || ""));
+  ok("correo ya en GoTrue sin fila local: error, NO se adopta y la reserva local se borró", (await q("SELECT count(*)::int n FROM usuarios WHERE correo='fantasma@rayhsa.com.mx'")).rows[0].n === 0 && /preexistente, no se adopta/.test((d3.errores.find((e) => e.fila === 8) || {}).error || ""));
   ok("el usuario existente no se tocó (conserva su rol rh_admin y su auth_uid)", (await q("SELECT u.auth_uid, array_agg(r.nombre) r FROM usuarios u JOIN usuario_rol ur ON ur.usuario_id=u.id JOIN roles r ON r.id=ur.rol_id WHERE u.id=$1 GROUP BY u.auth_uid", [E.existente])).rows[0].r.join() === "rh_admin");
   ok("solo 1 usuario nuevo en BD y 1 en GoTrue (la creada)", (await q("SELECT count(*)::int n FROM usuarios")).rows[0].n === n2 + 1 && (await gotrueUsuarios()).length === g2 + 1);
   ok("ninguna fila de error dejó cuentas sin vincular ni inactivas", (await q("SELECT count(*)::int n FROM usuarios WHERE auth_uid IS NULL OR activo=false")).rows[0].n === 0);
@@ -152,6 +162,8 @@ const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
   ok("no se cambió ni el nombre (nada se escribe) ni la contraseña en GoTrue", (await q("SELECT nombre FROM usuarios WHERE id=$1", [u1.id])).rows[0].nombre === "Nom1" && (await bdGo.query("SELECT encrypted_password p FROM auth.users WHERE id=$1", [u1.auth_uid])).rows[0].p === hashAntesPut);
   ok("entrar con esa contraseña sigue fallando", (await fetch(`${GOTRUE}/token?grant_type=password`, { method: "POST", headers: { apikey: CLAVE, "Content-Type": "application/json" }, body: JSON.stringify({ email: "n1@rayhsa.com.mx", password: "Nueva12345!" }) })).status === 400);
   ok("PUT sin contraseña a la cuenta ms365 (editar nombre) sigue funcionando", (await api("super_admin", "PUT", `/usuarios/${u1.id}`, { nombre: "Cambiado" })).status === 200);
+  const cp = await api("portal_admin", "POST", "/auth/cambiar-password", { contraseña_actual: "x", contraseña_nueva: "Nueva12345!" });
+  ok("POST /auth/cambiar-password de una cuenta ms365 -> 400 (no puede ponerse contraseña local) sin tocar GoTrue", cp.status === 400 && /Microsoft/.test(cp.json.mensaje));
   const loc = await api("super_admin", "POST", "/usuarios", { correo: "local1@rayhsa.com.mx", nombre: "Local", apellido: "Uno", contraseña: "Inicial12345!" });
   ok("(control) crear una cuenta local con contraseña sigue funcionando", loc.status === 201, JSON.stringify(loc.json));
   const putLocal = await api("super_admin", "PUT", `/usuarios/${loc.json.datos.id}`, { contraseña: "Otra12345!!" });
@@ -159,9 +171,14 @@ const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 
   console.log("\n== 9. Fallos de GoTrue (proxy de fallos delante de GoTrue real)");
   sembrar();
+  await modoProxy("http400");
+  const r400 = await imp("super_admin", "", { filas: [f(1)], confirmar: true });
+  ok("rechazo 4xx definitivo de GoTrue: fila en error, reserva local borrada, sin vínculo", r400.status === 200 && r400.json.datos.errores.length === 1 && !/Verificar/.test(r400.json.datos.errores[0].error) && (await q("SELECT count(*)::int n FROM usuarios WHERE correo='n1@rayhsa.com.mx'")).rows[0].n === 0 && (await q("SELECT usuario_id FROM empleados WHERE id=$1", [estado().emp[1]])).rows[0].usuario_id === null, JSON.stringify(r400.json?.datos?.errores));
   await modoProxy("http500");
-  const r500 = await imp("super_admin", "", { filas: [f(1)], confirmar: true });
-  ok("error HTTP definitivo de GoTrue: fila en error, sin reserva local ni vínculo", r500.status === 200 && r500.json.datos.errores.length === 1 && (await q("SELECT count(*)::int n FROM usuarios WHERE correo='n1@rayhsa.com.mx'")).rows[0].n === 0 && (await q("SELECT usuario_id FROM empleados WHERE id=$1", [estado().emp[1]])).rows[0].usuario_id === null, JSON.stringify(r500.json?.datos?.errores));
+  const r500 = await imp("super_admin", "", { filas: [f(2)], confirmar: true });
+  ok("un 500 de GoTrue es INCIERTO: 'verificar' y la fila local NO se borra", r500.status === 200 && r500.json.datos.verificar === 1 && (await q("SELECT count(*)::int n FROM usuarios WHERE correo='n2@rayhsa.com.mx'")).rows[0].n === 1);
+  await modoProxy("normal");
+  sembrar();
   await modoProxy("colgar");
   const t0 = Date.now();
   const rTo = await imp("super_admin", "", { filas: [f(1)], confirmar: true });
@@ -171,12 +188,69 @@ const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
   ok("la fila local quedó inactiva, sin auth_uid, sin rol y sin vínculo", inc && inc.activo === false && inc.auth_uid === null && (await q("SELECT count(*)::int n FROM usuario_rol WHERE usuario_id=$1", [inc.id])).rows[0].n === 0 && (await q("SELECT usuario_id FROM empleados WHERE id=$1", [estado().emp[1]])).rows[0].usuario_id === null);
   await modoProxy("normal");
   const reint = await imp("super_admin", "/vista-previa", { filas: [f(1)] });
-  ok("la vista previa avisa 'cuenta incompleta' (no la oculta ni la adopta)", reint.json.datos.filas[0].estado === "error" && /incompleta/.test(reint.json.datos.filas[0].motivo));
-  const del = await api("super_admin", "DELETE", `/usuarios/${inc.id}`);
-  ok("el administrador la elimina desde Administración de usuarios (sin auth_uid no llama a GoTrue)", del.status === 200);
+  ok("el reintento: la vista previa lo ofrece como 'crear' con aviso de cuenta incompleta (no lo bloquea)", reint.json.datos.filas[0].estado === "crear" && /incompleta/.test(reint.json.datos.filas[0].avisos.join(" ")));
   const rOk = await imp("super_admin", "", { filas: [f(1)], confirmar: true });
-  ok("tras eliminarla, reintentar crea la cuenta bien", rOk.status === 200 && rOk.json.datos.insertados === 1);
+  ok("el reintento completa la MISMA fila (sin duplicar): activa, auth_uid de GoTrue, rol y vínculo", rOk.status === 200 && rOk.json.datos.insertados === 1 && (await q("SELECT count(*)::int n FROM usuarios WHERE correo='n1@rayhsa.com.mx'")).rows[0].n === 1 && (await q("SELECT activo, auth_uid FROM usuarios WHERE id=$1", [inc.id])).rows[0].activo === true);
   await modoProxy("normal");
+
+  console.log("\n== 9b. GoTrue CREA la cuenta y la respuesta falla (5xx, 502/504 del intermediario, 2xx sin JSON, timeout): 'verificar', NUNCA se borra; el reintento ADOPTA");
+  const variantes = [["500", { modo: "despues", codigo: 500 }], ["502", { modo: "despues", codigo: 502 }], ["504", { modo: "despues", codigo: 504 }], ["2xx sin JSON", { modo: "despues", sinJson: true }], ["timeout tras crear", { modo: "despues", colgar: true }]];
+  for (const [i, [nombre, modo]] of variantes.entries()) {
+    sembrar();
+    const emp = estado().emp[10 + i];
+    const fi = f(10 + i);
+    await fetch(`${PROXY}/__modo`, { method: "POST", body: JSON.stringify(modo) });
+    const antesPost = (await logProxy()).filter((x) => x.metodo === "POST").length;
+    const rv = await imp("super_admin", "", { filas: [fi], confirmar: true });
+    await modoProxy("normal");
+    const loc = (await q("SELECT id, activo, auth_uid FROM usuarios WHERE correo=$1", [fi.correo])).rows[0];
+    const enGo = await gotrueCorreo(fi.correo);
+    ok(`${nombre}: la fila queda 'verificar' (no 'error'), la reserva local NO se borra y GoTrue sí tiene la cuenta`, rv.status === 200 && rv.json.datos.verificar === 1 && rv.json.datos.errores.length === 1 && /Verificar/.test(rv.json.datos.errores[0].error) && loc && loc.activo === false && loc.auth_uid === null && Boolean(enGo), JSON.stringify(rv.json?.datos?.errores));
+    ok(`${nombre}: el mensaje manda a reimportar (no a 'eliminar en Administración de usuarios')`, /Vuelve a importar/.test(rv.json.datos.errores[0].error) && !/elimín/i.test(rv.json.datos.errores[0].error));
+    const rAd = await imp("super_admin", "", { filas: [fi], confirmar: true });
+    const loc2 = (await q("SELECT id, activo, auth_uid FROM usuarios WHERE correo=$1", [fi.correo])).rows[0];
+    const postsDespues = (await logProxy()).filter((x) => x.metodo === "POST").length;
+    ok(`${nombre}: el reintento ADOPTA la cuenta de GoTrue (misma fila, auth_uid = id de GoTrue, activa, rol y vínculo) sin crear otra`, rAd.status === 200 && rAd.json.datos.insertados === 1 && loc2.id === loc.id && loc2.auth_uid === enGo.id && loc2.activo === true && (await q("SELECT usuario_id FROM empleados WHERE id=$1", [emp])).rows[0].usuario_id === loc.id && (await q("SELECT count(*)::int n FROM usuario_rol WHERE usuario_id=$1", [loc.id])).rows[0].n === 1 && postsDespues === antesPost + 1, JSON.stringify(rAd.json?.datos?.errores));
+  }
+  {
+    sembrar();
+    await imp("super_admin", "", { filas: [f(20)], confirmar: true });
+    const m = (await gotrueCorreo("n20@rayhsa.com.mx")).user_metadata;
+    ok("metadata en GoTrue: origen e importacion (uuid); sin usuario_id", m.origen === "importacion_usuarios" && /^[0-9a-f-]{36}$/.test(m.importacion) && !("usuario_id" in m) && m.nombre === "Nom20", JSON.stringify(m));
+  }
+
+  console.log("\n== 9c. Preexistente que NO se adopta / huérfana marcada que SÍ se adopta (sin panel de GoTrue)");
+  sembrar();
+  await gt("POST", "/admin/users", { email: "ajena@rayhsa.com.mx", email_confirm: true, user_metadata: { nombre: "Ajena" } });
+  await q("INSERT INTO usuarios (correo, nombre, apellido, auth_tipo, activo, auth_uid) VALUES ('ajena@rayhsa.com.mx','Ajena','X','ms365',false,NULL)");
+  const rAj = await imp("super_admin", "", { filas: [{ _fila: 2, correo: "ajena@rayhsa.com.mx", nombre: "Ajena", apellido: "X", numero_nomina: "N1030" }], confirmar: true });
+  ok("fila incompleta + cuenta de GoTrue SIN la marca de importación: error 'preexistente, no se adopta'", rAj.status === 200 && rAj.json.datos.errores.length === 1 && /preexistente, no se adopta/.test(rAj.json.datos.errores[0].error));
+  ok("no se tocó nada: la fila local sigue incompleta, el empleado libre y la cuenta de GoTrue intacta (sin password nuevo ni borrado)", (await q("SELECT activo, auth_uid FROM usuarios WHERE correo='ajena@rayhsa.com.mx'")).rows[0].auth_uid === null && (await q("SELECT usuario_id FROM empleados WHERE id=$1", [estado().emp[30]])).rows[0].usuario_id === null && Boolean(await gotrueCorreo("ajena@rayhsa.com.mx")));
+  await gt("POST", "/admin/users", { email: "huerfana@rayhsa.com.mx", email_confirm: true, user_metadata: { origen: "importacion_usuarios", importacion: "previa" } });
+  const rHu = await imp("super_admin", "", { filas: [{ _fila: 2, correo: "huerfana@rayhsa.com.mx", nombre: "Huerfana", apellido: "Y", numero_nomina: "N1031" }], confirmar: true });
+  ok("cuenta marcada por una importación SIN fila local (alguien borró la fila): GoTrue da 422 y se ADOPTA", rHu.status === 200 && rHu.json.datos.insertados === 1 && (await q("SELECT activo, auth_uid FROM usuarios WHERE correo='huerfana@rayhsa.com.mx'")).rows[0].auth_uid === (await gotrueCorreo("huerfana@rayhsa.com.mx")).id, JSON.stringify(rHu.json?.datos?.errores));
+  await gt("POST", "/admin/users", { email: "enuso@rayhsa.com.mx", email_confirm: true, user_metadata: { origen: "importacion_usuarios" } });
+  const idUso = (await gotrueCorreo("enuso@rayhsa.com.mx")).id;
+  await q("INSERT INTO usuarios (correo, nombre, apellido, auth_tipo, activo, auth_uid) VALUES ('otro-correo@rayhsa.com.mx','O','T','ms365',true,$1)", [idUso]);
+  const rUso = await imp("super_admin", "", { filas: [{ _fila: 2, correo: "enuso@rayhsa.com.mx", nombre: "En", apellido: "Uso", numero_nomina: "N1032" }], confirmar: true });
+  ok("cuenta marcada pero YA usada por otra fila local: no se adopta (error) y no queda reserva", rUso.json.datos.errores.length === 1 && /no se adopta/.test(rUso.json.datos.errores[0].error) && (await q("SELECT count(*)::int n FROM usuarios WHERE correo='enuso@rayhsa.com.mx'")).rows[0].n === 0);
+
+  console.log("\n== 9d. Vista previa obligatoria TAMBIÉN en el servidor (huella firmada) y tope de 1 MB");
+  sembrar();
+  const sinH = await imp("super_admin", "", { filas: [f(1)], confirmar: true, sinHuella: true });
+  ok("aplicar sin huella de la vista previa -> 400 y no escribe nada", sinH.status === 400 && /vista previa/.test(sinH.json.mensaje) && (await q("SELECT count(*)::int n FROM usuarios WHERE correo='n1@rayhsa.com.mx'")).rows[0].n === 0);
+  const vpH = await imp("super_admin", "/vista-previa", { filas: [f(1)] });
+  const huella = vpH.json.datos.filas[0].huella;
+  ok("la vista previa devuelve una huella por fila válida", typeof huella === "string" && /^\d+\.[0-9a-f]{64}$/.test(huella));
+  ok("huella con la fila modificada o de otra fila -> 400", (await api("super_admin", "POST", "/usuarios/importar", { filas: [{ ...f(1), nombre: "Cambiado", _huella: huella }], confirmar: true })).status === 400 && (await api("super_admin", "POST", "/usuarios/importar", { filas: [{ ...f(2), _huella: huella }], confirmar: true })).status === 400);
+  ok("con la huella correcta se aplica", (await api("super_admin", "POST", "/usuarios/importar", { filas: [{ ...f(1), _huella: huella }], confirmar: true })).json.datos.insertados === 1);
+  const relleno = Array.from({ length: 200 }, (_, i) => ({ ...f(i + 1), relleno: "x".repeat(1500) }));
+  const grande1 = await api("super_admin", "POST", "/usuarios/importar/vista-previa", { filas: relleno });
+  ok("un cuerpo de ~300 kb (200 filas) ya pasa (límite de la ruta: 1 MB, no los 100 kb globales)", grande1.status === 200);
+  const rr = await fetch(`http://127.0.0.1:${PUERTO_API}/api/usuarios/importar/vista-previa`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${estado().tokens.super_admin}` }, body: JSON.stringify({ filas: [f(1)], relleno: "x".repeat(1.2 * 1024 * 1024) }) });
+  const rj = await rr.json().catch(() => null);
+  ok("un cuerpo de más de 1 MB -> 413 en JSON (exito:false)", rr.status === 413 && rj && rj.exito === false);
+  ok("el resto de la API conserva su límite de 100 kb (POST /usuarios con 200 kb -> 413)", (await api("super_admin", "POST", "/usuarios", undefined, JSON.stringify({ correo: "x@rayhsa.com.mx", nombre: "x", relleno: "x".repeat(200 * 1024) }))).status === 413);
 
   console.log("\n== 10. Fallo en la activación/vínculo (paso C): se deshace TODO, incluida la cuenta de GoTrue");
   sembrar();
@@ -223,6 +297,29 @@ const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
   ok("auditoría de 200 filas: 200 ids y 200 pares, sin datos personales", audit200.creadas === 200 && audit200.usuarios_creados.length === 200 && audit200.pares.length === 200 && !/@/.test(JSON.stringify(audit200)));
   const sinPool = await api("super_admin", "GET", "/usuarios");
   ok("la API sigue respondiendo tras la importación (pool sano)", sinPool.status === 200);
+
+  console.log("\n== 13. I-2: ¿puede una cuenta ms365 obtener contraseña por la puerta pública de GoTrue? (GoTrue real, sin cambiar su configuración)");
+  sembrar();
+  await imp("super_admin", "", { filas: [f(40)], confirmar: true });
+  const correo40 = "n40@rayhsa.com.mx";
+  const base = (ruta, metodo, cuerpo, token) => fetch(`${GOTRUE}${ruta}`, { method: metodo, headers: { apikey: CLAVE, "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: cuerpo ? JSON.stringify(cuerpo) : undefined });
+  const rec = await base("/recover", "POST", { email: correo40 });
+  console.log(`  INFO POST /recover (público, sin autenticar) para la cuenta importada -> HTTP ${rec.status} ${(await rec.text()).slice(0, 80)}`);
+  const enlace = await (await gt("POST", "/admin/generate_link", { type: "recovery", email: correo40 })).json();
+  const tokenRec = enlace.hashed_token;
+  const ver = await base(`/verify`, "POST", { type: "recovery", token_hash: tokenRec });
+  const sesion = await ver.json();
+  console.log(`  INFO el titular del buzón abre el enlace de recuperación -> HTTP ${ver.status}, sesión ${sesion.access_token ? "OBTENIDA" : "no obtenida"}`);
+  const putU = await base("/user", "PUT", { password: "ClavePropia12345!" }, sesion.access_token);
+  console.log(`  INFO PUT /user { password } con esa sesión -> HTTP ${putU.status}`);
+  const login = await base("/token?grant_type=password", "POST", { email: correo40, password: "ClavePropia12345!" });
+  const sesionPw = await login.json();
+  console.log(`  INFO inicio de sesión por correo+contraseña SIN pasar por Microsoft -> HTTP ${login.status}${sesionPw.access_token ? " (token emitido)" : ""}`);
+  if (sesionPw.access_token) {
+    const perfil = await fetch(`http://127.0.0.1:${PUERTO_API}/api/auth/perfil`, { headers: { Authorization: `Bearer ${sesionPw.access_token}` } });
+    console.log(`  INFO el backend acepta ese token (no comprueba el proveedor) -> GET /auth/perfil HTTP ${perfil.status}`);
+    ok("HALLAZGO I-2 reproducido: la cuenta ms365 obtuvo una contraseña por GoTrue y el backend acepta el token (se escala al humano; no se cambió configuración)", putU.status === 200 && login.status === 200 && perfil.status === 200);
+  } else ok("I-2: la cuenta ms365 NO pudo obtener contraseña por GoTrue", false, `PUT ${putU.status}`);
 
   await bdGo.end();
   await pg.end();

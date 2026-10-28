@@ -8,17 +8,10 @@ const U = cargarUtilEsm("importarUsuarios.js", path.join(frontend, "utils"));
 const leer = (...p) => fs.readFileSync(path.join(frontend, ...p), "utf8");
 
 describe("topes del archivo (200 filas y 1 MB)", () => {
-  it("los valores son los de la decisión", () => {
+  it("los valores son los de la decisión y se los pasa el diálogo a ImportadorArchivo, que valida antes de la vista previa", () => {
     expect(U.MAX_FILAS_USUARIOS).toBe(200);
     expect(U.MAX_BYTES_ARCHIVO_USUARIOS).toBe(1048576);
-  });
-  it("acepta justo en el tope y rechaza por encima", () => {
-    expect(U.validarLimitesArchivo({ bytes: 1048576, filas: 200 })).toBe("");
-    expect(U.validarLimitesArchivo({ bytes: 1048577, filas: 1 })).toMatch(/1 MB/);
-    expect(U.validarLimitesArchivo({ bytes: 10, filas: 201 })).toMatch(/201 filas.*200/);
-  });
-  it("sin datos no inventa un error", () => {
-    expect(U.validarLimitesArchivo({})).toBe("");
+    expect(U.validarLimitesArchivo).toBeUndefined(); // sin copias muertas de la regla: ImportadorArchivo es la única
   });
 });
 
@@ -91,6 +84,17 @@ describe("filasParaServidor", () => {
   it("entrada no válida da lista vacía", () => {
     expect(U.filasParaServidor(undefined)).toEqual([]);
   });
+  it("adjunta la huella de la vista previa por número de fila (y solo si existe)", () => {
+    const huellas = new Map([[2, "123.abc"]]);
+    const r = U.filasParaServidor([{ _fila: 2, correo: "a@rayhsa.com.mx", nombre: "A", apellido: "B" }, { _fila: 3, correo: "b@rayhsa.com.mx", nombre: "A", apellido: "B" }], huellas);
+    expect(r[0]._huella).toBe("123.abc");
+    expect(r[1]).not.toHaveProperty("_huella");
+  });
+  it("huellasDeVerificacion lee solo las huellas de texto de la respuesta del servidor", () => {
+    const m = U.huellasDeVerificacion({ filas: [{ fila: 2, huella: "1.a" }, { fila: 3 }, { fila: 4, huella: 5 }, null] });
+    expect([...m.entries()]).toEqual([[2, "1.a"]]);
+    expect(U.huellasDeVerificacion(undefined).size).toBe(0);
+  });
 });
 
 describe("estructura de las pantallas", () => {
@@ -116,6 +120,14 @@ describe("estructura de las pantallas", () => {
     expect(importador).toMatch(/verificar && !verificacion \?/);
     expect(importador).toMatch(/Verificar filas \(no se crea nada\)/);
     expect(importador).toMatch(/verificar\.puedeAplicar\(verificacion\)/);
+  });
+  it("el diálogo guarda las huellas de la vista previa y las envía al aplicar", () => {
+    expect(dialogo).toMatch(/huellas\.current = huellasDeVerificacion\(resp\.datos\)/);
+    expect(dialogo).toMatch(/filasParaServidor\(filas, huellas\.current\)/);
+  });
+  it("el color fuerte de los encabezados es opt-in: la variante global de ImportadorArchivo no cambia", () => {
+    expect(importador).toMatch(/etiquetaCol: \{\s*fontSize: '0\.75rem', fontWeight: 600, color: 'var\(--color-texto-claro\)'/);
+    expect(importador).toMatch(/etiquetaColFuerte/);
   });
   it("la acción de la página no ofrece contraseña para cuentas ms365 al editar (el servidor además la rechaza)", () => {
     expect(pagina).toMatch(/editando\.auth_tipo === "local"/);

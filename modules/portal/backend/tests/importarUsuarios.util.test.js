@@ -16,9 +16,15 @@ describe("validarCorreoCorporativo", () => {
     ["sin parte local", "@rayhsa.com.mx"],
     ["con espacio interno", "an a@rayhsa.com.mx"],
     ["con comillas", '"ana"@rayhsa.com.mx'],
+    ["con apóstrofe", "o'brien@rayhsa.com.mx"],
     ["sin arroba", "anarayhsa.com.mx"],
   ])("rechaza %s", (_n, correo) => {
     expect(U.validarCorreoCorporativo(correo).error).toBeTruthy();
+  });
+  it("el alias con '+' es válido (y se detecta para avisar en la vista previa); sin '+' no es alias", () => {
+    expect(U.validarCorreoCorporativo("ana+rh@rayhsa.com.mx")).toEqual({ correo: "ana+rh@rayhsa.com.mx" });
+    expect(U.tieneAlias("ana+rh@rayhsa.com.mx")).toBe(true);
+    expect(U.tieneAlias("ana@rayhsa.com.mx")).toBe(false);
   });
   it("el mensaje de dominio nombra el dominio permitido", () => {
     expect(U.validarCorreoCorporativo("ana@gmail.com").error).toContain("@rayhsa.com.mx");
@@ -119,6 +125,11 @@ describe("prepararFilasUsuarios", () => {
     const r = U.prepararFilasUsuarios([cruda({ correo: " x@gmail.com ", nombre: "Ana", apellido: "Pérez" }), cruda({ correo: { a: 1 }, nombre: { b: 2 }, apellido: "Z" })]).filas;
     expect(r[0].visible).toEqual({ correo: "x@gmail.com", nombre: "Ana Pérez" });
     expect(r[1].visible).toEqual({ correo: "", nombre: "Z" });
+  });
+  it("conserva la huella de la vista previa (_huella) para que el controlador la compruebe", () => {
+    const r = U.prepararFilasUsuarios([cruda({ _huella: "1.abc" }), cruda({ correo: "b@rayhsa.com.mx", numero_nomina: "2" })]).filas;
+    expect(r[0].huella).toBe("1.abc");
+    expect(r[1].huella).toBe("");
   });
   it("sin _fila usa la posición + 2 (fila 1 = encabezado)", () => {
     const r = U.prepararFilasUsuarios([{ correo: "x@gmail.com", nombre: "A", apellido: "B", numero_nomina: "1" }]).filas;

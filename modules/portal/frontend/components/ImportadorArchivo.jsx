@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 import { hojaAMatriz, libroEs1904 } from '../utils/hojaAMatriz';
 import {
   leerMatriz, separarFilas, dividirEnLotes, resultadoVacio, sumarResultados, sumarJefes, decodificarTextoCsv,
-  construirCsvResultado, numeroFilaDeError, nombreDeError, avisosSinCatalogo, TAMANO_LOTE, MAX_PARES_JEFES, MAX_ADVERTENCIAS,
+  construirCsvResultado, celdaCsv, numeroFilaDeError, nombreDeError, avisosSinCatalogo, TAMANO_LOTE, MAX_PARES_JEFES, MAX_ADVERTENCIAS,
   enviarConReintento, repeticionesEntreLotes, MENSAJE_OCUPADO,
 } from '../utils/importarFilas';
 
@@ -53,6 +53,13 @@ const estilos = {
     marginBottom: '1rem',
   }),
   etiquetaCol: {
+    fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-texto-claro)',
+    textTransform: 'uppercase', letterSpacing: '0.04em', padding: '0.5rem 0.75rem',
+    background: 'var(--color-fondo)', borderBottom: '2px solid var(--color-borde)',
+    textAlign: 'left', whiteSpace: 'nowrap',
+  },
+  // Variante opt-in (importar usuarios): el texto claro sobre el fondo no cumple el contraste AA que mide axe
+  etiquetaColFuerte: {
     fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-texto)',
     textTransform: 'uppercase', letterSpacing: '0.04em', padding: '0.5rem 0.75rem',
     background: 'var(--color-fondo)', borderBottom: '2px solid var(--color-borde)',
@@ -119,12 +126,9 @@ function gruposDe(columnas) {
 }
 
 function descargarEjemplo(columnas, filasEjemplo, nombreArchivo) {
-  const encabezado = columnas.map(c => c.etiqueta).join(',');
+  const encabezado = columnas.map(c => celdaCsv(c.etiqueta)).join(',');
   const filas = (filasEjemplo || []).map(f =>
-    columnas.map(c => {
-      const val = f[c.clave] || '';
-      return val.includes(',') ? `"${val}"` : val;
-    }).join(',')
+    columnas.map(c => celdaCsv(f[c.clave] || '')).join(',')
   );
   const csv = [encabezado, ...filas].join('\n');
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -262,6 +266,7 @@ function VistaSeleccion({ columnas, filasEjemplo, nombreArchivo, accionesDescarg
 }
 
 function VistaPreview({ columnas, filas, encabezados, permiteActualizar, textosModo, modo, onModo, procesando, progreso, onConfirmar, onVolver, verificar, verificacion, verificando, onVerificar }) {
+  const thEstilo = verificar ? estilos.etiquetaColFuerte : estilos.etiquetaCol;
   const { enviar, omitidas } = useMemo(() => separarFilas(filas, columnas), [filas, columnas]);
   const porFila = useMemo(() => {
     const mapa = {};
@@ -336,13 +341,13 @@ function VistaPreview({ columnas, filas, encabezados, permiteActualizar, textosM
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
             <thead>
               <tr>
-                <th style={estilos.etiquetaCol}>Fila</th>
+                <th style={thEstilo}>Fila</th>
                 {columnasVista.map(c => (
-                  <th key={c.clave} style={estilos.etiquetaCol}>
+                  <th key={c.clave} style={thEstilo}>
                     {c.etiqueta}{c.requerido ? ' *' : ''}
                   </th>
                 ))}
-                <th style={estilos.etiquetaCol}>Estado</th>
+                <th style={thEstilo}>Estado</th>
               </tr>
             </thead>
             <tbody>
@@ -382,9 +387,9 @@ function VistaPreview({ columnas, filas, encabezados, permiteActualizar, textosM
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                 <thead>
                   <tr>
-                    <th style={estilos.etiquetaCol}>Fila</th>
-                    <th style={estilos.etiquetaCol}>Nombre</th>
-                    <th style={estilos.etiquetaCol}>Motivo</th>
+                    <th style={thEstilo}>Fila</th>
+                    <th style={thEstilo}>Nombre</th>
+                    <th style={thEstilo}>Motivo</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -469,6 +474,7 @@ function TarjetaResumen({ tipo, valor, etiqueta }) {
 }
 
 function VistaResultado({ resultado, columnas, onNuevo, onCerrar, etiquetasResultado }) {
+  const thEstilo = (etiquetasResultado && etiquetasResultado.contrasteAlto) ? estilos.etiquetaColFuerte : estilos.etiquetaCol;
   const {
     insertados = 0, actualizados = 0, sin_cambios: sinCambios = 0, duplicados = 0, errores = [],
     duplicados_detalle: detalleDup = [], actualizados_detalle: detalleAct = [], advertencias = [],
@@ -551,11 +557,11 @@ function VistaResultado({ resultado, columnas, onNuevo, onCerrar, etiquetasResul
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                 <thead>
                   <tr>
-                    <th style={estilos.etiquetaCol}>Fila</th>
-                    <th style={estilos.etiquetaCol}>Nombre</th>
-                    <th style={estilos.etiquetaCol}>Campo</th>
-                    <th style={estilos.etiquetaCol}>Valor recibido</th>
-                    <th style={estilos.etiquetaCol}>Motivo</th>
+                    <th style={thEstilo}>Fila</th>
+                    <th style={thEstilo}>Nombre</th>
+                    <th style={thEstilo}>Campo</th>
+                    <th style={thEstilo}>Valor recibido</th>
+                    <th style={thEstilo}>Motivo</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -583,9 +589,9 @@ function VistaResultado({ resultado, columnas, onNuevo, onCerrar, etiquetasResul
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                 <thead>
                   <tr>
-                    <th style={estilos.etiquetaCol}>Fila</th>
-                    <th style={estilos.etiquetaCol}>Nombre</th>
-                    <th style={estilos.etiquetaCol}>Campos modificados</th>
+                    <th style={thEstilo}>Fila</th>
+                    <th style={thEstilo}>Nombre</th>
+                    <th style={thEstilo}>Campos modificados</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -611,9 +617,9 @@ function VistaResultado({ resultado, columnas, onNuevo, onCerrar, etiquetasResul
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                 <thead>
                   <tr>
-                    <th style={estilos.etiquetaCol}>Fila</th>
-                    <th style={estilos.etiquetaCol}>Nombre</th>
-                    <th style={estilos.etiquetaCol}>Motivo</th>
+                    <th style={thEstilo}>Fila</th>
+                    <th style={thEstilo}>Nombre</th>
+                    <th style={thEstilo}>Motivo</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -640,9 +646,9 @@ function VistaResultado({ resultado, columnas, onNuevo, onCerrar, etiquetasResul
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                   <thead>
                     <tr>
-                      <th style={estilos.etiquetaCol}>Fila</th>
-                      <th style={estilos.etiquetaCol}>Nombre</th>
-                      <th style={estilos.etiquetaCol}>Motivo</th>
+                      <th style={thEstilo}>Fila</th>
+                      <th style={thEstilo}>Nombre</th>
+                      <th style={thEstilo}>Motivo</th>
                     </tr>
                   </thead>
                   <tbody>

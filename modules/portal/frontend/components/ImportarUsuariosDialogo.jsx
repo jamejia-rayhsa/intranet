@@ -1,9 +1,10 @@
+import { useRef } from 'react';
 import ImportadorArchivo from './ImportadorArchivo';
 import { solicitar } from '../utils/api';
 import {
   COLUMNAS_USUARIOS, FILAS_EJEMPLO_USUARIOS, NOMBRE_PLANTILLA_USUARIOS, MAX_FILAS_USUARIOS, MAX_BYTES_ARCHIVO_USUARIOS,
   ETIQUETAS_RESULTADO_USUARIOS, AVISO_IMPORTACION_USUARIOS, ETIQUETAS_ESTADO_USUARIOS, TIPO_CHIP_ESTADO_USUARIOS,
-  resumirVerificacion, detalleFilaVerificacion, textoBotonAplicar, filasParaServidor,
+  resumirVerificacion, detalleFilaVerificacion, textoBotonAplicar, filasParaServidor, huellasDeVerificacion,
 } from '../utils/importarUsuarios';
 
 const chip = (tipo) => ({
@@ -65,6 +66,8 @@ function VistaVerificacion({ datos }) {
  * Flujo: archivo -> vista previa del servidor (obligatoria, no escribe) -> aplicar -> reporte por fila.
  */
 export default function ImportarUsuariosDialogo({ onCerrar, onImportado }) {
+  // Huellas firmadas que devuelve la vista previa: el servidor exige la de cada fila para aplicarla
+  const huellas = useRef(new Map());
   const verificar = {
     ejecutar: async (filas) => {
       const resp = await solicitar('/usuarios/importar/vista-previa', {
@@ -72,6 +75,7 @@ export default function ImportarUsuariosDialogo({ onCerrar, onImportado }) {
         body: JSON.stringify({ filas: filasParaServidor(filas) }),
       });
       if (!resp || !resp.exito) throw new Error((resp && resp.mensaje) || 'No se pudo verificar el archivo');
+      huellas.current = huellasDeVerificacion(resp.datos);
       return resp.datos;
     },
     vista: (datos) => <VistaVerificacion datos={datos} />,
@@ -91,7 +95,7 @@ export default function ImportarUsuariosDialogo({ onCerrar, onImportado }) {
       verificar={verificar}
       onImportar={(filas) => solicitar('/usuarios/importar', {
         method: 'POST',
-        body: JSON.stringify({ filas: filasParaServidor(filas), confirmar: true }),
+        body: JSON.stringify({ filas: filasParaServidor(filas, huellas.current), confirmar: true }),
       })}
       onExito={() => { if (onImportado) onImportado(); }}
       onCancelar={onCerrar}

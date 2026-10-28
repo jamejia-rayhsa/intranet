@@ -46,6 +46,9 @@ app.use(cors());
 // la puerta dedicada (ver rh/backend/servidorIngesta.js y docs/asistencia/operacion-ingesta.md).
 montarIngestaEnPrincipal(app, configIngesta);
 
+// 'Importar usuarios': hasta 200 filas (el tope de archivo es 1 MB); el parser global (100 kb) cortaría un archivo grande. Va ANTES
+// del parser global; un cuerpo mayor responde 413 en JSON por el manejador de errores
+app.use("/api/usuarios/importar", express.json({ limit: "1mb" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

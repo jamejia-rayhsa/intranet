@@ -71,7 +71,7 @@ const CAB = "Correo corporativo,Nombre,Apellido,Número de nómina,CURP";
   ok("no hay selector de modo 'actualizar' ni de rol", (await dlg.getByRole("radio").count()) === 0 && (await dlg.locator("select").count()) === 0);
   const [descarga] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: /Descargar plantilla de ejemplo/ }).click()]);
   const plantilla = fs.readFileSync(await descarga.path(), "utf8");
-  ok("plantilla CSV: encabezados correctos, filas ficticias @rayhsa.com.mx y sin columna de rol", /Correo corporativo,Nombre,Apellido,Número de nómina,CURP/.test(plantilla) && /ana\.prueba@rayhsa\.com\.mx/.test(plantilla) && !/rol/i.test(plantilla), plantilla);
+  ok("plantilla CSV: encabezados correctos, filas ficticias @rayhsa.com.mx y sin columna de rol", /"Correo corporativo","Nombre","Apellido","Número de nómina","CURP"/.test(plantilla) && /ana\.prueba@rayhsa\.com\.mx/.test(plantilla) && !/rol/i.test(plantilla), plantilla);
   ok("el nombre del archivo descargado es plantilla_usuarios.csv", descarga.suggestedFilename() === "plantilla_usuarios.csv");
 
   console.log("\n== C. Topes del archivo (200 filas / 1 MB)");
