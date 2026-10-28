@@ -71,15 +71,46 @@ export function cambiosDe(originales, valores) {
   return cambios;
 }
 
-export const requiereConfirmacionReforzada = (cambios) => Object.prototype.hasOwnProperty.call(cambios, CLAVE_ANALISIS);
+// El servidor exige la misma confirmación reforzada (campo `confirmacion`) para estas claves
+export const CLAVES_REFORZADAS = ['analisis_desde', 'cierre_automatico_desde', 'dias_cierre'];
+export const requiereConfirmacionReforzada = (cambios) => CLAVES_REFORZADAS.some((k) => Object.prototype.hasOwnProperty.call(cambios, k));
 
-/** Textos de impacto de los cambios, sin repetir. */
-export function textosDeImpacto(cambios) {
+const MS_DIA = 86400000;
+const sumarDias = (fecha, n) => new Date(Date.parse(`${fecha}T00:00:00Z`) + n * MS_DIA).toISOString().slice(0, 10);
+
+/**
+ * Quincenas ABIERTAS que el cierre automático cerraría en la siguiente vuelta con estos valores (misma regla del motor:
+ * no reabiertas, fecha_fin >= cierre_automatico_desde y fecha_fin + dias_cierre <= hoy).
+ */
+export function quincenasQueSeCerrarian(periodos, hoy, { dias_cierre: dias, cierre_automatico_desde: desde }) {
+  return (Array.isArray(periodos) ? periodos : []).filter(
+    (p) => p.estado === 'abierto' && !p.no_cerrar_automatico && p.fecha_fin >= desde && sumarDias(p.fecha_fin, dias) <= hoy,
+  );
+}
+
+/**
+ * Textos de impacto de los cambios, sin repetir. `contexto` (opcional): { periodos, hoy, originales } para nombrar las
+ * quincenas que se cerrarían solas con los nuevos valores de cierre.
+ */
+export function textosDeImpacto(cambios, contexto = null) {
   const textos = [];
   if ('comida_desde' in cambios || 'comida_hasta' in cambios) textos.push(TEXTO_IMPACTO_COMIDA);
   if (CLAVE_ANALISIS in cambios) textos.push(TEXTO_IMPACTO_ANALISIS);
   if ('dias_cierre' in cambios || 'cierre_automatico_desde' in cambios) {
-    textos.push('El cierre automático aplica a partir de la siguiente vuelta del motor; las quincenas ya cerradas no se vuelven a abrir.');
+    let texto = 'Cambia CUÁNDO se congelan las quincenas: el cierre automático aplica en la siguiente vuelta del motor y una quincena cerrada ya no se recalcula (hay que reabrirla). Las ya cerradas no se vuelven a abrir.';
+    if (contexto && contexto.periodos && contexto.hoy && contexto.originales) {
+      const nuevos = {
+        dias_cierre: 'dias_cierre' in cambios ? cambios.dias_cierre : Number(contexto.originales.dias_cierre),
+        cierre_automatico_desde: 'cierre_automatico_desde' in cambios ? cambios.cierre_automatico_desde : contexto.originales.cierre_automatico_desde,
+      };
+      const cerrarian = quincenasQueSeCerrarian(contexto.periodos, contexto.hoy, nuevos);
+      const antes = new Set(quincenasQueSeCerrarian(contexto.periodos, contexto.hoy, { dias_cierre: Number(contexto.originales.dias_cierre), cierre_automatico_desde: contexto.originales.cierre_automatico_desde }).map((p) => p.id));
+      const nuevasCerradas = cerrarian.filter((p) => !antes.has(p.id));
+      texto += nuevasCerradas.length
+        ? ` Con estos valores se cerrarían solas: ${nuevasCerradas.map((p) => `${p.fecha_inicio} a ${p.fecha_fin}`).join(', ')}.`
+        : ' Con estos valores no se cerraría ninguna quincena abierta adicional por ahora.';
+    }
+    textos.push(texto);
   }
   if ('margen_dia_completo_min' in cambios) textos.push('El margen cambia cuándo se califica un día: los días recientes pueden pasar de «pendiente» a calificados (o al revés).');
   if ('ventana_seguridad_dias' in cambios || 'barrido_completo_horas' in cambios) textos.push('Cambia la frecuencia con la que el planificador recalcula; no modifica las quincenas cerradas.');

@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { obtenerParametros, guardarParametros, mensajeDeError } from "../services/asistencia.service";
-import { OPCION_ASISTENCIA, OPCION_EMPLEADOS, accesoGestionAsistencia } from "../utils/asistenciaPermisos";
+import { obtenerParametros, guardarParametros, listarPeriodos, mensajeDeError } from "../services/asistencia.service";
 import {
   PARAMETROS, FRASE_REFORZADA, valoresIniciales, validarTodo, cambiosDe, textosDeImpacto, requiereConfirmacionReforzada,
 } from "../utils/asistenciaParametros";
-import { formatoLocal } from "../utils/asistenciaFechas";
-import useAccesoAsistencia from "../hooks/useAccesoAsistencia";
+import { formatoLocal, fechaMexicoHoy } from "../utils/asistenciaFechas";
+import useAccesoGestion from "../hooks/useAccesoGestion";
+import SinAccesoGestion from "../components/asistencia/SinAccesoGestion";
 import useFocoTitulo from "../hooks/useFocoTitulo";
 import EstadoCarga from "../components/asistencia/EstadoCarga";
 import ConfirmarDialogo from "../components/asistencia/ConfirmarDialogo";
@@ -15,9 +15,7 @@ import "../styles/asistenciaResultados.css";
 const GRUPOS = ["Comida", "Cierre", "Cálculo", "Planificador"];
 
 export default function AsistenciaParametrosPage() {
-  const nivelAsis = useAccesoAsistencia(OPCION_ASISTENCIA);
-  const nivelEmp = useAccesoAsistencia(OPCION_EMPLEADOS);
-  const acceso = accesoGestionAsistencia(nivelAsis, nivelEmp);
+  const acceso = useAccesoGestion();
   const { ref: tituloRef, enfocarSiPerdido } = useFocoTitulo();
 
   const [servidor, setServidor] = useState(null); // [{clave, valor, descripcion, fecha_actualizacion}]
@@ -29,6 +27,8 @@ export default function AsistenciaParametrosPage() {
   const [confirmando, setConfirmando] = useState(null); // cambios
   const [aviso, setAviso] = useState("");
   const refs = useRef({});
+  const [periodos, setPeriodos] = useState([]);
+  const hoy = useMemo(() => fechaMexicoHoy(), []);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -47,7 +47,10 @@ export default function AsistenciaParametrosPage() {
     }
   }, []);
   useEffect(() => {
-    if (acceso.puedeLeer) cargar();
+    if (!acceso.puedeLeer) return;
+    cargar();
+    // las quincenas sirven para nombrar cuáles se cerrarían solas con los nuevos valores de cierre
+    listarPeriodos({ limite: 100 }).then((r) => setPeriodos(r.datos || [])).catch(() => setPeriodos([]));
   }, [acceso.puedeLeer, cargar]);
 
   const cambios = useMemo(() => cambiosDe(originales, valores), [originales, valores]);
@@ -69,29 +72,14 @@ export default function AsistenciaParametrosPage() {
   }
 
   async function guardar() {
-    await guardarParametros(confirmando);
+    await guardarParametros(confirmando, requiereConfirmacionReforzada(confirmando) ? FRASE_REFORZADA : undefined);
     setConfirmando(null);
     setAviso("Parámetros guardados.");
     await cargar();
     enfocarSiPerdido();
   }
 
-  if (acceso.cargando) {
-    return (
-      <div className="asi asr">
-        <h1 ref={tituloRef} tabIndex={-1}>Parámetros de asistencia</h1>
-        <p className="asi__estado" role="status">Cargando…</p>
-      </div>
-    );
-  }
-  if (!acceso.puedeLeer) {
-    return (
-      <div className="asi asr">
-        <h1 ref={tituloRef} tabIndex={-1}>Parámetros de asistencia</h1>
-        <p className="asi__aviso asi__aviso--error" role="alert">No tienes permiso para consultar la gestión de asistencia.</p>
-      </div>
-    );
-  }
+  if (acceso.cargando || acceso.error || !acceso.puedeLeer) return <SinAccesoGestion acceso={acceso} tituloRef={tituloRef} titulo="Parámetros de asistencia" />;
 
   return (
     <div className="asi asr">
@@ -163,7 +151,7 @@ export default function AsistenciaParametrosPage() {
               return <li key={clave}><strong>{def.etiqueta}</strong>: {originales[clave]} → {String(nuevo)}</li>;
             })}
           </ul>
-          {textosDeImpacto(confirmando).map((t) => <p key={t} className="asi__aviso asi__aviso--advertencia">{t}</p>)}
+          {textosDeImpacto(confirmando, { periodos, hoy, originales }).map((t) => <p key={t} className="asi__aviso asi__aviso--advertencia">{t}</p>)}
         </ConfirmarDialogo>
       )}
     </div>

@@ -10,14 +10,14 @@ import {
   mensajeDeError,
 } from "../services/asistencia.service";
 import { fechaMexicoHoy, formatoLocal } from "../utils/asistenciaFechas";
-import { OPCION_ASISTENCIA, OPCION_EMPLEADOS, accesoGestionAsistencia } from "../utils/asistenciaPermisos";
 import {
   ORDEN_TARJETAS, ESTATUS, ATAJOS, ORDENES, FORMULA_PUNTUALIDAD, AVISO_CERRADA, AVISO_SIN_IDENTIFICADOR, MOTIVO_SIN_IDENTIFICADOR,
   TOPE_FILAS_EXPORTACION, totalesDeResumen, porcentajePuntualidad, textoPorcentaje, diasEvaluados, textoPeriodo, periodoPorOmision,
   validarRangoLibre, filtrarYOrdenar, textoFiltrados, paginar, nombreCompleto, paginasRestantes, construirCsvResumen,
   construirCsvDetalle, nombreArchivoResumen, nombreArchivoDetalle, MAX_DIAS_RANGO,
 } from "../utils/asistenciaResultados";
-import useAccesoAsistencia from "../hooks/useAccesoAsistencia";
+import useAccesoGestion from "../hooks/useAccesoGestion";
+import SinAccesoGestion from "../components/asistencia/SinAccesoGestion";
 import useFocoTitulo from "../hooks/useFocoTitulo";
 import EstadoCarga from "../components/asistencia/EstadoCarga";
 import Paginacion from "../components/asistencia/Paginacion";
@@ -51,13 +51,11 @@ async function pedirTodas(pedir, tope) {
     const r = await pedir(p);
     filas = filas.concat(r.datos);
   }
-  return { filas, total };
+  return { filas, total, incompleto: total > filas.length };
 }
 
 export default function AsistenciaResultadosPage() {
-  const nivelAsis = useAccesoAsistencia(OPCION_ASISTENCIA);
-  const nivelEmp = useAccesoAsistencia(OPCION_EMPLEADOS);
-  const acceso = accesoGestionAsistencia(nivelAsis, nivelEmp);
+  const acceso = useAccesoGestion();
   const { ref: tituloRef } = useFocoTitulo();
   const hoy = useMemo(() => fechaMexicoHoy(), []);
 
@@ -230,7 +228,9 @@ export default function AsistenciaResultadosPage() {
     () => filtrarYOrdenar(filas, { texto: filtros.texto, estatus: filtros.estatus, atajo: filtros.atajo, orden: filtros.orden }),
     [filas, filtros.texto, filtros.estatus, filtros.atajo, filtros.orden],
   );
-  const totales = useMemo(() => totalesDeResumen(filtradas), [filtradas]);
+  // Las tarjetas son del PERIODO completo; los filtros solo afectan la tabla (su total va en una línea aparte)
+  const totales = useMemo(() => totalesDeResumen(filas), [filas]);
+  const totalesFiltrados = useMemo(() => totalesDeResumen(filtradas), [filtradas]);
   const pag = paginar(filtradas, pagina, FILAS_POR_PAGINA);
   const periodosCerradosEnRango = useMemo(() => {
     if (!aplicado) return [];
@@ -262,24 +262,25 @@ export default function AsistenciaResultadosPage() {
         nombre = nombreArchivoResumen(aplicado.desde, aplicado.hasta);
       } else {
         const ids = new Set(filtradas.map((f) => f.empleado_id));
-        const { filas: dias } = await pedirTodas(
+        const { filas: dias, incompleto } = await pedirTodas(
           (p) => listarResultados({ desde: aplicado.desde, hasta: aplicado.hasta, pagina: p, limite: LIMITE }),
-          TOPE_FILAS_EXPORTACION * 3,
+          TOPE_FILAS_EXPORTACION,
         );
-        csv = construirCsvDetalle(dias.filter((d) => ids.has(d.empleado_id)), formatoLocal);
+        csv = construirCsvDetalle(dias.filter((d) => ids.has(d.empleado_id)), formatoLocal, TOPE_FILAS_EXPORTACION, incompleto);
         nombre = nombreArchivoDetalle(aplicado.desde, aplicado.hasta);
       }
-      descargarCsv(csv.texto, nombre);
-      let sinAuditoria = "";
+      // Primero la bitácora: si no se puede registrar, NO se descarga nada (el archivo lleva nombres y nóminas)
       try {
         await registrarExportacionResultados(tipo, csv.filas);
       } catch (err) {
-        sinAuditoria = ` No se pudo registrar la exportación en la bitácora: ${mensajeDeError(err, "error desconocido")}`;
+        setAvisoExport(`No se descargó el archivo porque no se pudo registrar la exportación en la bitácora: ${mensajeDeError(err, "error desconocido")}`);
+        return;
       }
+      descargarCsv(csv.texto, nombre);
       setAvisoExport(
-        (csv.truncado
-          ? `Se exportaron las primeras ${csv.filas} filas (tope de ${TOPE_FILAS_EXPORTACION}). Acota el periodo o los filtros para obtener el resto.`
-          : `Se exportaron ${csv.filas} ${csv.filas === 1 ? "fila" : "filas"} a ${nombre}.`) + sinAuditoria,
+        csv.truncado
+          ? `Archivo INCOMPLETO: se exportaron solo ${csv.filas} filas (tope de ${TOPE_FILAS_EXPORTACION}); el archivo lo indica en su última fila. Acota el periodo o los filtros para obtener el resto.`
+          : `Se exportaron ${csv.filas} ${csv.filas === 1 ? "fila" : "filas"} a ${nombre}.`,
       );
     } catch (err) {
       setAvisoExport(`No se pudo exportar: ${mensajeDeError(err, "error desconocido")}`);
@@ -288,24 +289,10 @@ export default function AsistenciaResultadosPage() {
     }
   }
 
-  if (acceso.cargando) {
-    return (
-      <div className="asi asr">
-        <h1 ref={tituloRef} tabIndex={-1}>Resultados de asistencia</h1>
-        <p className="asi__estado" role="status">Cargando…</p>
-      </div>
-    );
-  }
-  if (!acceso.puedeLeer) {
-    return (
-      <div className="asi asr">
-        <h1 ref={tituloRef} tabIndex={-1}>Resultados de asistencia</h1>
-        <p className="asi__aviso asi__aviso--error" role="alert">No tienes permiso para consultar la gestión de asistencia.</p>
-      </div>
-    );
-  }
+  if (acceso.cargando || acceso.error || !acceso.puedeLeer) return <SinAccesoGestion acceso={acceso} tituloRef={tituloRef} titulo="Resultados de asistencia" />;
 
   const pct = porcentajePuntualidad(totales);
+  const hayFiltros = filtradas.length !== filas.length;
 
   return (
     <div className="asi asr">
@@ -359,7 +346,7 @@ export default function AsistenciaResultadosPage() {
 
       {aplicado && !cargando && !error && (
         <>
-          <h2>Resumen del periodo {aplicado.desde} a {aplicado.hasta}</h2>
+          <h2>Resumen del periodo {aplicado.desde} a {aplicado.hasta} ({totales.empleados} empleados)</h2>
           <dl className="asi__tarjetas asr__tarjetas" aria-label="Totales del periodo">
             {ORDEN_TARJETAS.map((e) => (
               <div key={e} className={`asi__tarjeta asr__tarjeta asr__tarjeta--${ESTATUS[e].tono}`}>
@@ -373,6 +360,12 @@ export default function AsistenciaResultadosPage() {
             </div>
           </dl>
           <p className="asi__ayuda">{FORMULA_PUNTUALIDAD}</p>
+          {hayFiltros && (
+            <p className="asi__ayuda asr__filtrado">
+              Solo los {filtradas.length} {filtradas.length === 1 ? "empleado mostrado" : "empleados mostrados"} en la tabla (con los filtros aplicados): {totalesFiltrados.falta} faltas,
+              {" "}{totalesFiltrados.retardo} retardos, puntualidad {textoPorcentaje(porcentajePuntualidad(totalesFiltrados))}. Las tarjetas de arriba no cambian con los filtros.
+            </p>
+          )}
           {totalServidor > filas.length && <p className="asi__aviso asi__aviso--advertencia" role="alert">Se muestran {filas.length} de {totalServidor} empleados (tope de la consulta).</p>}
 
           <h2>Empleados</h2>
@@ -475,6 +468,7 @@ export default function AsistenciaResultadosPage() {
         <>
           <p>
             {sinId.total === 0 ? "Todos los empleados tienen un identificador único." : `${sinId.total} ${sinId.total === 1 ? "empleado no se analiza" : "empleados no se analizan"}.`}
+            {sinId.total > sinId.filas.length ? ` Se muestran ${sinId.filas.length} de ${sinId.total}.` : ""}
             {" "}<Link to="/rh/empleados">Ir a Empleados</Link> · <Link to="/rh/asistencia/marcas">Ir a Marcas (re-vincular)</Link>
           </p>
           {sinId.filas.length > 0 && (

@@ -4,9 +4,9 @@ import DialogoAsistencia from "./DialogoAsistencia";
 import EstatusInsignia from "./EstatusInsignia";
 import EstadoCarga from "./EstadoCarga";
 import { detalleDia, justificarDia, anularJustificacion, mensajeDeError } from "../../services/asistencia.service";
-import { partesLocales, formatoLocal, instanteUtc } from "../../utils/asistenciaFechas";
+import { formatoLocal, instanteUtc } from "../../utils/asistenciaFechas";
 import {
-  filasDelTurno, banderasDelDia, reglaDelDia, rolesDeMarcas, ROLES_MARCA, accionesDelDia, validarMotivoJustificacion,
+  filasDelTurno, banderasDelDia, reglaDelDia, ROLES_MARCA, accionesDelDia, validarMotivoJustificacion,
   MOTIVO_MAX, infoEstatus,
 } from "../../utils/asistenciaResultados";
 
@@ -59,7 +59,6 @@ export default function DetalleDiaDialogo({ empleadoId, nombre, fecha, puedeEscr
   const dia = datos && datos.dia;
   const cruces = datos && datos.cruces;
   const acciones = accionesDelDia({ dia, cruces, periodoEstado: dia && dia.periodo_estado, puedeEscribir });
-  const roles = datos ? rolesDeMarcas(datos.marcas, dia, partesLocales) : {};
 
   async function justificar(e) {
     e.preventDefault();
@@ -91,8 +90,9 @@ export default function DetalleDiaDialogo({ empleadoId, nombre, fecha, puedeEscr
     setTrabajando(true);
     setErrorAccion("");
     try {
-      await anularJustificacion(cruces.justificacion.id);
-      setResultado("Justificación anulada: el día volvió a su resultado original.");
+      const r = await anularJustificacion(cruces.justificacion.id);
+      // si el motor estaba ocupado el día se recalcula en la siguiente vuelta: no se afirma lo contrario
+      setResultado(r.datos && r.datos.recalculado ? "Justificación anulada: el día volvió a su resultado original." : (r.mensaje || "Justificación anulada; el día se recalculará en la siguiente vuelta del motor."));
       setAnulando(false);
       await cargar();
       onCambio();
@@ -147,6 +147,7 @@ export default function DetalleDiaDialogo({ empleadoId, nombre, fecha, puedeEscr
 
           <section aria-labelledby="det-marcas">
             <h3 id="det-marcas">Marcas del día (hora de México)</h3>
+            {datos.marcas_truncadas && <p className="asi__aviso asi__aviso--advertencia" role="status">Se muestran solo las primeras {datos.marcas.length} marcas del día; hay más.</p>}
             {datos.marcas.length === 0 ? (
               <p className="asi__estado">No hay marcas de este empleado en el día.</p>
             ) : (
@@ -158,7 +159,7 @@ export default function DetalleDiaDialogo({ empleadoId, nombre, fecha, puedeEscr
                   </thead>
                   <tbody>
                     {datos.marcas.map((m) => {
-                      const rol = roles[String(m.id)] || "otra";
+                      const rol = m.rol || "otra"; // lo entrega el servidor con las reglas del motor
                       return (
                         <tr key={m.id} className={rol === "entrada" || rol === "salida" ? "asr__marca-usada" : undefined}>
                           <td className="asi__nowrap">

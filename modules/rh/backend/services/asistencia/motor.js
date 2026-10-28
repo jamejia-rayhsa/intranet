@@ -358,8 +358,37 @@ function evaluarDia(ctx) {
   return resultado;
 }
 
+/**
+ * Función de cada marca de un día YA calculado, con las mismas reglas del motor (depurarMarcas para los duplicados y la
+ * ventana de comida guardada en el detalle del día): la pantalla de detalle muestra lo mismo que se calificó.
+ * @param {{fecha:string, marcas:Array<{id:any, ts:any}>, marcasUsadas:any[], banderas?:string[], comida?:{desde:string,hasta:string}|null, cruza?:boolean}} d
+ * @returns {Object<string,'entrada'|'salida'|'comida'|'duplicada'|'otra'>} id de la marca -> rol
+ */
+function clasificarMarcas({ fecha, marcas, marcasUsadas, banderas = [], comida = null, cruza = false }) {
+  const usadas = (marcasUsadas || []).map(String);
+  const { unicas } = depurarMarcas(marcas || []);
+  const conservadas = new Set(unicas.map((m) => String(m.id)));
+  const desde = comida ? horaAMinutos(comida.desde) : null;
+  const hasta = comida ? horaAMinutos(comida.hasta) : null;
+  const roles = {};
+  for (const m of marcas || []) {
+    const id = String(m.id);
+    const i = usadas.indexOf(id);
+    if (i !== -1) {
+      roles[id] = usadas.length === 2 ? (i === 0 ? "entrada" : "salida") : banderas.includes("salida_sin_entrada") ? "salida" : "entrada";
+    } else if (!conservadas.has(id)) {
+      roles[id] = "duplicada";
+    } else {
+      const rel = minutoRelativo(aMs(m.ts), fecha);
+      roles[id] = !cruza && desde !== null && hasta !== null && rel >= desde && rel <= hasta ? "comida" : "otra";
+    }
+  }
+  return roles;
+}
+
 module.exports = {
   evaluarDia,
+  clasificarMarcas,
   snapshotTurno,
   diaDelTurno,
   depurarMarcas,

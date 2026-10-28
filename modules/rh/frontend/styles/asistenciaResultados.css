@@ -3,7 +3,7 @@
 .asr .asi__btn, .asr .asi__pestana { min-height: 44px; }
 .asr .asi__btn--chico { min-height: 44px; }
 .asr .asi__campo input[type="text"], .asr .asi__campo input[type="search"], .asr .asi__campo input[type="date"],
-.asr .asi__campo input[type="time"], .asr .asi__campo input[type="number"], .asr .asi__campo select { min-height: 44px; }
+.asr .asi__campo input[type="time"], .asr .asi__campo input[type="number"], .asr .asi__campo select, .asr .asi__campo textarea { min-height: 44px; }
 .asr .asi__campo input[type="checkbox"] { min-width: 24px; min-height: 24px; }
 .asr__etiqueta { align-self: center; margin: 0; }
 .asr__conteo { margin: 0; align-self: center; font-size: 0.9rem; }

@@ -1,9 +1,9 @@
 import { useEffect, useId, useState } from "react";
 import DialogoAsistencia from "./DialogoAsistencia";
-import { cerrarPeriodo, reabrirPeriodo, resolverAjuste, sinIdentificador } from "../../services/asistencia.service";
+import { cerrarPeriodo, reabrirPeriodo, resolverAjuste, contadoresPeriodo, mensajeDeError } from "../../services/asistencia.service";
 import {
   ADVERTENCIA_CIERRE, MOTIVO_REAPERTURA_MAX, MOTIVO_REAPERTURA_MIN, NOTA_MAX, resumenCierre, validarMotivoReapertura, validarNotaAjuste,
-  esConflictoOcupado, mensajeAccionPeriodo, MOTIVO_AJUSTE,
+  esConflictoOcupado, esDatosCambiaron, esperadosDeCierre, mensajeAccionPeriodo, MOTIVO_AJUSTE,
 } from "../../utils/asistenciaPeriodos";
 
 /** Pie común: error (409 de «ocupado» como aviso amable con reintento) y botones. */
@@ -46,35 +46,61 @@ function useAccion(accion, alTerminar) {
   return { trabajando, error, ocupado, ejecutar };
 }
 
-/** Cierre con confirmación: muestra días pendientes, ajustes sin resolver y empleados sin identificador antes de congelar. */
+/**
+ * Cierre con confirmación. Al abrir consulta contadores FRESCOS (días pendientes, ajustes sin resolver, sin identificador) y
+ * los envía como `esperados`: si el servidor ve otros valores responde 409 «los datos cambiaron» y aquí se recargan.
+ * Con días pendientes no se puede cerrar (lo exige también el servidor).
+ */
 export function CerrarPeriodoDialogo({ periodo, onCerrado, onCancelar }) {
-  const [sinId, setSinId] = useState(null);
-  const [errorSinId, setErrorSinId] = useState("");
+  const [contadores, setContadores] = useState(null);
+  const [errorContadores, setErrorContadores] = useState("");
+  const [recargado, setRecargado] = useState("");
+  const cargar = () => {
+    setContadores(null);
+    setErrorContadores("");
+    return contadoresPeriodo(periodo.id)
+      .then((r) => setContadores(r.datos))
+      .catch((err) => setErrorContadores(mensajeDeError(err, "No se pudieron consultar los datos del cierre")));
+  };
   useEffect(() => {
-    let activo = true;
-    sinIdentificador({ pagina: 1, limite: 1 })
-      .then((r) => { if (activo) setSinId(r.paginacion ? r.paginacion.total : (r.datos || []).length); })
-      .catch(() => { if (activo) setErrorSinId("No se pudo consultar cuántos empleados no tienen identificador."); });
-    return () => { activo = false; };
-  }, []);
-  const { trabajando, error, ocupado, ejecutar } = useAccion(() => cerrarPeriodo(periodo.id), onCerrado);
-  const r = resumenCierre(periodo, sinId);
+    cargar();
+  }, [periodo.id]);
+  const accion = async () => {
+    try {
+      return await cerrarPeriodo(periodo.id, esperadosDeCierre(contadores));
+    } catch (err) {
+      if (esDatosCambiaron(err)) {
+        await cargar();
+        setRecargado("Los datos cambiaron desde que abriste la confirmación. Ya se actualizaron los números: revísalos y confirma de nuevo.");
+      }
+      throw err;
+    }
+  };
+  const { trabajando, error, ocupado, ejecutar } = useAccion(accion, onCerrado);
+  const r = resumenCierre(contadores);
   return (
     <DialogoAsistencia titulo={`Cerrar la quincena ${periodo.fecha_inicio} a ${periodo.fecha_fin}`} onCerrar={onCancelar} rol="alertdialog" bloqueado={trabajando} ancho="30rem">
-      <form onSubmit={(e) => { e.preventDefault(); ejecutar(); }}>
+      <form onSubmit={(e) => { e.preventDefault(); setRecargado(""); ejecutar(); }}>
         <p className="asi__aviso asi__aviso--advertencia">{ADVERTENCIA_CIERRE}</p>
-        <p>Antes de cerrar, esto es lo que queda sin resolver:</p>
-        <ul className="asi__lista">
-          <li><strong>{r.pendientes}</strong> {r.pendientes === 1 ? "día pendiente de calificar" : "días pendientes de calificar"}</li>
-          <li><strong>{r.ajustes}</strong> {r.ajustes === 1 ? "ajuste pendiente sin resolver" : "ajustes pendientes sin resolver"} (marcas llegadas después del cierre)</li>
-          <li>
-            {sinId === null && !errorSinId && <span>Consultando empleados sin identificador…</span>}
-            {sinId !== null && <><strong>{sinId}</strong> {sinId === 1 ? "empleado sin identificador" : "empleados sin identificador"} (no se analizan)</>}
-            {errorSinId && <span>{errorSinId}</span>}
-          </li>
-        </ul>
-        {r.hayRiesgo && <p className="asi__ayuda">Puedes cerrar de todos modos, pero lo pendiente quedará fuera del resultado congelado.</p>}
-        <PieAccion error={error} ocupado={ocupado} trabajando={trabajando} textoConfirmar="Cerrar la quincena" textoReintento="Reintentar" peligro onCancelar={onCancelar} />
+        <p>Antes de cerrar, esto es lo que hay ahora mismo:</p>
+        {!contadores && !errorContadores && <p className="asi__estado" role="status">Consultando los datos del cierre…</p>}
+        {errorContadores && (
+          <div className="asi__aviso asi__aviso--error" role="alert">
+            <span>{errorContadores}</span>
+            <button type="button" className="asi__btn asi__btn--chico" onClick={cargar}>Reintentar</button>
+          </div>
+        )}
+        {contadores && (
+          <ul className="asi__lista">
+            <li><strong>{r.pendientes}</strong> {r.pendientes === 1 ? "día pendiente de calificar" : "días pendientes de calificar"}</li>
+            <li><strong>{r.ajustes}</strong> {r.ajustes === 1 ? "ajuste pendiente sin resolver" : "ajustes pendientes sin resolver"} (marcas llegadas después del cierre)</li>
+            <li><strong>{r.sinIdentificador}</strong> {r.sinIdentificador === 1 ? "empleado sin identificador" : "empleados sin identificador"} (no se analizan)</li>
+          </ul>
+        )}
+        {contadores && r.bloqueado && <p className="asi__aviso asi__aviso--error" role="alert">{r.motivoBloqueo}</p>}
+        {contadores && !r.bloqueado && r.hayRiesgo && <p className="asi__ayuda">Puedes cerrar, pero lo que quede sin resolver quedará fuera del resultado congelado.</p>}
+        <div role="status" aria-live="polite">{recargado && <p className="asi__aviso asi__aviso--info">{recargado}</p>}</div>
+        <PieAccion error={recargado ? "" : error} ocupado={ocupado} trabajando={trabajando} textoConfirmar="Cerrar la quincena" textoReintento="Reintentar" peligro onCancelar={onCancelar} deshabilitado={!contadores || r.bloqueado} />
       </form>
     </DialogoAsistencia>
   );

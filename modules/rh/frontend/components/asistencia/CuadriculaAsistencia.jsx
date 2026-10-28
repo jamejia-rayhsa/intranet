@@ -77,6 +77,7 @@ export default function CuadriculaAsistencia({ desde, hasta, dias, onAbrirDia, e
                   aria-label={etiquetaCelda(c)}
                   onKeyDown={(e) => alTecla(e, indice)}
                   onFocus={() => setActiva(indice)}
+                  aria-disabled={c.dia ? undefined : "true"}
                   onClick={() => c.dia && onAbrirDia(c.fecha)}
                 >
                   <span className="asr__celda-fecha">

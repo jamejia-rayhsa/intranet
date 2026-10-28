@@ -15,11 +15,15 @@ Rutas bajo `/rh/asistencia/` (grupo «Asistencia» del menú de RH): `resultados
 
 | Ruta | Permiso | Qué hace |
 |---|---|---|
-| `GET /resultados/dia?empleado_id&fecha` | `Asistencia:consulta` + alcance (como `/resultados`) | día con snapshot del turno, marcas del día local (el siguiente también si el turno cruza la medianoche, tope 100), cruces (vacaciones, permiso, festivo, justificación activa). Quién justificó solo lo ve RH. 404 si el día no tiene resultado |
+| `GET /resultados/dia?empleado_id&fecha` | `Asistencia:consulta` + alcance (como `/resultados`; un jefe solo ve a sus subordinados directos) | día con snapshot del turno, marcas del día local con su `rol` (entrada, salida, comida, duplicada u otra: lo calcula `clasificarMarcas` del motor, no la pantalla; el siguiente día también si el turno cruza la medianoche; tope 100 con `marcas_truncadas`; `terminal_sn` solo para RH), cruces (vacaciones, permiso, festivo, justificación activa). Quién justificó solo lo ve RH. 404 si el día no tiene resultado |
+| `GET /periodos/:id/contadores` | RH (lectura) | contadores FRESCOS del cierre: `dias_pendientes`, `ajustes_pendientes`, `sin_identificador` |
 | `GET /ejecuciones?limite` (1-100, 20) | RH (lectura) | bitácora del motor (sin datos personales; error recortado a 120 caracteres) |
-| `POST /resultados/exportaciones` `{tipo: resumen\|detalle, filas}` | RH (lectura) | rastro de la exportación en auditoría (`EXPORTAR_ASISTENCIA`, solo tipo y filas, tope 10 000). Si la bitácora falla responde 500 y la pantalla lo avisa |
+| `POST /resultados/exportaciones` `{tipo: resumen\|detalle, filas}` | RH (lectura) | rastro de la exportación en auditoría (`EXPORTAR_ASISTENCIA`, solo tipo y filas, tope 15 000). Si la bitácora falla responde 500 y la pantalla NO descarga el archivo |
 | `GET /resumen` | sin cambio de permisos | ahora trae `departamento`, `dias_con_marcas`, `faltas_con_marcas` e `incompletas_comida` |
-| `GET /periodos` | sin cambio | ahora trae `dias_pendientes`, `cerrado_por_nombre` y `reabierto_por_nombre` (estos dos, y el motivo, solo para RH) |
+| `GET /periodos` | sin cambio de permisos | ahora trae `dias_pendientes`; `cerrado_por`, los nombres de quien cerró/reabrió y el motivo solo para RH. La lectura de quincenas sigue abierta a quien tenga `Asistencia:consulta`; el 403 de «gestión» aplica a la pantalla y a sus escrituras y lecturas de gestión |
+| `POST /periodos/:id/cerrar` | `Asistencia:edicion` | exige `esperados: {ajustes_pendientes, sin_identificador}` (lo que RH vio al confirmar; si el servidor ve otros valores: 409 «Los datos cambiaron…» con los datos frescos), 409 si la quincena no terminó (fecha de México) o tiene días `pendiente` (sin «forzar»); la auditoría guarda los contadores |
+| `POST /periodos/:id/reabrir` | `Asistencia:edicion` | motivo de 10 a 500 caracteres |
+| `PUT /parametros` | `Asistencia:edicion` | cambiar `analisis_desde`, `cierre_automatico_desde` o `dias_cierre` exige `confirmacion: "CAMBIAR"` (sin ella, 400); la ventana de comida se valida dentro de la transacción |
 | `GET /parametros` | sin cambio | ahora trae `minimo` y `maximo` |
 
 El motor, sus reglas y sus resultados no se tocaron.
@@ -35,7 +39,7 @@ El motor, sus reglas y sus resultados no se tocaron.
 
 ## Cómo validar una quincena con RH
 
-1. En *Resultados* elige la quincena. Revisa las tarjetas y el % de puntualidad (= puntuales ÷ puntuales + retardos + faltas + salidas anticipadas + incompletas + justificadas; no cuentan descansos, festivos, vacaciones, permisos ni pendientes).
+1. En *Resultados* elige la quincena. Revisa las tarjetas y el % de puntualidad (son del periodo completo; los filtros solo afectan la tabla y su total aparece en una línea aparte) (= puntuales ÷ puntuales + retardos + faltas + salidas anticipadas + incompletas + justificadas; no cuentan descansos, festivos, vacaciones, permisos ni pendientes).
 2. Recorre los atajos «Para revisar»: **Más faltas** (¿no checan por su puesto o su código apunta a otra persona?), **Faltas con marcas** (llegó más de 30 min tarde u otra marca fuera de lo esperado), **Incompletas por comida**
    (la última marca cae entre 13:00 y 16:00: ¿salió a comer y no volvió, o se fue y olvidó checar?) y **Sin ninguna marca**.
 3. Abre la cuadrícula de 5 a 10 empleados y compara con la lista de BioTime. Justifica lo que corresponda (motivo obligatorio); se puede anular y el día vuelve a su cálculo original.
@@ -44,8 +48,8 @@ El motor, sus reglas y sus resultados no se tocaron.
 
 ## Cuándo cerrar
 
-- Solo una quincena ya terminada. La confirmación muestra los días pendientes, los ajustes pendientes y los empleados sin identificador. **Cerrar congela el resultado**: no se recalcula aunque cambien turnos, vacaciones o permisos.
-- Cierra cuando (a) el conteo de pendientes es 0, (b) los ajustes están resueltos, (c) los sin identificador ya están corregidos o aceptados, y (d) las vacaciones y permisos de la quincena están capturados.
+- Solo una quincena ya terminada y **sin días pendientes** (el servidor lo exige: 409, sin excepción). Al abrir la confirmación se consultan contadores frescos (días pendientes, ajustes pendientes, empleados sin identificador) y se envían como `esperados`; si cambian antes del clic, el servidor responde 409 y la pantalla recarga los números. **Cerrar congela el resultado**: no se recalcula aunque cambien turnos, vacaciones o permisos.
+- Cierra cuando (a) el conteo de pendientes es 0 (si no, recalcula el rango), (b) los ajustes están resueltos, (c) los sin identificador ya están corregidos o aceptados, y (d) las vacaciones y permisos de la quincena están capturados.
 - El cierre automático rige desde la quincena 16-31 oct (3 días después de terminar); las anteriores se cierran a mano. Una quincena reabierta ya no se cierra sola.
 - Para corregir una cerrada: **Reabrir** con motivo (mínimo 10 caracteres), corregir, recalcular y volver a cerrar. Las marcas que lleguen después del cierre aparecen en *Ajustes pendientes*; «Resolver» solo las marca como atendidas (no recalcula).
 
@@ -57,11 +61,15 @@ código con *Marcas*; si es una ausencia justificada, usa **Justificar** con el 
 ## Parámetros
 
 Comida (desde < hasta, HH:MM), días de cierre (0-30), cierre automático desde, margen del día completo (0-720), analizar desde, ventana de seguridad (0-31) y barrido completo (1-168). Guardar siempre pide confirmar y muestra el impacto
-(«Cambiar la ventana de comida recalcula SOLO las quincenas abiertas; las cerradas conservan el valor con el que se calcularon.»). Cambiar `analisis_desde` exige escribir CAMBIAR. El recálculo de la ventana ocurre en el siguiente barrido o con *Recalcular*.
+(«Cambiar la ventana de comida recalcula SOLO las quincenas abiertas; las cerradas conservan el valor con el que se calcularon.»). Cambiar `analisis_desde`, `cierre_automatico_desde` o `dias_cierre` exige escribir CAMBIAR (también lo exige el servidor); el texto de impacto nombra las quincenas abiertas que el cierre automático congelaría con los valores nuevos. El recálculo de la ventana ocurre en el siguiente barrido o con *Recalcular*.
 
 ## Exportación
 
-CSV con BOM UTF-8, saltos CRLF, fórmulas neutralizadas y tope de 10 000 filas; incluye nombre y nómina (a diferencia del CSV de marcas, esto es el resultado que RH ya ve en pantalla) y queda en auditoría con solo el tipo y el número de filas.
+CSV con BOM UTF-8, saltos CRLF, fórmulas neutralizadas (también con espacios antes del signo; un nombre que empiece con - o + sale con ' al inicio) y tope de 15 000 filas. **Se audita antes de descargar** (si la bitácora falla no se entrega el archivo). Si se corta (tope o datos incompletos) la pantalla lo avisa y la última fila del archivo dice «Se truncó a N filas». Incluye nombre y nómina (decisión confirmada: RH ya ve esos datos en pantalla) y queda en auditoría con solo el tipo y el número de filas.
+
+## Pendiente / documentado (revisión R2A)
+
+- R2A-11d: no hay E2E de Playwright en el repo (no hay dependencia); se repite el harness externo. R2A-15: el motivo de una justificación lo ven también jefe y empleado (a la espera de una decisión del humano). R2A-6: la exportación de detalle pide los días de todos los empleados y filtra en el cliente (se avisa si quedan incompletos). R2A-5: el número de filas auditado lo declara el cliente.
 
 ## Pruebas
 

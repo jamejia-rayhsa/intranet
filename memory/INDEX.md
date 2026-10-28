@@ -13,6 +13,9 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-28] [coder] → code-notes.md — Correcciones de la revisión de la Fase 5 parte 2a (cierre con contadores esperados y sin pendientes, confirmación reforzada en servidor, rol de marcas del motor, CSV fail-closed; jest 2855, Chromium 96 comprobaciones)
+- [2026-10-28] orquestador → decisions.md — Estado de staging (12be73a, motor sano 5 días) y ronda de correcciones de las pantallas de resultados para RH
+- [2026-10-23] [revisor] → reviews.md — Pantallas de resultados, periodos y parámetros de Asistencia (Fase 5, parte 2a): CON OBSERVACIONES; 0 crítico, 0 alto, 12 medio, 12 bajo; escalar decisiones R2A-2, R2A-3, R2A-12, R2A-15
 - [2026-10-23] [coder] → code-notes.md — Fase 5 (parte 2a): pantallas de Resultados, Periodos y Parámetros para RH (3 endpoints, cuadrícula accesible, detalle con justificar/anular, jest 2803, Chromium 119 comprobaciones)
 - [2026-10-23] orquestador → decisions.md — Despliegue a staging del motor y las pantallas (PR #18/#19) y primera vuelta real; GO a las pantallas de resultados para RH
 - [2026-10-23] orquestador → decisions.md — Fase 4 (motor) y pantallas de administración listas para GO/NO-GO; plan de fusión y despliegue

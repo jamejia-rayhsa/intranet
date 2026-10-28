@@ -1,7 +1,7 @@
 /* eslint-env jest */
 // Matriz del motor puro de asistencia (sin BD): reglas de precedencia, límites exactos de minutos, ventanas,
 // duplicados, medianoche, días no laborables y justificaciones. Todos los datos son ficticios.
-const { evaluarDia, snapshotTurno, depurarMarcas } = require("../services/asistencia/motor");
+const { evaluarDia, snapshotTurno, depurarMarcas, clasificarMarcas } = require("../services/asistencia/motor");
 const { aLocal, minutoRelativo, horaAMinutos, diaIso, hoyMexico } = require("../services/asistencia/tiempo");
 
 // Hora local de México = UTC-6 todo el año (sin horario de verano desde 2022)
@@ -594,5 +594,62 @@ describe("snapshotTurno", () => {
   it("en un día de descanso no hay horario pero sí el resto del snapshot; sin turno es null", () => {
     expect(snapshotTurno(RAYHSA, "2026-10-17", "empleado", null)).toMatchObject({ entrada_programada: null, salida_programada: null, turno_nombre: "Rayhsa", origen_turno: "empleado", departamento_id: null });
     expect(snapshotTurno(null, DIA, null, null)).toBeNull();
+  });
+});
+
+describe("clasificarMarcas: el rol de cada marca sale del motor (misma fuente que el detalle de la pantalla)", () => {
+  // Califica el día y clasifica con lo que el motor guardó (marcas_usadas, banderas, detalle.comida)
+  const clasificar = (horas, extra = {}) => {
+    const marcas = horas.map((h, i) => marca(String(i + 1), h));
+    const r = evaluar({ marcas, ...extra });
+    const roles = clasificarMarcas({ fecha: DIA, marcas, marcasUsadas: r.marcas_usadas, banderas: r.banderas, comida: r.detalle.comida || null });
+    return { r, roles };
+  };
+
+  it("entrada, comida, salida y marca no usada de un día normal", () => {
+    const { r, roles } = clasificar(["08:02", "11:00", "13:05", "14:10", "18:02"]);
+    expect(r.estatus).toBe("puntual");
+    expect(roles).toEqual({ 1: "entrada", 2: "otra", 3: "comida", 4: "comida", 5: "salida" });
+  });
+
+  it("frontera de la comida: 16:00:59 es comida y 16:01 es salida (inclusive a nivel de minuto)", () => {
+    const a = clasificar(["08:02", "16:00:59"]);
+    expect(a.r.estatus).toBe("incompleta");
+    expect(a.roles).toEqual({ 1: "entrada", 2: "comida" });
+    const b = clasificar(["08:02", "16:01"]);
+    expect(b.roles).toEqual({ 1: "entrada", 2: "salida" });
+    expect(clasificar(["08:02", "12:58", "13:00"]).roles).toEqual({ 1: "entrada", 2: "otra", 3: "comida" });
+  });
+
+  it("duplicados: 60 s exactos son la misma marca; 61 s ya es otra", () => {
+    const { roles } = clasificar(["08:02:00", "08:03:00", "18:00"]);
+    expect(roles).toEqual({ 1: "entrada", 2: "duplicada", 3: "salida" });
+    const dos = clasificar(["08:02:00", "08:03:01", "18:00"]);
+    expect(dos.roles[2]).toBe("otra");
+  });
+
+  it("una sola marca usada: entrada; con salida_sin_entrada, salida", () => {
+    expect(clasificar(["08:02"]).roles).toEqual({ 1: "entrada" });
+    const { r, roles } = clasificar(["18:00"]);
+    expect(r.banderas).toContain("salida_sin_entrada");
+    expect(roles).toEqual({ 1: "salida" });
+  });
+
+  it("la comida guardada en el día manda: con otra ventana cambia el rol (no hay reglas copiadas aparte)", () => {
+    const marcas = [marca("1", "08:02"), marca("2", "14:30"), marca("3", "18:00")];
+    const base = { fecha: DIA, marcas, marcasUsadas: ["1", "3"] };
+    expect(clasificarMarcas({ ...base, comida: { desde: "13:00", hasta: "16:00" } })[2]).toBe("comida");
+    expect(clasificarMarcas({ ...base, comida: { desde: "13:00", hasta: "14:00" } })[2]).toBe("otra");
+    expect(clasificarMarcas({ ...base, comida: null })[2]).toBe("otra");
+  });
+
+  it("coincide con el motor: toda marca usada por evaluarDia es entrada/salida y las de comida cuentan igual que minutos_comida", () => {
+    for (const horas of [["08:02", "13:00", "14:00", "17:57"], ["08:02", "14:01", "15:03", "18:05"], ["06:50", "18:00"], ["08:00", "15:00"]]) {
+      const { r, roles } = clasificar(horas);
+      const usadas = Object.entries(roles).filter(([, v]) => v === "entrada" || v === "salida").length;
+      expect(usadas).toBe(r.marcas_usadas.length);
+      const enComida = Object.values(roles).filter((v) => v === "comida").length;
+      expect(enComida).toBe(r.detalle.comida.marcas);
+    }
   });
 });

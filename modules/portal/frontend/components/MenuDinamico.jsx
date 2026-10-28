@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { usarAuth } from '../context/AuthContext';
+import { tieneAccesoMenu } from '../utils/menuAcceso';
 
 const NOMBRE_EMPRESA = import.meta.env.VITE_NOMBRE_EMPRESA || 'Intranet';
 
@@ -155,20 +156,8 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
     return location.pathname === ruta || location.pathname.startsWith(ruta + '/');
   }
 
-  // `estricto`: sin permiso explícito no se muestra (ni siquiera con la lista de permisos vacía)
-  // `requiere`: lista [opcion, tipo] de las que basta UNA (p. ej. gestión de asistencia: edición)
   function tieneAcceso(moduloNombre, opcion, estricto = false, requiere = null) {
-    if (usuario?.rol_nombre === 'super_admin') return true;
-    if (requiere) {
-      return permisos.some((p) => p.modulo.toLowerCase() === moduloNombre.toLowerCase() && requiere.some(([o, t]) => p.opcion === o && p.tipo === t));
-    }
-    if (!opcion) return true;
-    if (permisos.length === 0 && !estricto) return true;
-    return permisos.some(
-      (p) =>
-        p.modulo.toLowerCase() === moduloNombre.toLowerCase() &&
-        p.opcion === opcion
-    );
+    return tieneAccesoMenu({ usuario, permisos, modulo: moduloNombre, opcion, estricto, requiere });
   }
 
   return (

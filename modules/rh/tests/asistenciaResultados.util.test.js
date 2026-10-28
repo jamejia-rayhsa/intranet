@@ -5,6 +5,7 @@ const R = cargarUtilEsm("asistenciaResultados.js");
 const P = cargarUtilEsm("asistenciaPeriodos.js");
 const Q = cargarUtilEsm("asistenciaParametros.js");
 const A = cargarUtilEsm("asistenciaPermisos.js");
+const M = cargarUtilEsm("menuAcceso.js", require("path").join(__dirname, "../../portal/frontend/utils"));
 
 const fila = (o) => ({ empleado_id: 1, nombre: "Ana", apellido_paterno: "Pérez", apellido_materno: "", numero_nomina: "100", dias_con_marcas: 5, puntual: 0, retardo: 0, falta: 0, salida_anticipada: 0, incompleta: 0, justificada: 0, minutos_retardo: 0, faltas_con_marcas: 0, incompletas_comida: 0, ...o });
 
@@ -146,27 +147,7 @@ describe("cuadrícula", () => {
 });
 
 describe("detalle de un día", () => {
-  const partes = (iso) => {
-    const h = new Date(iso).getUTCHours() - 6;
-    return { fecha: "2026-10-05", minutos: h * 60 + new Date(iso).getUTCMinutes() };
-  };
   const dia = { fecha: "2026-10-05", estatus: "puntual", marcas_usadas: ["1", "4"], detalle: { comida: { desde: "13:00", hasta: "16:00", marcas: 2 }, banderas: ["exceso_comida", "marcas_duplicadas"], explicaciones: ["Entrada y salida dentro de la tolerancia", "Otra nota"] } };
-  const marcas = [
-    { id: "1", marca_ts: "2026-10-05T14:00:00Z" }, // 08:00 entrada
-    { id: "2", marca_ts: "2026-10-05T14:00:30Z" }, // duplicada
-    { id: "3", marca_ts: "2026-10-05T19:05:00Z" }, // 13:05 comida
-    { id: "5", marca_ts: "2026-10-05T20:10:00Z" }, // 14:10 comida
-    { id: "4", marca_ts: "2026-10-06T00:02:00Z" }, // 18:02 salida
-    { id: "6", marca_ts: "2026-10-05T17:00:00Z" }, // 11:00 no usada
-  ];
-  it("marca cuál se tomó como entrada, salida, comida, duplicada o no usada", () => {
-    const r = R.rolesDeMarcas(marcas, dia, partes);
-    expect(r).toEqual({ 1: "entrada", 2: "duplicada", 3: "comida", 5: "comida", 4: "salida", 6: "otra" });
-  });
-  it("una sola marca usada es entrada, salvo la bandera salida_sin_entrada", () => {
-    expect(R.rolesDeMarcas([{ id: "9", marca_ts: "2026-10-05T14:00:00Z" }], { ...dia, marcas_usadas: ["9"] }, partes)).toEqual({ 9: "entrada" });
-    expect(R.rolesDeMarcas([{ id: "9", marca_ts: "2026-10-06T00:00:00Z" }], { ...dia, marcas_usadas: ["9"], detalle: { banderas: ["salida_sin_entrada"] } }, partes)).toEqual({ 9: "salida" });
-  });
   it("explica las banderas en español y no inventa las desconocidas", () => {
     const b = R.banderasDelDia(dia);
     expect(b.map((x) => x.clave)).toEqual(["exceso_comida", "marcas_duplicadas"]);
@@ -239,7 +220,10 @@ describe("exportación a CSV", () => {
     expect(R.construirCsvDetalle([], () => "").filas).toBe(0);
   });
   it("neutraliza tabulador y retorno, y escapa comillas y saltos", () => {
-    expect(R.neutralizarFormula("\tX")).toBe("'\tX");
+    expect(R.neutralizarFormula("\t=X")).toBe("'\t=X");
+    expect(R.neutralizarFormula("  =HYPERLINK(1)")).toBe("'  =HYPERLINK(1)");
+    expect(R.neutralizarFormula("-5")).toBe("'-5");
+    expect(R.neutralizarFormula("Ana -1")).toBe("Ana -1");
     expect(R.celdaCsv('a"b')).toBe('"a""b"');
     expect(R.celdaCsv("a\nb")).toBe('"a\nb"');
     expect(R.celdaCsv(null)).toBe("");
@@ -263,10 +247,22 @@ describe("periodos", () => {
     expect(P.estadoCerrar({ ...abierta, estado: "cerrado" }, "2026-12-01").puede).toBe(false);
     expect(P.estadoCerrar(null, "2026-12-01").puede).toBe(false);
   });
-  it("el resumen de cierre cuenta pendientes, ajustes y sin identificador", () => {
-    expect(P.resumenCierre(abierta, 8)).toEqual({ pendientes: 3, ajustes: 2, sinIdentificador: 8, hayRiesgo: true });
-    expect(P.resumenCierre({ dias_pendientes: 0, ajustes_pendientes: 0 }, 0).hayRiesgo).toBe(false);
-    expect(P.resumenCierre({ dias_pendientes: 0, ajustes_pendientes: 0 }, null)).toMatchObject({ sinIdentificador: null, hayRiesgo: false });
+  it("el resumen de cierre usa contadores frescos y los días pendientes BLOQUEAN el cierre", () => {
+    const c = { dias_pendientes: 3, ajustes_pendientes: 2, sin_identificador: 8 };
+    expect(P.resumenCierre(c)).toMatchObject({ pendientes: 3, ajustes: 2, sinIdentificador: 8, bloqueado: true, hayRiesgo: true });
+    expect(P.resumenCierre(c).motivoBloqueo).toMatch(/3 días pendientes.*no se puede cerrar/);
+    expect(P.resumenCierre({ dias_pendientes: 1, ajustes_pendientes: 0, sin_identificador: 0 }).motivoBloqueo).toMatch(/1 día pendiente/);
+    expect(P.resumenCierre({ dias_pendientes: 0, ajustes_pendientes: 0, sin_identificador: 0 })).toMatchObject({ bloqueado: false, hayRiesgo: false, motivoBloqueo: "" });
+    expect(P.resumenCierre({ dias_pendientes: 0, ajustes_pendientes: 1, sin_identificador: 0 })).toMatchObject({ bloqueado: false, hayRiesgo: true });
+    expect(P.resumenCierre(null)).toMatchObject({ sinIdentificador: null, bloqueado: false });
+  });
+  it("los esperados enviados son los contadores mostrados y el 409 «datos cambiaron» se reconoce", () => {
+    expect(P.esperadosDeCierre({ dias_pendientes: 0, ajustes_pendientes: 2, sin_identificador: 8 })).toEqual({ ajustes_pendientes: 2, sin_identificador: 8 });
+    const e = Object.assign(new Error("Los datos cambiaron desde que abriste la confirmación: revisa de nuevo"), { status: 409 });
+    expect(P.esDatosCambiaron(e)).toBe(true);
+    expect(P.esConflictoOcupado(e)).toBe(false);
+    expect(P.esDatosCambiaron(Object.assign(new Error("otro"), { status: 409 }))).toBe(false);
+    expect(P.mensajeAccionPeriodo(e, "x")).toMatch(/Se actualizaron los números/);
   });
   it("reabrir exige motivo de al menos 10 caracteres", () => {
     expect(P.validarMotivoReapertura("corto")).toMatch(/mínimo 10/);
@@ -345,9 +341,12 @@ describe("parámetros", () => {
     expect(Q.textosDeImpacto({ comida_desde: "12:00", comida_hasta: "15:00" })).toEqual([Q.TEXTO_IMPACTO_COMIDA]);
     expect(Q.TEXTO_IMPACTO_COMIDA).toBe("Cambiar la ventana de comida recalcula SOLO las quincenas abiertas; las cerradas conservan el valor con el que se calcularon.");
     expect(Q.requiereConfirmacionReforzada({ analisis_desde: "2026-10-01" })).toBe(true);
-    expect(Q.requiereConfirmacionReforzada({ dias_cierre: 4 })).toBe(false);
+    expect(Q.requiereConfirmacionReforzada({ dias_cierre: 4 })).toBe(true);
+    expect(Q.requiereConfirmacionReforzada({ cierre_automatico_desde: "2026-11-01" })).toBe(true);
+    expect(Q.requiereConfirmacionReforzada({ comida_hasta: "15:00", margen_dia_completo_min: 5 })).toBe(false);
     expect(Q.textosDeImpacto({ analisis_desde: "x" })[0]).toMatch(/Analizar desde/);
     expect(Q.textosDeImpacto({ dias_cierre: 1, margen_dia_completo_min: 1, ventana_seguridad_dias: 1 })).toHaveLength(3);
+    expect(Q.textosDeImpacto({ dias_cierre: 1 })[0]).toMatch(/CUÁNDO se congelan/);
     expect(Q.fraseCorrecta(" cambiar ")).toBe(true);
     expect(Q.fraseCorrecta("cambia")).toBe(false);
     expect(Q.fraseCorrecta(null)).toBe(false);
@@ -365,5 +364,83 @@ describe("acceso a la gestión", () => {
     expect(A.accesoGestionAsistencia("consulta", "edicion")).toEqual({ cargando: false, puedeLeer: true, puedeEscribir: false });
     expect(A.accesoGestionAsistencia("consulta", "consulta")).toEqual({ cargando: false, puedeLeer: false, puedeEscribir: false });
     expect(A.accesoGestionAsistencia(null, null).puedeLeer).toBe(false);
+  });
+});
+
+describe("quincenas que el cierre automático congelaría con valores nuevos", () => {
+  const periodos = [
+    { id: 4, estado: "abierto", fecha_inicio: "2026-10-16", fecha_fin: "2026-10-31" },
+    { id: 3, estado: "abierto", fecha_inicio: "2026-10-01", fecha_fin: "2026-10-15" },
+    { id: 2, estado: "abierto", fecha_inicio: "2026-09-16", fecha_fin: "2026-09-30" },
+    { id: 1, estado: "cerrado", fecha_inicio: "2026-09-01", fecha_fin: "2026-09-15" },
+    { id: 5, estado: "abierto", no_cerrar_automatico: true, fecha_inicio: "2026-08-16", fecha_fin: "2026-08-31" },
+  ];
+  const ids = (r) => r.map((p) => p.id);
+  it("misma regla del motor: abierta, no reabierta, fin >= cierre_automatico_desde y fin + dias_cierre <= hoy", () => {
+    expect(ids(Q.quincenasQueSeCerrarian(periodos, "2026-10-23", { dias_cierre: 3, cierre_automatico_desde: "2026-10-16" }))).toEqual([]);
+    expect(ids(Q.quincenasQueSeCerrarian(periodos, "2026-10-23", { dias_cierre: 3, cierre_automatico_desde: "2026-09-01" }))).toEqual([3, 2]);
+    expect(ids(Q.quincenasQueSeCerrarian(periodos, "2026-10-23", { dias_cierre: 0, cierre_automatico_desde: "2026-09-01" }))).toEqual([3, 2]);
+    expect(ids(Q.quincenasQueSeCerrarian(periodos, "2026-11-03", { dias_cierre: 3, cierre_automatico_desde: "2026-10-16" }))).toEqual([4]);
+    expect(Q.quincenasQueSeCerrarian(null, "2026-11-03", { dias_cierre: 3, cierre_automatico_desde: "2026-10-16" })).toEqual([]);
+  });
+  it("el texto de impacto nombra las quincenas que se cerrarían por el cambio", () => {
+    const originales = { dias_cierre: "3", cierre_automatico_desde: "2026-10-16" };
+    const t = Q.textosDeImpacto({ cierre_automatico_desde: "2026-09-01" }, { periodos, hoy: "2026-10-23", originales });
+    expect(t[0]).toMatch(/se cerrarían solas: 2026-10-01 a 2026-10-15, 2026-09-16 a 2026-09-30/);
+    const t2 = Q.textosDeImpacto({ dias_cierre: 5 }, { periodos, hoy: "2026-10-23", originales });
+    expect(t2[0]).toMatch(/no se cerraría ninguna quincena abierta adicional/);
+  });
+});
+
+describe("cuadrícula apilada y CSV truncado", () => {
+  it("en una columna Inicio/Fin llevan al primer y último día", () => {
+    const { celdas } = R.construirCuadricula("2026-10-16", "2026-10-31", []);
+    const primera = celdas.findIndex((c) => !c.vacia);
+    const ultima = celdas.length - 1 - celdas.slice().reverse().findIndex((c) => !c.vacia);
+    expect(R.celdaSiguiente(celdas, primera + 3, "End", 1)).toBe(ultima);
+    expect(R.celdaSiguiente(celdas, ultima, "Home", 1)).toBe(primera);
+  });
+  it("el CSV truncado lo dice en su última fila (por tope o por datos incompletos)", () => {
+    const dias = [1, 2, 3].map((i) => ({ fecha: `2026-10-0${i}`, nombre: "Ana", numero_nomina: "1", estatus: "falta", detalle: {} }));
+    const porTope = R.construirCsvDetalle(dias, () => "", 2);
+    expect(porTope.truncado).toBe(true);
+    expect(porTope.texto.trim().split("\r\n").pop()).toBe("Se truncó a 2 filas: el archivo está incompleto");
+    const incompleto = R.construirCsvDetalle(dias, () => "", 100, true);
+    expect(incompleto.truncado).toBe(true);
+    expect(incompleto.filas).toBe(3);
+    expect(incompleto.texto).toContain("Se truncó a 3 filas");
+    expect(R.construirCsvDetalle(dias, () => "", 100).texto).not.toContain("truncó");
+    expect(R.construirCsvResumen([{ nombre: "A", numero_nomina: "1" }], 100, true).texto).toContain("Se truncó a 1 filas");
+    expect(R.TOPE_FILAS_EXPORTACION).toBe(15000);
+  });
+  it("el CSV conserva nombre y nómina, sin_turno es una categoría y la columna es el estado de la quincena", () => {
+    expect(R.ORDEN_TARJETAS).toContain("sin_turno");
+    const t = R.totalesDeResumen([{ sin_turno: 4, puntual: 1 }]);
+    expect(t.sin_turno).toBe(4);
+    expect(R.COLUMNAS_RESUMEN.map((c) => c.clave)).toEqual(expect.arrayContaining(["nombre", "nomina", "sin_turno"]));
+    expect(R.COLUMNAS_DETALLE.find((c) => c.clave === "periodo").titulo).toBe("Estado de la quincena");
+    expect(R.ATAJOS.find((a) => a.id === "faltas_con_marcas").ayuda).toMatch(/marca suelta o salida sin entrada/);
+  });
+});
+
+describe("menú: entradas con `requiere`", () => {
+  const REQ = [["Asistencia", "edicion"], ["Empleados", "edicion"]];
+  const ver = (permisos, usuario = { rol_nombre: "x" }) => M.tieneAccesoMenu({ usuario, permisos, modulo: "rh", opcion: "Asistencia", estricto: true, requiere: REQ });
+  const p = (opcion, tipo) => ({ modulo: "rh", opcion, tipo });
+  it("rh_empleado (Asistencia:consulta) y portal_admin no las ven; rh_admin, Empleados:edicion y super_admin sí", () => {
+    expect(ver([p("Asistencia", "consulta"), p("Vacaciones", "consulta")])).toBe(false);
+    expect(ver([])).toBe(false);
+    expect(ver([p("Asistencia", "edicion")])).toBe(true);
+    expect(ver([p("Asistencia", "consulta"), p("Empleados", "edicion")])).toBe(true);
+    expect(ver([], { rol_nombre: "super_admin" })).toBe(true);
+    expect(ver([{ modulo: "tickets", opcion: "Asistencia", tipo: "edicion" }])).toBe(false);
+  });
+  it("sin `requiere` mantiene el comportamiento anterior (estricto y lista vacía)", () => {
+    const base = { usuario: {}, modulo: "rh", opcion: "Turnos" };
+    expect(M.tieneAccesoMenu({ ...base, permisos: [] })).toBe(true);
+    expect(M.tieneAccesoMenu({ ...base, permisos: [], estricto: true })).toBe(false);
+    expect(M.tieneAccesoMenu({ ...base, permisos: [p("Turnos", "consulta")], estricto: true })).toBe(true);
+    expect(M.tieneAccesoMenu({ ...base, permisos: [p("Marcas", "consulta")] })).toBe(false);
+    expect(M.tieneAccesoMenu({ ...base, opcion: null, permisos: [p("X", "consulta")] })).toBe(true);
   });
 });

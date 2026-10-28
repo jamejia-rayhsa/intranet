@@ -80,14 +80,16 @@ export const anularJustificacion = (id) => solicitar(`${base}/incidencias/${id}/
 export const sinIdentificador = ({ pagina = 1, limite = 100 } = {}) => solicitar(`${base}/sin-identificador?pagina=${pagina}&limite=${limite}`);
 export const registrarExportacionResultados = (tipo, filas) =>
   solicitar(`${base}/resultados/exportaciones`, { method: "POST", body: json({ tipo, filas }) });
-export const cerrarPeriodo = (id) => solicitar(`${base}/periodos/${id}/cerrar`, { method: "POST", body: json({}) });
+export const contadoresPeriodo = (id) => solicitar(`${base}/periodos/${id}/contadores`);
+export const cerrarPeriodo = (id, esperados) => solicitar(`${base}/periodos/${id}/cerrar`, { method: "POST", body: json({ esperados }) });
 export const reabrirPeriodo = (id, motivo) => solicitar(`${base}/periodos/${id}/reabrir`, { method: "POST", body: json({ motivo }) });
 export const recalcularRango = (datos) => solicitar(`${base}/recalcular`, { method: "POST", body: json(datos) });
 export const listarAjustes = ({ pagina = 1, limite = 50 } = {}) => solicitar(`${base}/ajustes-pendientes?pagina=${pagina}&limite=${limite}`);
 export const resolverAjuste = (id, nota) => solicitar(`${base}/ajustes-pendientes/${id}/resolver`, { method: "POST", body: json(nota ? { nota } : {}) });
 export const listarEjecuciones = (limite = 20) => solicitar(`${base}/ejecuciones?limite=${limite}`);
 export const obtenerParametros = () => solicitar(`${base}/parametros`);
-export const guardarParametros = (cambios) => solicitar(`${base}/parametros`, { method: "PUT", body: json(cambios) });
+export const guardarParametros = (cambios, confirmacion) =>
+  solicitar(`${base}/parametros`, { method: "PUT", body: json(confirmacion ? { ...cambios, confirmacion } : cambios) });
 
 /** Mensaje para mostrar: 403 -> sin permiso; el resto, el del servidor o el de red. */
 export function mensajeDeError(err, porDefecto) {

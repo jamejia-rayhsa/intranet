@@ -4,12 +4,12 @@ import {
   listarPeriodos, listarAjustes, listarEjecuciones, recalcularRango, buscarEmpleados, mensajeDeError,
 } from "../services/asistencia.service";
 import { fechaMexicoHoy, formatoLocal } from "../utils/asistenciaFechas";
-import { OPCION_ASISTENCIA, OPCION_EMPLEADOS, accesoGestionAsistencia } from "../utils/asistenciaPermisos";
 import {
   AVISO_CIERRE_AUTOMATICO, MAX_DIAS_RECALCULO, estadoCerrar, textoCierre, validarRecalculo, avisoRecalculo, textoResultadoRecalculo,
   esConflictoOcupado, mensajeAccionPeriodo, MOTIVO_AJUSTE, TIPO_EJECUCION, ESTADO_EJECUCION, textoErrorEjecucion,
 } from "../utils/asistenciaPeriodos";
-import useAccesoAsistencia from "../hooks/useAccesoAsistencia";
+import useAccesoGestion from "../hooks/useAccesoGestion";
+import SinAccesoGestion from "../components/asistencia/SinAccesoGestion";
 import useFocoTitulo from "../hooks/useFocoTitulo";
 import EstadoCarga from "../components/asistencia/EstadoCarga";
 import { CerrarPeriodoDialogo, ReabrirPeriodoDialogo, ResolverAjusteDialogo } from "../components/asistencia/PeriodoDialogos";
@@ -19,9 +19,7 @@ import "../styles/asistenciaResultados.css";
 const nombreDe = (f) => [f.nombre, f.apellido_paterno, f.apellido_materno].filter(Boolean).join(" ");
 
 export default function AsistenciaPeriodosPage() {
-  const nivelAsis = useAccesoAsistencia(OPCION_ASISTENCIA);
-  const nivelEmp = useAccesoAsistencia(OPCION_EMPLEADOS);
-  const acceso = accesoGestionAsistencia(nivelAsis, nivelEmp);
+  const acceso = useAccesoGestion();
   const { ref: tituloRef, enfocarSiPerdido } = useFocoTitulo();
   const hoy = useMemo(() => fechaMexicoHoy(), []);
 
@@ -147,22 +145,7 @@ export default function AsistenciaPeriodosPage() {
   const avisoRango = useMemo(() => (validarRecalculo(recalc) ? null : avisoRecalculo(recalc.desde, recalc.hasta, periodos)), [recalc, periodos]);
   const nombreAjuste = (a) => nombreDe(a) || `Empleado ${a.empleado_id}`;
 
-  if (acceso.cargando) {
-    return (
-      <div className="asi asr">
-        <h1 ref={tituloRef} tabIndex={-1}>Periodos de asistencia</h1>
-        <p className="asi__estado" role="status">Cargando…</p>
-      </div>
-    );
-  }
-  if (!acceso.puedeLeer) {
-    return (
-      <div className="asi asr">
-        <h1 ref={tituloRef} tabIndex={-1}>Periodos de asistencia</h1>
-        <p className="asi__aviso asi__aviso--error" role="alert">No tienes permiso para consultar la gestión de asistencia.</p>
-      </div>
-    );
-  }
+  if (acceso.cargando || acceso.error || !acceso.puedeLeer) return <SinAccesoGestion acceso={acceso} tituloRef={tituloRef} titulo="Periodos de asistencia" />;
   const puedeEscribir = acceso.puedeEscribir;
 
   return (

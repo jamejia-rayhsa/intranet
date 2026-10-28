@@ -1,6 +1,7 @@
 // Lecturas y escrituras de la API del motor de asistencia (resultados por día, resumen, periodos, ajustes
 // pendientes, incidencias de RH). El cálculo vive en services/asistencia/; aquí solo hay consultas acotadas.
 const { grupo } = require("../../../portal/backend/config/database");
+const { clasificarMarcas } = require("../services/asistencia/motor");
 
 const ESTATUS = [
   "puntual", "retardo", "falta", "salida_anticipada", "incompleta", "vacaciones", "permiso", "descanso", "festivo",
@@ -15,6 +16,7 @@ const sinTotal = (fila) => {
   return copia;
 };
 
+const LIMITE_MARCAS_DIA = 100;
 const NOMBRE_EMPLEADO = `e.nombre, e.apellido_paterno, e.apellido_materno, e.numero_nomina`;
 
 const AsistenciaResultados = {
@@ -107,6 +109,7 @@ const AsistenciaResultados = {
       delete publica.reabierto_por;
       delete publica.reabierto_por_nombre;
       delete publica.cerrado_por_nombre;
+      delete publica.cerrado_por;
       return publica;
     });
     return { filas, total: r.rows[0] ? Number(r.rows[0].total) : 0 };
@@ -300,12 +303,12 @@ const AsistenciaResultados = {
     const dias = dia.cruza_medianoche ? 2 : 1;
     const [marcas, vac, per, fes, inc] = await Promise.all([
       cliente.query(
-        `SELECT m.id, m.marca_ts, m.terminal_alias, m.terminal_sn
+        `SELECT m.id, m.marca_ts, m.terminal_alias${esRH ? ", m.terminal_sn" : ""}
          FROM asistencia_marcas m
          WHERE m.empleado_id = $1
            AND m.marca_ts >= ($2::date::timestamp AT TIME ZONE 'America/Mexico_City')
            AND m.marca_ts < (($2::date + $3::int)::timestamp AT TIME ZONE 'America/Mexico_City')
-         ORDER BY m.marca_ts, m.id LIMIT 100`,
+         ORDER BY m.marca_ts, m.id LIMIT ${LIMITE_MARCAS_DIA + 1}`,
         [empleadoId, fecha, dias],
       ),
       dia.solicitud_vacaciones_id
@@ -333,11 +336,23 @@ const AsistenciaResultados = {
         [empleadoId, fecha],
       ),
     ]);
+    const truncadas = marcas.rows.length > LIMITE_MARCAS_DIA;
+    const lista = marcas.rows.slice(0, LIMITE_MARCAS_DIA);
+    // El rol de cada marca lo calcula el MISMO código del motor (duplicados y ventana de comida guardada en el día)
+    const roles = clasificarMarcas({
+      fecha: dia.fecha,
+      marcas: lista.map((m) => ({ id: m.id, ts: m.marca_ts })),
+      marcasUsadas: dia.marcas_usadas,
+      banderas: (dia.detalle && dia.detalle.banderas) || [],
+      comida: (dia.detalle && dia.detalle.comida) || null,
+      cruza: Boolean(dia.cruza_medianoche),
+    });
     const fila = { ...dia };
     for (const interno of ["solicitud_vacaciones_id", "permiso_id", "calendario_id", "incidencia_id", "departamento_actual_id"]) delete fila[interno];
     return {
       dia: fila,
-      marcas: marcas.rows,
+      marcas: lista.map((m) => ({ ...m, rol: roles[String(m.id)] || "otra" })),
+      marcas_truncadas: truncadas,
       cruces: {
         vacaciones: vac.rows[0] || null,
         permiso: per.rows[0] || null,
@@ -357,6 +372,23 @@ const AsistenciaResultados = {
       [limite],
     );
     return r.rows;
+  },
+
+  /**
+   * Contadores FRESCOS que se muestran al cerrar una quincena y que el servidor vuelve a comparar al cerrar:
+   * días pendientes de calificar, ajustes sin resolver y empleados sin identificador. null si el periodo no existe.
+   */
+  async contadoresCierre(periodoId, analisisDesde, cliente = grupo) {
+    const p = await cliente.query(
+      `SELECT p.estado,
+              (SELECT COUNT(*)::int FROM asistencia_diaria d WHERE d.periodo_id = p.id AND d.estatus = 'pendiente') AS dias_pendientes,
+              (SELECT COUNT(*)::int FROM asistencia_ajustes_pendientes a WHERE a.periodo_id = p.id AND a.resuelto_en IS NULL) AS ajustes_pendientes
+       FROM asistencia_periodos p WHERE p.id = $1`,
+      [periodoId],
+    );
+    if (!p.rows[0]) return null;
+    const sin = await AsistenciaResultados.sinIdentificador({ analisisDesde, limite: 1, offset: 0 }, cliente);
+    return { estado: p.rows[0].estado, dias_pendientes: p.rows[0].dias_pendientes, ajustes_pendientes: p.rows[0].ajustes_pendientes, sin_identificador: sin.total };
   },
 
   async empleadoExiste(id, cliente = grupo) {

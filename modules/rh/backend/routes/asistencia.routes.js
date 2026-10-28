@@ -109,6 +109,7 @@ router.post("/resultados/exportaciones", LEER, RH_LECTURA, ControladorMotor.regi
 router.get("/ejecuciones", LEER, RH_LECTURA, ControladorMotor.ejecuciones);
 router.get("/resumen", LEER, ControladorMotor.resumen);
 router.get("/periodos", LEER, ControladorMotor.periodos);
+router.get("/periodos/:id/contadores", LEER, RH_LECTURA, validarId("id"), ControladorMotor.contadoresCierre);
 router.post("/periodos/:id/cerrar", ESCRIBIR_ASISTENCIA, validarId("id"), ControladorMotor.cerrarPeriodo);
 router.post("/periodos/:id/reabrir", ESCRIBIR_ASISTENCIA, validarId("id"), ControladorMotor.reabrirPeriodo);
 router.post("/recalcular", ESCRIBIR_ASISTENCIA, ControladorMotor.recalcular);

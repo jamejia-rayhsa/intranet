@@ -5,8 +5,8 @@ const fs = require("fs");
 const path = require("path");
 const { transformSync } = require("esbuild");
 
-function cargarUtilEsm(nombreArchivo) {
-  const ruta = path.join(__dirname, "../frontend/utils", nombreArchivo);
+function cargarUtilEsm(nombreArchivo, carpeta = path.join(__dirname, "../frontend/utils")) {
+  const ruta = path.join(carpeta, nombreArchivo);
   const fuente = fs.readFileSync(ruta, "utf8");
   if (/^\s*import\s/m.test(fuente)) throw new Error(`${nombreArchivo} no debe tener imports (lógica pura, sin dependencias)`);
   const { code } = transformSync(fuente, { format: "cjs", target: "node18", loader: "js", sourcefile: ruta });

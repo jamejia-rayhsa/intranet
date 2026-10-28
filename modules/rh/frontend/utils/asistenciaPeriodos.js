@@ -28,6 +28,7 @@ export function esConflictoOcupado(err) {
 /** Mensaje amable para el error de una acción de periodos (el 409 de «ocupado» no es un fallo). */
 export function mensajeAccionPeriodo(err, porDefecto) {
   if (esConflictoOcupado(err)) return MENSAJE_OCUPADO;
+  if (esDatosCambiaron(err)) return 'Los datos cambiaron desde que abriste la confirmación. Se actualizaron los números: revísalos y confirma de nuevo.';
   if (err && err.status === 403) return 'No tienes permiso para esta acción.';
   return (err && err.message) || porDefecto;
 }
@@ -46,14 +47,33 @@ export function estadoCerrar(p, hoy) {
   return { puede: true, motivo: '' };
 }
 
-/** Datos que se muestran en la confirmación de cierre. */
-export function resumenCierre(p, sinIdentificador) {
-  const pendientes = Number(p && p.dias_pendientes) || 0;
-  const ajustes = Number(p && p.ajustes_pendientes) || 0;
-  const sinId = Number.isFinite(sinIdentificador) ? sinIdentificador : null;
-  const hayRiesgo = pendientes > 0 || ajustes > 0 || (sinId !== null && sinId > 0);
-  return { pendientes, ajustes, sinIdentificador: sinId, hayRiesgo };
+/**
+ * Datos de la confirmación de cierre a partir de los contadores FRESCOS del servidor
+ * ({dias_pendientes, ajustes_pendientes, sin_identificador}). Con días pendientes no se puede cerrar (lo exige el servidor).
+ */
+export function resumenCierre(c) {
+  const pendientes = Number(c && c.dias_pendientes) || 0;
+  const ajustes = Number(c && c.ajustes_pendientes) || 0;
+  const sinId = c && Number.isFinite(c.sin_identificador) ? c.sin_identificador : null;
+  return {
+    pendientes,
+    ajustes,
+    sinIdentificador: sinId,
+    bloqueado: pendientes > 0,
+    hayRiesgo: ajustes > 0 || (sinId !== null && sinId > 0),
+    motivoBloqueo: pendientes > 0
+      ? `Hay ${pendientes} ${pendientes === 1 ? 'día pendiente' : 'días pendientes'} de calificar: no se puede cerrar. Recalcula el rango en esta pantalla y vuelve a abrir la confirmación cuando no queden pendientes.`
+      : '',
+  };
 }
+
+/** El servidor responde 409 «Los datos cambiaron…» cuando los contadores ya no son los que se mostraron. */
+export function esDatosCambiaron(err) {
+  return Boolean(err && err.status === 409 && /datos cambiaron/i.test(String(err.message || '')));
+}
+
+/** Contadores esperados que se envían al cerrar (los que RH vio). */
+export const esperadosDeCierre = (c) => ({ ajustes_pendientes: Number(c.ajustes_pendientes) || 0, sin_identificador: Number(c.sin_identificador) || 0 });
 
 export function validarMotivoReapertura(motivo) {
   const t = String(motivo || '').trim();

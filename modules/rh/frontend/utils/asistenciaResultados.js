@@ -18,7 +18,7 @@ export const ESTATUS = {
   sin_turno: { texto: 'Sin turno', plural: 'Sin turno', icono: '?', tono: 'neutro' },
 };
 export const ORDEN_TARJETAS = [
-  'puntual', 'retardo', 'falta', 'salida_anticipada', 'incompleta', 'vacaciones', 'permiso', 'festivo', 'descanso', 'justificada', 'pendiente',
+  'puntual', 'retardo', 'falta', 'salida_anticipada', 'incompleta', 'vacaciones', 'permiso', 'festivo', 'descanso', 'justificada', 'pendiente', 'sin_turno',
 ];
 export const ESTATUS_JUSTIFICABLES = ['falta', 'retardo', 'salida_anticipada', 'incompleta'];
 // Estatus que cuentan como «día laborable evaluado» (el denominador del % de puntualidad)
@@ -95,7 +95,7 @@ export const AVISO_CERRADA =
 // --- Filtros de revisión ---
 export const ATAJOS = [
   { id: 'mas_faltas', texto: 'Más faltas', ayuda: 'Empleados con faltas, de más a menos' },
-  { id: 'faltas_con_marcas', texto: 'Faltas con marcas', ayuda: 'Faltas del día con alguna marca (llegó más de 30 min tarde u otra marca fuera de lo esperado)' },
+  { id: 'faltas_con_marcas', texto: 'Faltas con marcas', ayuda: 'Faltas en las que hubo alguna marca (llegó más de 30 min tarde, marca suelta o salida sin entrada)' },
   { id: 'incompletas_comida', texto: 'Incompletas por comida', ayuda: 'La última marca del día cae en la comida y no hay salida posterior' },
   { id: 'sin_marcas', texto: 'Sin ninguna marca', ayuda: 'Sin una sola marca en todo el periodo consultado' },
 ];
@@ -217,6 +217,11 @@ export function etiquetaCelda(celda) {
 export function celdaSiguiente(celdas, indice, tecla, columnas) {
   const paso = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: columnas, ArrowUp: -columnas }[tecla];
   const habilitada = (i) => i >= 0 && i < celdas.length && !celdas[i].vacia;
+  if ((tecla === 'Home' || tecla === 'End') && columnas === 1) {
+    // cuadrícula apilada: Inicio/Fin llevan al primer/último día
+    const indices = celdas.map((c, i) => (c.vacia ? -1 : i)).filter((i) => i !== -1);
+    return indices.length ? (tecla === 'Home' ? indices[0] : indices[indices.length - 1]) : indice;
+  }
   if (tecla === 'Home' || tecla === 'End') {
     const fila = Math.floor(indice / columnas);
     const ini = fila * columnas;
@@ -290,39 +295,6 @@ export function filasDelTurno(dia) {
   return filas;
 }
 
-/**
- * Función de cada marca del día. `partes(iso)` -> {fecha, minutos} en hora local (inyectada). Devuelve un mapa id -> rol
- * ('entrada' | 'salida' | 'comida' | 'duplicada' | 'otra'). Las marcas usadas son [entrada, salida] (una sola:
- * entrada, salvo la bandera salida_sin_entrada).
- */
-export function rolesDeMarcas(marcas, dia, partes) {
-  const usadas = ((dia && dia.marcas_usadas) || []).map(String);
-  const banderas = (dia && dia.detalle && dia.detalle.banderas) || [];
-  const roles = {};
-  let previaConservada = null;
-  const comida = dia && dia.detalle && dia.detalle.comida;
-  const lista = (Array.isArray(marcas) ? marcas : []).slice().sort((a, b) => new Date(a.marca_ts) - new Date(b.marca_ts));
-  const minutosComida = comida ? [Number(comida.desde.slice(0, 2)) * 60 + Number(comida.desde.slice(3, 5)), Number(comida.hasta.slice(0, 2)) * 60 + Number(comida.hasta.slice(3, 5))] : null;
-  for (const m of lista) {
-    const id = String(m.id);
-    const ms = new Date(m.marca_ts).getTime();
-    const idx = usadas.indexOf(id);
-    if (idx !== -1) {
-      roles[id] = usadas.length === 2 ? (idx === 0 ? 'entrada' : 'salida') : banderas.includes('salida_sin_entrada') ? 'salida' : 'entrada';
-      previaConservada = ms;
-      continue;
-    }
-    if (previaConservada !== null && ms - previaConservada <= 60000) {
-      roles[id] = 'duplicada';
-      continue;
-    }
-    previaConservada = ms;
-    const p = partes ? partes(m.marca_ts) : null;
-    if (minutosComida && p && p.fecha === dia.fecha && p.minutos >= minutosComida[0] && p.minutos <= minutosComida[1]) roles[id] = 'comida';
-    else roles[id] = 'otra';
-  }
-  return roles;
-}
 export const ROLES_MARCA = {
   entrada: 'Entrada (tomada)',
   salida: 'Salida (tomada)',
@@ -360,9 +332,10 @@ export function validarMotivoJustificacion(motivo) {
 }
 
 // --- Exportación a CSV ---
-export const TOPE_FILAS_EXPORTACION = 10000;
+export const TOPE_FILAS_EXPORTACION = 15000;
 const BOM = String.fromCharCode(0xfeff);
-const INICIO_FORMULA = /^[=+\-@\t\r]/;
+// Hojas de cálculo evalúan también `  =...` (espacios o tabulador antes del signo). Efecto: un nombre que empiece con - o + sale con ' al inicio.
+const INICIO_FORMULA = /^\s*[=+\-@]/;
 export function neutralizarFormula(valor) {
   const texto = valor === null || valor === undefined ? '' : String(valor);
   return INICIO_FORMULA.test(texto) ? `'${texto}` : texto;
@@ -371,11 +344,14 @@ export function celdaCsv(valor) {
   const t = neutralizarFormula(valor);
   return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
 }
-function armarCsv(columnas, filas, tope) {
+function armarCsv(columnas, filas, tope, incompleto = false) {
   const usadas = filas.slice(0, tope);
+  const truncado = filas.length > tope || incompleto;
   const lineas = [columnas.map((c) => celdaCsv(c.titulo)).join(',')];
   for (const f of usadas) lineas.push(columnas.map((c) => celdaCsv(f[c.clave])).join(','));
-  return { texto: BOM + lineas.join('\r\n') + '\r\n', filas: usadas.length, truncado: filas.length > tope };
+  // El corte nunca es silencioso: el propio archivo lo dice en su última fila
+  if (truncado) lineas.push(celdaCsv(`Se truncó a ${usadas.length} filas: el archivo está incompleto`));
+  return { texto: BOM + lineas.join('\r\n') + '\r\n', filas: usadas.length, truncado };
 }
 
 export const COLUMNAS_RESUMEN = [
@@ -389,7 +365,7 @@ export const COLUMNAS_RESUMEN = [
   { clave: 'incompletas_comida', titulo: 'Incompletas por comida' },
   { clave: 'puntualidad', titulo: '% de puntualidad' },
 ];
-export function construirCsvResumen(filas, tope = TOPE_FILAS_EXPORTACION) {
+export function construirCsvResumen(filas, tope = TOPE_FILAS_EXPORTACION, incompleto = false) {
   const datos = (Array.isArray(filas) ? filas : []).map((f) => ({
     ...f,
     nomina: f.numero_nomina,
@@ -397,7 +373,7 @@ export function construirCsvResumen(filas, tope = TOPE_FILAS_EXPORTACION) {
     departamento: f.departamento || '',
     puntualidad: textoPorcentaje(porcentajePuntualidad(f)),
   }));
-  return armarCsv(COLUMNAS_RESUMEN, datos, tope);
+  return armarCsv(COLUMNAS_RESUMEN, datos, tope, incompleto);
 }
 
 export const COLUMNAS_DETALLE = [
@@ -410,12 +386,12 @@ export const COLUMNAS_DETALLE = [
   { clave: 'primera_marca', titulo: 'Primera marca (hora de México)' },
   { clave: 'ultima_marca', titulo: 'Última marca (hora de México)' },
   { clave: 'turno', titulo: 'Turno' },
-  { clave: 'periodo', titulo: 'Quincena' },
+  { clave: 'periodo', titulo: 'Estado de la quincena' },
   { clave: 'regla', titulo: 'Regla aplicada' },
   { clave: 'banderas', titulo: 'Banderas' },
 ];
 /** `hora(iso)` -> 'AAAA-MM-DD HH:MM:SS' en hora de México (inyectada). */
-export function construirCsvDetalle(dias, hora, tope = TOPE_FILAS_EXPORTACION) {
+export function construirCsvDetalle(dias, hora, tope = TOPE_FILAS_EXPORTACION, incompleto = false) {
   const datos = (Array.isArray(dias) ? dias : []).map((d) => ({
     fecha: d.fecha,
     nomina: d.numero_nomina,
@@ -426,11 +402,11 @@ export function construirCsvDetalle(dias, hora, tope = TOPE_FILAS_EXPORTACION) {
     primera_marca: d.primera_marca ? hora(d.primera_marca) : '',
     ultima_marca: d.ultima_marca ? hora(d.ultima_marca) : '',
     turno: d.turno_nombre || '',
-    periodo: d.periodo_estado ? `${d.periodo_estado}` : '',
+    periodo: d.periodo_estado === 'cerrado' ? 'cerrada' : d.periodo_estado === 'abierto' ? 'abierta' : '',
     regla: reglaDelDia(d).titulo,
     banderas: banderasDelDia(d).map((b) => b.clave).join(' '),
   }));
-  return armarCsv(COLUMNAS_DETALLE, datos, tope);
+  return armarCsv(COLUMNAS_DETALLE, datos, tope, incompleto);
 }
 export const nombreArchivoResumen = (desde, hasta) => `asistencia_resumen_${desde}_a_${hasta}.csv`;
 export const nombreArchivoDetalle = (desde, hasta) => `asistencia_detalle_${desde}_a_${hasta}.csv`;

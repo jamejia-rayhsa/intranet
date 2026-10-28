@@ -7,7 +7,7 @@
 const { grupo } = require("../../../../portal/backend/config/database");
 const Ingesta = require("../../models/ingesta.model");
 const { evaluarDia, snapshotTurno } = require("./motor");
-const { interpretarParametros, CLAVES } = require("./parametros");
+const { interpretarParametros, validarVentanaComida, CLAVES } = require("./parametros");
 const { quincenaDe, quincenasEntre } = require("./periodos");
 const { conCandadoDelMotor, abortarCorrida } = require("./candado");
 const { ZONA, aLocal, hoyMexico, sumarDias } = require("./tiempo");
@@ -45,14 +45,23 @@ async function listarParametros(c = grupo) {
 /** cambios: { clave: valorTipado }. Devuelve { previos, nuevos } para la auditoría. */
 async function guardarParametros(cambios, usuarioId) {
   const claves = Object.keys(cambios);
+  const lock = [...new Set([...claves, "comida_desde", "comida_hasta"])];
   const cliente = await grupo.connect();
   let errorRollback;
   try {
     await cliente.query("BEGIN");
-    const previos = await cliente.query(
+    const bloqueadas = await cliente.query(
       "SELECT clave, valor FROM asistencia_parametros WHERE clave = ANY($1::text[]) ORDER BY clave FOR UPDATE",
-      [claves],
+      [lock],
     );
+    // la ventana de comida se valida contra los valores ya bloqueados: dos PUT simultáneos no la dejan invertida
+    const errorComida = validarVentanaComida(cambios, interpretarParametros(bloqueadas.rows));
+    if (errorComida) {
+      const e = new Error("validacion");
+      e.validacion = errorComida;
+      throw e;
+    }
+    const previos = { rows: bloqueadas.rows.filter((f) => claves.includes(f.clave)) };
     await cliente.query(
       `INSERT INTO asistencia_parametros (clave, valor, actualizado_por, fecha_actualizacion)
        SELECT k, v, $3, NOW() FROM unnest($1::text[], $2::text[]) AS t(k, v)
@@ -803,6 +812,11 @@ async function periodoPorId(c, id) {
   return r.rows[0] || null;
 }
 
+async function contarPendientes(c, periodoId) {
+  const r = await c.query("SELECT COUNT(*)::int AS n FROM asistencia_diaria WHERE periodo_id = $1 AND estatus = 'pendiente'", [periodoId]);
+  return r.rows[0].n;
+}
+
 /** Cierre manual: recalcula una última vez el periodo y lo congela. Devuelve { codigo } ante una condición de negocio. */
 async function cerrarPeriodo({ id, usuarioId, esperaMs = 0, ...resto }) {
   const base = opcionesBase(resto);
@@ -812,11 +826,17 @@ async function cerrarPeriodo({ id, usuarioId, esperaMs = 0, ...resto }) {
       if (!periodo) return { codigo: "no_existe" };
       if (periodo.estado === "cerrado") return { codigo: "ya_cerrado" };
       if (periodo.fecha_fin >= hoy(base.ahora)) return { codigo: "no_terminado", periodo };
+      // Un día 'pendiente' no se congela (decisión del orquestador): sin excepción ni 'forzar'
+      const pendientes = await contarPendientes(c, id);
+      if (pendientes > 0) return { codigo: "con_pendientes", pendientes, periodo };
       const parametros = await leerParametros(c);
       const resultado = await conBitacora(
         c, { tipo: "cierre", origen: "api", desde: periodo.fecha_inicio, hasta: periodo.fecha_fin, usuarioId },
         async () => {
           const stats = await recalcularPeriodo(c, periodo, { parametros, ahora: base.ahora, limite: null, tamanoBloque: base.tamanoBloque });
+          // la última pasada pudo dejar días sin calificar: tampoco se cierra
+          const tras = await contarPendientes(c, id);
+          if (tras > 0) return { stats, valor: { codigo: "con_pendientes", pendientes: tras, periodo } };
           const cerrado = await marcarCerrado(c, id, { tipo: "manual", usuarioId });
           return { stats: { ...stats, periodos_cerrados: cerrado ? 1 : 0 }, valor: { periodo: cerrado, dias_evaluados: stats.dias_evaluados } };
         },
