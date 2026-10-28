@@ -17,6 +17,17 @@ function responderError(res, error, contexto) {
   return res.status(500).json({ exito: false, mensaje: "Error al procesar la vinculación de cuentas" });
 }
 
+// Rechazos del modelo (409 por cambios o en curso, 400 por privilegiadas sin confirmar): quedan auditados SOLO con conteos por
+// motivo (nunca correos ni nombres) para detectar el mal uso. Un fallo de la auditoría nunca cambia la respuesta.
+async function auditarRechazo(req, error, recibidos) {
+  if (!(error instanceof ErrorVinculacion)) return;
+  const motivos = {};
+  for (const c of error.extra.conflictos || []) motivos[c.motivo] = (motivos[c.motivo] || 0) + 1;
+  if (error.extra.requiere_confirmacion_privilegiadas) motivos.privilegiadas_sin_confirmar = (error.extra.cuentas_privilegiadas || []).length;
+  if (Object.keys(motivos).length === 0) motivos.otra_operacion_en_curso = 1;
+  await auditarImportacion(req, "empleados", "VINCULAR_RECHAZADO", { estado: error.estado, pares_recibidos: recibidos, motivos }, "cuentas");
+}
+
 const ControladorEmpleadoCuenta = {
   async vistaPrevia(req, res) {
     try {
@@ -59,6 +70,7 @@ const ControladorEmpleadoCuenta = {
       }, "cuentas");
       res.json({ exito: true, datos: resultado });
     } catch (error) {
+      await auditarRechazo(req, error, Array.isArray(req.body && req.body.pares) ? req.body.pares.length : 0);
       responderError(res, error, "vincular cuentas");
     }
   },
@@ -87,6 +99,7 @@ const ControladorEmpleadoCuenta = {
         if (e instanceof ErrorVinculacion && e.extra.conflictos && e.extra.conflictos[0] && e.extra.conflictos[0].motivo === "empleado_no_existe") {
           return res.status(404).json({ exito: false, mensaje: "Empleado no encontrado" });
         }
+        await auditarRechazo(req, e, 1);
         throw e;
       }
       if (r.accion === "vinculada" || r.accion === "desvinculada") {

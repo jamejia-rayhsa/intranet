@@ -392,6 +392,11 @@ const Empleado = {
       await cliente.query("BEGIN");
       transaccion = true;
       await tomarCandadoImportacion(cliente, "empleados");
+      // Con vínculos de cuenta en el lote también se toma el candado de la vinculación (orden fijo 4410 -> 4601; la
+      // vinculación nunca toma 4410): importar y vincular desde la pantalla no se pisan aunque falte la UNIQUE.
+      if (validas.some((v) => v.fila.correo_cuenta)) {
+        await cliente.query("SELECT pg_advisory_xact_lock($1::int, $2::int)", [EmpleadoCuenta.ESPACIO_VINCULACION, EmpleadoCuenta.CLAVE_VINCULACION]);
+      }
 
       // 2. Estado actual de los empleados con esas claves, leído con el candado ya tomado
       const porCurp = new Map();
@@ -508,7 +513,9 @@ const Empleado = {
           if (!(destino && actualId === cuenta.id)) {
             if (actualId !== null && actualId !== undefined) { error(cruda, fila, "El empleado ya tiene otra cuenta vinculada; no se pisa. Desvincúlala desde el perfil del empleado"); continue; }
             if (dueno) { error(cruda, fila, "Esa cuenta ya está vinculada a OTRO empleado; no se vinculó"); continue; }
-            if ((destino ? destino.valores.estatus : datos.estatus) === "baja") { error(cruda, fila, "El empleado está dado de baja: no se le vincula una cuenta"); continue; }
+            const estatusEmpleado = destino ? destino.valores.estatus : datos.estatus;
+            if (estatusEmpleado && estatusEmpleado !== "activo") { error(cruda, fila, `El empleado no está activo (estatus ${estatusEmpleado}): solo se vinculan cuentas a empleados activos`); continue; }
+            if (cuenta.ambigua || cuenta.correo_duplicado) { error(cruda, fila, "Correo ambiguo: hay más de una cuenta cuyo correo solo difiere en mayúsculas; corrígelo en la administración de usuarios. No se vinculó"); continue; }
             if (cuenta.privilegiada) { error(cruda, fila, "La cuenta tiene un rol privilegiado: vincúlala desde la acción 'Vincular cuentas' con su confirmación aparte"); continue; }
             if (!cuenta.activo) avisos.push({ campo: "correo_cuenta", valor_recibido: null, motivo: "la cuenta está inactiva: el empleado no podrá entrar hasta que el administrador de usuarios la active" });
             if (!cuenta.con_acceso_asistencia) avisos.push({ campo: "correo_cuenta", valor_recibido: null, motivo: "la cuenta no tiene un rol con acceso a Asistencia: no verá Mi asistencia hasta que el administrador de usuarios se lo asigne" });

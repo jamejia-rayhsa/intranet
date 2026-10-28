@@ -18,8 +18,8 @@ const USUARIOS = [
   { id: 6, correo: "otra@ejemplo.test" },
 ];
 
-function simular(empleados = [], usuarios = USUARIOS) {
-  const bd = crearBd({ empleados, usuarios });
+function simular(empleados = [], usuarios = USUARIOS, opciones = {}) {
+  const bd = crearBd({ empleados, usuarios, ...opciones });
   grupo.query.mockImplementation(bd.query);
   grupo.connect.mockImplementation(bd.connect);
   return bd;
@@ -171,5 +171,48 @@ describe("importarLote con correo_cuenta", () => {
     const r = await importar([fila(1, { correo_cuenta: "ana1@ejemplo.test" })]);
     expect(r.errores).toHaveLength(1);
     expect(JSON.stringify(r)).not.toMatch(/duplicate key|detalle interno|23505/);
+  });
+
+  it("empleado suspendido: no se vincula (solo activos), también al crearlo con estatus suspendido", async () => {
+    const bd = simular([emp(1, { estatus: "suspendido" })]);
+    const r = await importar([fila(1, { correo_cuenta: "ana1@ejemplo.test" })]);
+    expect(r.errores[0].error).toMatch(/no está activo \(estatus suspendido\)/);
+    expect(bd.estado.empleados[0].usuario_id).toBeNull();
+    const r2 = await importar([fila(9, { correo_cuenta: "ana2@ejemplo.test", estatus: "suspendido" })], "omitir");
+    expect(r2.errores[0].error).toMatch(/no está activo/);
+  });
+
+  it("dos cuentas cuyo correo solo difiere en mayúsculas: error 'Correo ambiguo' y no se elige una", async () => {
+    const bd = simular([emp(1)], [...USUARIOS, { id: 7, correo: "Dup@ejemplo.test" }, { id: 8, correo: "dup@ejemplo.test" }]);
+    const r = await importar([fila(1, { correo_cuenta: "DUP@ejemplo.test" })]);
+    expect(r.errores[0].error).toMatch(/Correo ambiguo/);
+    expect(bd.estado.empleados[0].usuario_id).toBeNull();
+  });
+
+  it("toma el candado de la vinculación 4601/1 (después del 4410) solo si el lote trae correo_cuenta", async () => {
+    let bd = simular([emp(1)]);
+    await importar([fila(1, { correo_cuenta: "ana1@ejemplo.test" })]);
+    expect(bd.estado.candados).toEqual([[4410, 1], [4601, 1]]);
+    bd = simular([emp(1)]);
+    await importar([fila(1, { calle: "X" })]);
+    expect(bd.estado.candados).toEqual([[4410, 1]]);
+  });
+
+  it("SIN la UNIQUE: la comprobación en JS impide la cuenta de OTRO empleado y el UPDATE condicional no pisa otra cuenta", async () => {
+    const bd = simular([emp(1), emp(2, { usuario_id: 1 })], USUARIOS, { sinUnique: true });
+    let r = await importar([fila(1, { correo_cuenta: "ana1@ejemplo.test" })]);
+    expect(r.errores[0].error).toBe("Esa cuenta ya está vinculada a OTRO empleado; no se vinculó");
+    expect(bd.estado.empleados.filter((e) => e.usuario_id === 1)).toHaveLength(1);
+    const bd2 = simular([emp(1, { usuario_id: 6 })], USUARIOS, { sinUnique: true });
+    r = await importar([fila(1, { correo_cuenta: "ana1@ejemplo.test" })]);
+    expect(r.errores[0].error).toMatch(/Desvincúlala desde el perfil/);
+    expect(bd2.estado.empleados[0].usuario_id).toBe(6);
+  });
+
+  it("cuenta con permisos de administración (no solo por nombre de rol): error de la fila", async () => {
+    const bd2 = simular([emp(1)], [{ id: 9, correo: "adm@ejemplo.test", roles: ["rol_x"], con_permisos_admin: true }]);
+    const r = await importar([fila(1, { correo_cuenta: "adm@ejemplo.test" })]);
+    expect(r.errores[0].error).toMatch(/privilegiado/);
+    expect(bd2.estado.empleados[0].usuario_id).toBeNull();
   });
 });

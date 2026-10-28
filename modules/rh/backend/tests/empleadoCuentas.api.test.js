@@ -141,18 +141,48 @@ describe("POST /cuentas/vincular", () => {
     await enviar({ pares: [par], confirmar: true, confirmar_privilegiadas: true });
     expect(Modelo.vincularLote).toHaveBeenLastCalledWith([par], { confirmarPrivilegiadas: true });
   });
-  it("409 del modelo (los datos cambiaron) se devuelve con sus conflictos y sin auditar", async () => {
+  it("409 del modelo (los datos cambiaron) se devuelve con sus conflictos y se audita solo como rechazo", async () => {
     Modelo.vincularLote.mockRejectedValue(new Modelo.ErrorVinculacion(409, "Los datos cambiaron", { conflictos: [{ usuario_id: 1, empleado_id: 2, motivo: "cuenta_ya_vinculada" }] }));
     const r = await enviar({ pares: [par], confirmar: true });
     expect(r.status).toBe(409);
     expect(r.body.conflictos[0].motivo).toBe("cuenta_ya_vinculada");
-    expect(auditarImportacion).not.toHaveBeenCalled();
+    expect(auditarImportacion.mock.calls.map((c) => c[2])).toEqual(["VINCULAR_RECHAZADO"]);
   });
   it("error inesperado: 500 genérico", async () => {
     Modelo.vincularLote.mockRejectedValue(Object.assign(new Error("password authentication failed for user postgres"), { code: "28P01" }));
     const r = await enviar({ pares: [par], confirmar: true });
     expect(r.status).toBe(500);
     expect(JSON.stringify(r.body)).not.toMatch(/password|postgres|28P01/);
+  });
+});
+
+describe("auditoría de los rechazos (solo conteos por motivo)", () => {
+  const enviar = (cuerpo) => con("rh_admin")(request(app).post("/api/empleados/cuentas/vincular")).send(cuerpo);
+  it("un 409 por cambios audita VINCULAR_RECHAZADO con conteos por motivo y sin correos", async () => {
+    Modelo.vincularLote.mockRejectedValue(new Modelo.ErrorVinculacion(409, "cambiaron", { conflictos: [{ usuario_id: 1, empleado_id: 2, motivo: "cuenta_ya_vinculada" }, { usuario_id: 3, empleado_id: 4, motivo: "empleado_no_activo" }] }));
+    await enviar({ pares: [{ usuario_id: 1, empleado_id: 2 }, { usuario_id: 3, empleado_id: 4 }], confirmar: true });
+    const [, tabla, accion, datos] = auditarImportacion.mock.calls[0];
+    expect([tabla, accion]).toEqual(["empleados", "VINCULAR_RECHAZADO"]);
+    expect(accion.length).toBeLessThanOrEqual(20);
+    expect(datos).toEqual({ estado: 409, pares_recibidos: 2, motivos: { cuenta_ya_vinculada: 1, empleado_no_activo: 1 } });
+  });
+  it("privilegiadas sin confirmar y 'otra operación en curso' también se auditan", async () => {
+    Modelo.vincularLote.mockRejectedValueOnce(new Modelo.ErrorVinculacion(400, "x", { requiere_confirmacion_privilegiadas: true, cuentas_privilegiadas: [5, 6] }));
+    await enviar({ pares: [{ usuario_id: 5, empleado_id: 1 }], confirmar: true });
+    expect(auditarImportacion.mock.calls[0][3].motivos).toEqual({ privilegiadas_sin_confirmar: 2 });
+    Modelo.vincularLote.mockRejectedValueOnce(new Modelo.ErrorVinculacion(409, "en curso"));
+    await enviar({ pares: [{ usuario_id: 5, empleado_id: 1 }], confirmar: true });
+    expect(auditarImportacion.mock.calls[1][3].motivos).toEqual({ otra_operacion_en_curso: 1 });
+  });
+  it("los 400 de validación y los 500 no se auditan como rechazo", async () => {
+    await enviar({ pares: [], confirmar: true });
+    Modelo.vincularLote.mockRejectedValueOnce(new Error("boom"));
+    await enviar({ pares: [{ usuario_id: 5, empleado_id: 1 }], confirmar: true });
+    expect(auditarImportacion).not.toHaveBeenCalled();
+  });
+  it("un fallo de la auditoría no cambia la respuesta del rechazo", async () => {
+    Modelo.vincularLote.mockRejectedValue(new Modelo.ErrorVinculacion(409, "cambiaron", { conflictos: [{ motivo: "x" }] }));
+    expect((await enviar({ pares: [{ usuario_id: 1, empleado_id: 2 }], confirmar: true })).status).toBe(409);
   });
 });
 

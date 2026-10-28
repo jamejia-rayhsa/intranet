@@ -3607,3 +3607,139 @@ Hallazgos abiertos:
 - No hay hallazgos críticos; no se pide split (el diff es grande pero revisable y se revisó completo).
 - Para decidir con el humano: R2A-2 (cierre con pendientes), R2A-3 (cierre automático al bajar `dias_cierre`), R2A-12 (CSV con nombres) y R2A-15 (motivo visible a no-RH).
 - Los hallazgos de Fase 4 que siguen abiertos (F-M4-4, trigger de periodo cerrado, cursor incremental, vacaciones en sábado) no se repiten aquí y no se ven afectados por este commit.
+
+### [2026-10-28] [revisor] — Vinculación de cuentas de usuario con empleados
+**Alcance:** commit `788832f` (rama `feat/cuentas-empleados`), 30 archivos, ~2 000 líneas. Lectura del diff completo, modelo, controlador, utilidades, importador, UI, docs y pruebas. Pruebas ejecutadas: 7 suites (276 pruebas) en verde.
+**Veredicto:** CON OBSERVACIONES. 0 críticos, 1 alto, 9 medios, 8 bajos.
+**Condición previa a usar en staging:** comprobar la UNIQUE sobre `empleados.usuario_id` y que no haya duplicados (consultas al final). No se pudo verificar desde el árbol.
+
+**Verificado sin hallazgos (conforme):**
+- Solo escribe `empleados.usuario_id` (grep de líneas añadidas: `UPDATE empleados SET usuario_id` y `... = NULL`; `usuarios`, `usuario_rol` y `roles` solo aparecen como lectura en subconsultas; sin GoTrue ni contraseñas).
+- Nunca pisa un `usuario_id` no nulo: vincularLote (conflictos con 409 y rollback), importador (error de fila), `UPDATE ... AND usuario_id IS NULL`. Desvincular solo pone NULL.
+- Privilegiadas: la confirmación la exige `vincularLote`, que usan `POST /cuentas/vincular` y `POST /:id/cuenta`; no hay bypass por la plantilla (es error de fila) ni por el endpoint individual.
+- 1 cuenta ↔ 1 empleado: comprobación dentro de la transacción (`duenos`) + UNIQUE (001 inline `usuario_id INT UNIQUE`, 004, 010, init.sql:831). Idempotencia: par ya aplicado = `omitida`.
+- Candado 4601/1: no colisiona (grep de `pg_advisory` en todo el repo: 4217, 4301/4302, 4410, 4501). `lock_timeout` 3 s, tope 2 por proceso.
+- Permisos: `rh_admin`/`super_admin` en las cuatro rutas; `rh_empleado` no tiene `Empleados` en la seed (init.sql:441-455), así que 403. Los roles `jefe`/`empleado` de la prueba no tienen permisos, lo cual es equivalente.
+- Auditoría: acciones `VINCULAR_CUENTAS` (15), `VINCULAR_CUENTA` (15), `DESVINCULAR_CUENTA` (18), con ids y conteos. 500 genérico. SQL parametrizado.
+- Desvincular quita el acceso en la siguiente petición: `acceso-empleado.middleware.js:87,98,140` consulta `obtenerPorUsuarioId` en cada una (no hay caché ni JWT que invalidar).
+- CSV de errores neutraliza fórmulas (`importarFilas.js:326-329`). La exportación de empleados actuales usa xlsx de SheetJS con cadenas (sin fórmulas).
+- `importarEmpleados.test.js` e `importarFechas.util.test.js` solo añaden la clave `cuentas_vinculadas` a expectativas `toEqual`: no se debilitaron.
+
+**Hallazgos:**
+
+**V-1. Impacto de un vínculo equivocado subestimado (UI, confirmación y docs)**
+**Archivo/línea:** modules/rh/frontend/components/VincularCuentasDialogo.jsx:16, :124-126; modules/rh/frontend/components/CuentaEmpleado.jsx:116; modules/rh/frontend/utils/cuentasEmpleado.js:40; docs/rh/cuentas-microsoft.md:5, :24, :32
+**Problema:** los textos dicen que la persona ve "la asistencia" (y "vacaciones" en el perfil), pero `empleados.usuario_id` determina también el expediente y los recibos (`acceso-empleado.middleware.js`), los permisos y, si el empleado es el jefe vigente, la aprobación de vacaciones de su equipo (`solicitudVacaciones.model.js:255`, decisión 2026-10-15). Es el riesgo que el orquestador pidió destacar y la UI no lo transmite.
+**Severidad:** alto
+**Fix sugerido:** el texto de confirmación debe decir: "verá el expediente, recibos, vacaciones y asistencia de este empleado y, si es su jefe, podrá aprobar las vacaciones de su equipo". Mostrar en la vista previa y en el selector si el empleado es jefe de N personas (`EXISTS empleados.jefe_inmediato_id`) y el aviso de privilegiada con esa misma amplitud.
+
+**V-2. Un 409 en el primer lote no recarga la vista previa**
+**Archivo/línea:** modules/rh/frontend/components/VincularCuentasDialogo.jsx:96-103
+**Problema:** si el primer lote devuelve 409, `aplicados.size` es 0, así que no se llama a `cargar()`. La vista queda obsoleta y el mensaje pide "actualiza la vista previa" sin ningún botón para hacerlo (el de "Reintentar" solo aparece si falla la carga).
+**Severidad:** medio
+**Fix sugerido:** llamar a `cargar()` ante cualquier error del lote y mostrar un botón "Actualizar vista previa" dentro del aviso; quitar de la selección los pares que el servidor reporte en `conflictos`.
+
+**V-3. El importador no toma el candado 4601 y la integridad depende solo de la UNIQUE**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js:422-423 (lectura de cuentas) y :586-592 (UPDATE del vínculo); modules/rh/backend/models/empleadoCuenta.model.js:186-187; modules/rh/backend/utils/candadosImportacion.js:10
+**Problema:** el importador (4410) y `vincularLote` (4601) no se coordinan. Con una carrera, el UPDATE del importador choca con la UNIQUE y se convierte en error de fila (correcto). Si la UNIQUE no existe (ver docs/supabase.md:53), la misma cuenta quedaría vinculada a dos empleados sin aviso. El comentario de candadosImportacion.js:10 dice que 4601 "no se anida", lo que no describe la solución.
+**Severidad:** medio
+**Fix sugerido:** tomar `pg_advisory_xact_lock(4601,1)` en el importador cuando alguna fila trae `correo_cuenta` (orden 4410 → 4601; `vincularLote` no toma 4410, así que no hay inversión) y actualizar los comentarios.
+
+**V-4. Dos cuentas que difieren solo en mayúsculas: se elige una sin avisar**
+**Archivo/línea:** modules/rh/backend/models/empleadoCuenta.model.js:98 (y :89-99); modules/rh/backend/models/empleado.model.js:422, :504
+**Problema:** `usuarios.correo` es UNIQUE pero sensible a mayúsculas (modules/portal/backend/migrations/001-crear-tablas-portal.sql:8). El Map por `LOWER(correo)` deja la última fila, sin error, así que la fila del archivo se vincula a una cuenta indeterminada.
+**Severidad:** medio
+**Fix sugerido:** si un correo en minúsculas corresponde a más de una cuenta, error de fila ("correo ambiguo") y no vincular.
+
+**V-5. Empleados suspendidos tratados como activos (código y docs no coinciden)**
+**Archivo/línea:** modules/rh/backend/models/empleadoCuenta.model.js:113 (vista previa), :220 (vincularLote), empleado.model.js:~500 (importador); docs/rh/cuentas-microsoft.md:24 y :32 ("activos"); etiqueta "Empleados activos sin cuenta" en VincularCuentasDialogo.jsx:147
+**Problema:** solo se excluye `baja`. Un empleado `suspendido` aparece como sugerencia y se puede vincular. La decisión del 2026-10-28 solo dice "nunca dados de baja", así que la política sobre suspendidos no está decidida.
+**Severidad:** medio
+**Fix sugerido:** que el humano decida. Si no se vinculan suspendidos, excluirlos en los tres puntos y en la etiqueta. Si sí, cambiar la doc a "no dados de baja" y la etiqueta a "empleados sin cuenta (no baja)".
+
+**V-6. Duplicados históricos de `usuario_id` invisibles para RH**
+**Archivo/línea:** docs/supabase.md:53; modules/rh/backend/migrations/010-empleados-usuario-unico.sql (rama con WARNING); docs/rh/cuentas-microsoft.md:67
+**Problema:** si la 010 no pudo crear la UNIQUE, el único aviso es un WARNING en el log. La vista previa solo lista cuentas sin empleado, y ninguna pantalla muestra cuentas vinculadas a dos empleados. La doc pide "corregir los duplicados", pero no hay herramienta para hacerlo.
+**Severidad:** medio
+**Fix sugerido:** un contador "cuentas vinculadas a más de un empleado" en la vista previa con sus ids, y una acción para desvincular (con confirmación) uno de los dos.
+
+**V-7. El atajo "Marcar las coincidencias exactas" incluye privilegiadas e inactivas**
+**Archivo/línea:** modules/rh/frontend/components/VincularCuentasDialogo.jsx:74-82
+**Problema:** un homónimo administrador con sugerencia "exacta única" se marca en bloque junto con el resto de la página. La casilla aparte mitiga en la confirmación, pero el atajo no separa ni advierte.
+**Severidad:** medio
+**Fix sugerido:** excluir privilegiadas (y, si se prefiere, inactivas) del atajo, con un texto que indique cuántas se dejaron fuera.
+
+**V-8. Sugerencias por nombre: candidatos recortados sin aviso y "ñ" normalizada a "n"**
+**Archivo/línea:** modules/rh/backend/models/empleadoCuenta.model.js:144 (`slice(0, 10)`); modules/rh/backend/utils/vincularCuentas.js:17-21 (NFD quita la tilde de la ñ, así que la clase `ñ` nunca se conserva)
+**Problema:** con más de 10 homónimos, el empleado correcto puede no aparecer en el selector y RH no lo sabe. Además "Peña" y "Pena" se consideran la misma persona: si solo existe un empleado, la sugerencia "exacta" puede ser la persona equivocada.
+**Severidad:** medio
+**Fix sugerido:** indicar "y N más" cuando se recorte, y ofrecer búsqueda en la lista de candidatos. Decidir si la ñ debe distinguirse y, en ese caso, normalizar sin NFD para la ñ.
+
+**V-9. Cobertura de pruebas: vista previa y componentes sin pruebas en el repo**
+**Archivo/línea:** modules/rh/backend/tests/empleadoCuenta.model.test.js (sin `describe` de `vistaPrevia`); modules/rh/backend/tests/empleadoCuentas.api.test.js:33-37 (modelo mockeado); modules/rh/tests/cuentasEmpleado.util.test.js (solo lógica pura); code-notes.md menciona `verif.js`, `ui.js`, `mut.py`, `prep.js`, que están en el scratchpad y no en el repo
+**Problema:** la vista previa (contadores, filtro por estado, exclusión de bajas, tope de 5 000) no tiene pruebas unitarias. `VincularCuentasDialogo.jsx` y `CuentaEmpleado.jsx` no tienen pruebas de componente (409, privilegiadas, reintento). La verificación de Postgres, Chromium y mutación no se puede reproducir desde el repo.
+**Severidad:** medio
+**Fix sugerido:** añadir pruebas de `vistaPrevia` (contadores y exclusión de baja) y de componente para el 409, la casilla de privilegiadas y el bloqueo de empleados repetidos. Llevar los scripts de verificación a `scripts/` o documentar cómo reproducirlos.
+
+**V-18. Las dos decisiones del 2026-10-28 no están en la rama**
+**Archivo/línea:** memory/decisions.md del worktree (no contiene las entradas "Cuentas de usuario de los empleados…" ni "Aclaración del humano…"); están solo en /home/jamejia/intranet/memory/decisions.md (líneas 1236-1248, leídas en modo lectura)
+**Problema:** la revisión se hizo contra un diseño que la rama no registra. Un revisor o coder que trabaje solo desde el worktree vería un ADR desactualizado.
+**Severidad:** medio
+**Fix sugerido:** que el orquestador copie esas dos entradas a decisions.md de la rama (sin borrar nada) antes del merge.
+
+**V-10. Mutación 16/20 no reproducible desde el repo**
+**Archivo/línea:** code-notes.md (entrada "Correo corporativo…", punto 8)
+**Problema:** el argumento de que los 4 sobrevivientes son equivalentes es plausible (defensa en profundidad), pero el de quitar la comprobación en JS de `cuenta_ya_vinculada` solo es equivalente si la UNIQUE existe (ver V-3 y V-6).
+**Severidad:** bajo
+**Fix sugerido:** documentar los 4 sobrevivientes con su razón concreta, y añadir una prueba que asuma UNIQUE ausente.
+
+**V-11. "Privilegiado" solo por nombre de rol**
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:23
+**Problema:** un rol personalizado con `rh/Asistencia` o `rh/Empleados:edicion` no pide confirmación aparte. Es conforme con la decisión de roles del 2026-10-15, pero el objetivo de la confirmación es proteger de dar la asistencia a administradores.
+**Severidad:** bajo
+**Fix sugerido:** que el humano decida si la privilegiada incluye roles con permisos de administración de RH o de usuarios.
+
+**V-12. Dos trampas de foco activas mientras se confirma**
+**Archivo/línea:** modules/rh/frontend/components/VincularCuentasDialogo.jsx:122 y :245 (ConfirmarDialogo dentro de DialogoAsistencia); modules/portal/frontend/hooks/useFocoModal.js:20-35
+**Problema:** ambos diálogos registran `keydown` en `document`. El resultado depende del orden de registro. Por lectura de código parece funcionar, pero no hay prueba de teclado en el repo.
+**Severidad:** bajo
+**Fix sugerido:** comprobar Tab, Shift+Tab y Escape dentro de la confirmación (en el repo o con una prueba manual anotada); si falla, que solo el diálogo activo registre la trampa.
+
+**V-13. Mensaje engañoso cuando la fila está bloqueada por una importación**
+**Archivo/línea:** modules/rh/backend/models/empleadoCuenta.model.js:189, :276
+**Problema:** cualquier 55P03 (también un `FOR UPDATE` bloqueado por una importación en curso) responde "Hay otra vinculación en curso".
+**Severidad:** bajo
+**Fix sugerido:** mensaje distinto para bloqueo de fila o reintentar sin cambiar el texto del candado.
+
+**V-14. Conexión devuelta al pool tras un ROLLBACK fallido**
+**Archivo/línea:** modules/rh/backend/models/empleadoCuenta.model.js:274, :279, :324
+**Problema:** si el ROLLBACK falla, `cliente.release()` sin argumento devuelve al pool una conexión posiblemente en transacción abortada.
+**Severidad:** bajo
+**Fix sugerido:** `cliente.release(e2)` (o `release(true)`) cuando el ROLLBACK haya fallado.
+
+**V-15. Los rechazos no quedan auditados**
+**Archivo/línea:** modules/rh/backend/controllers/empleadoCuenta.controller.js:42-64
+**Problema:** los 409 por cambios y los 400 por privilegiada sin confirmar no se registran. Son intentos útiles para detectar mal uso.
+**Severidad:** bajo
+**Fix sugerido:** registrar `VINCULAR_CUENTAS_RECHAZADO` con conteos (sin correos), si el humano lo quiere.
+
+**V-16. Contadores de la vista previa sobre la lista truncada**
+**Archivo/línea:** modules/rh/backend/models/empleadoCuenta.model.js:123, :163
+**Problema:** con más de 5 000 cuentas, los contadores se calculan sobre las 5 000 primeras; hay un aviso, pero las cifras parecen completas.
+**Severidad:** bajo
+**Fix sugerido:** mostrar "contadores parciales" junto a los números cuando `truncado` sea verdadero.
+
+**V-17. El selector expone correo, roles y marca privilegiada de todas las cuentas**
+**Archivo/línea:** modules/rh/backend/models/empleadoCuenta.model.js:70-85; modules/rh/backend/routes/empleados.routes.js (GET /cuentas/disponibles)
+**Problema:** a `rh_admin`/`super_admin` se le entregan correos y roles de todas las cuentas sin empleado. Es aceptable con la matriz actual (solo edición), pero queda sin límite de búsqueda por correo.
+**Severidad:** bajo
+**Fix sugerido:** sin cambio obligatorio. Si se quiere reducir, devolver solo nombre y correo en el selector y no los roles.
+
+**Consultas recomendadas para staging (no ejecutadas desde este árbol):**
+- `SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'empleados'::regclass AND contype = 'u';`
+- `SELECT usuario_id, COUNT(*) FROM empleados WHERE usuario_id IS NOT NULL GROUP BY 1 HAVING COUNT(*) > 1;`
+- `SELECT LOWER(correo), COUNT(*) FROM usuarios GROUP BY 1 HAVING COUNT(*) > 1;`
+
+**Notas para el orquestador:**
+- No hay hallazgos críticos, así que no se escala como bloqueo. Se pide decisión humana sobre V-1 (texto de riesgo y jefe vigente), V-5 (suspendidos) y V-18 (decisiones fuera de la rama).
+- El diff no pide split: se revisó completo en una pasada.

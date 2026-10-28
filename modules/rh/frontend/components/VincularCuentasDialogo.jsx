@@ -4,7 +4,8 @@ import ConfirmarDialogo from "./asistencia/ConfirmarDialogo";
 import Paginacion from "./asistencia/Paginacion";
 import { obtenerVistaPreviaCuentas, vincularCuentas } from "../services/empleados.service";
 import {
-  ETIQUETAS_SUGERENCIA, TAMANO_LOTE_VINCULAR, dividirLotes, resumirSeleccion, textoConfirmacion,
+  ETIQUETAS_SUGERENCIA, TAMANO_LOTE_VINCULAR, AVISO_ALCANCE, MENSAJE_SOLO_ACTIVOS,
+  dividirLotes, resumirSeleccion, textoConfirmacion, seleccionarExactasSeguras,
 } from "../utils/cuentasEmpleado";
 import "../styles/asistencia.css";
 
@@ -16,12 +17,16 @@ function Avisos({ cuenta }) {
       {cuenta.privilegiada && <span className="asi__sec"><strong>Rol privilegiado</strong>: vincularla da la asistencia de ese empleado a un administrador</span>}
       {!cuenta.con_acceso_asistencia && <span className="asi__sec">Sin rol con acceso a Asistencia</span>}
       {!cuenta.activo && <span className="asi__sec">Cuenta inactiva</span>}
+      {cuenta.correo_duplicado && <span className="asi__sec"><strong>Correo duplicado entre cuentas</strong> (solo difiere en mayúsculas): no se vincula; corrígelo en la administración de usuarios</span>}
     </>
   );
 }
 
 function descripcionCandidato(c) {
-  return [c.nombre, c.numero_nomina && `nómina ${c.numero_nomina}`, c.departamento || "sin departamento"].filter(Boolean).join(" · ");
+  return [
+    c.nombre, c.numero_nomina && `nómina ${c.numero_nomina}`, c.departamento || "sin departamento",
+    c.subordinados > 0 && `jefe de ${c.subordinados}`,
+  ].filter(Boolean).join(" · ");
 }
 
 /**
@@ -39,6 +44,7 @@ export default function VincularCuentasDialogo({ onCerrar, onVinculado }) {
   const [confirmando, setConfirmando] = useState(false);
   const [entiendoPrivilegiadas, setEntiendoPrivilegiadas] = useState(false);
   const [resultado, setResultado] = useState(null);
+  const [avisoAtajo, setAvisoAtajo] = useState("");
   const resultadoRef = useRef(null);
   const filtroId = useId();
   const privId = useId();
@@ -71,14 +77,19 @@ export default function VincularCuentasDialogo({ onCerrar, onVinculado }) {
     });
   }
 
+  // Solo marca las exactas SEGURAS: privilegiadas, correos duplicados e inactivas se dejan para marcarlas a mano
   function marcarExactas() {
+    const { marcadas, omitidas } = seleccionarExactasSeguras((vista && vista.cuentas) || []);
     setSeleccion((previa) => {
       const nueva = new Map(previa);
-      for (const c of (vista && vista.cuentas) || []) {
-        if (c.sugerencia.estado === "exacta") nueva.set(c.id, { cuenta: c, candidato: c.sugerencia.candidatos[0] });
-      }
+      for (const m of marcadas) nueva.set(m.cuenta.id, m);
       return nueva;
     });
+    const partes = [];
+    if (omitidas.privilegiadas) partes.push(`${omitidas.privilegiadas} con rol privilegiado`);
+    if (omitidas.duplicadas) partes.push(`${omitidas.duplicadas} con correo duplicado`);
+    if (omitidas.inactivas) partes.push(`${omitidas.inactivas} inactivas`);
+    setAvisoAtajo(`Se marcaron ${marcadas.length} coincidencias exactas.${partes.length ? ` Se dejaron fuera, para marcarlas a mano: ${partes.join(", ")}.` : ""}`);
   }
 
   async function aplicar() {
@@ -93,13 +104,20 @@ export default function VincularCuentasDialogo({ onCerrar, onVinculado }) {
       try {
         r = await vincularCuentas(lote, { confirmarPrivilegiadas: entiendoPrivilegiadas });
       } catch (e) {
+        // Ante CUALQUIER error del lote se recarga la vista previa; los pares que el servidor reporta en conflicto salen de la selección
+        const conflictos = (e && e.datos && Array.isArray(e.datos.conflictos)) ? e.datos.conflictos : [];
+        setSeleccion((previa) => {
+          const n = new Map(previa);
+          aplicados.forEach((id) => n.delete(id));
+          conflictos.forEach((c) => n.delete(c.usuario_id));
+          return n;
+        });
         if (aplicados.size) {
-          setSeleccion((previa) => { const n = new Map(previa); aplicados.forEach((id) => n.delete(id)); return n; });
           setResultado({ ...acumulado, interrumpido: true });
           onVinculado && onVinculado();
-          cargar();
         }
-        throw new Error(`${(e && e.message) || "No se pudo vincular"}${aplicados.size ? ` Ya se vincularon ${acumulado.vinculadas} antes del fallo; el resto no se aplicó.` : ""}`);
+        cargar();
+        throw new Error(`${(e && e.message) || "No se pudo vincular"}${aplicados.size ? ` Ya se vincularon ${acumulado.vinculadas} antes del fallo; el resto no se aplicó.` : ""} Se actualizó la vista previa: revisa la selección.`);
       }
       const d = r.datos;
       acumulado.vinculadas += d.vinculadas;
@@ -123,8 +141,9 @@ export default function VincularCuentasDialogo({ onCerrar, onVinculado }) {
       <p className="asi__sec" style={{ marginTop: 0 }}>
         Relaciona cada cuenta de usuario (creada por el administrador de usuarios) con su empleado. Esta acción solo
         escribe el vínculo: no crea cuentas ni cambia roles o contraseñas. Las coincidencias son sugerencias por nombre y no
-        se aplica nada sin que las marques y confirmes.
+        se aplica nada sin que las marques y confirmes. {MENSAJE_SOLO_ACTIVOS}
       </p>
+      <div className="asi__aviso asi__aviso--advertencia"><p>{AVISO_ALCANCE}</p></div>
 
       {error && <div role="alert" className="asi__aviso asi__aviso--error"><p>{error}</p> <button type="button" className="asi__btn asi__btn--chico" onClick={cargar}>Reintentar</button></div>}
 
@@ -150,9 +169,25 @@ export default function VincularCuentasDialogo({ onCerrar, onVinculado }) {
           <div className="asi__tarjeta"><dt>{ETIQUETAS_SUGERENCIA.sin_coincidencia}</dt><dd>{c.sin_coincidencia}</dd></div>
           <div className="asi__tarjeta"><dt>Sin rol con acceso a Asistencia</dt><dd>{c.sin_acceso_asistencia}</dd></div>
           <div className="asi__tarjeta"><dt>Con rol privilegiado</dt><dd>{c.privilegiadas}</dd></div>
+          {c.correos_duplicados > 0 && <div className="asi__tarjeta"><dt>Correo duplicado entre cuentas</dt><dd>{c.correos_duplicados}</dd></div>}
         </dl>
       )}
-      {vista && vista.truncado && <div role="status" className="asi__aviso asi__aviso--info"><p>Hay más de 5 000 cuentas sin empleado: se muestran las primeras 5 000.</p></div>}
+      {vista && vista.avisos && (
+        <>
+          {vista.avisos.falta_unique_usuario_id && <div role="alert" className="asi__aviso asi__aviso--error"><p>Falta la restricción única sobre empleados.usuario_id (migración 010 sin aplicar): pide al administrador del sistema que corrija los duplicados y vuelva a ejecutar el db-init.</p></div>}
+          {vista.avisos.total_usuarios_con_varios_empleados > 0 && (
+            <div role="alert" className="asi__aviso asi__aviso--error">
+              <p>Hay {vista.avisos.total_usuarios_con_varios_empleados} cuenta(s) vinculada(s) a más de un empleado (cuenta/empleados: {vista.avisos.usuarios_con_varios_empleados.map((d) => `${d.usuario_id}/${d.empleados.join("+")}`).join(", ")}). Desvincula la equivocada desde el perfil del empleado.</p>
+            </div>
+          )}
+          {vista.avisos.total_vinculadas_a_no_activos > 0 && (
+            <div role="status" className="asi__aviso asi__aviso--advertencia">
+              <p>{vista.avisos.total_vinculadas_a_no_activos} empleado(s) suspendido(s) o dado(s) de baja siguen vinculados a una cuenta (empleado: {vista.avisos.vinculadas_a_no_activos.map((d) => `${d.empleado_id} ${d.estatus}`).join(", ")}). Revisa si conviene desvincularlos desde su perfil.</p>
+            </div>
+          )}
+        </>
+      )}
+      {avisoAtajo && <div role="status" className="asi__aviso asi__aviso--info"><p>{avisoAtajo}</p></div>}
 
       <div className="asi__campo" style={{ maxWidth: "22rem" }}>
         <label htmlFor={filtroId}>Mostrar</label>
@@ -162,6 +197,9 @@ export default function VincularCuentasDialogo({ onCerrar, onVinculado }) {
           <option value="varias">{ETIQUETAS_SUGERENCIA.varias}</option>
           <option value="sin_coincidencia">{ETIQUETAS_SUGERENCIA.sin_coincidencia}</option>
         </select>
+      </div>
+      <div style={{ marginBottom: "0.8rem" }}>
+        <button type="button" className="asi__btn asi__btn--chico" onClick={() => { setAvisoAtajo(""); cargar(); }} disabled={cargando}>Actualizar vista previa</button>
       </div>
 
       {cargando && <p role="status">Cargando vista previa…</p>}
@@ -188,7 +226,8 @@ export default function VincularCuentasDialogo({ onCerrar, onVinculado }) {
                       </td>
                       <td>{ETIQUETAS_SUGERENCIA[cu.sugerencia.estado]}</td>
                       <td>
-                        {cu.sugerencia.estado === "exacta" && (
+                        {cu.correo_duplicado && <span className="asi__sec">No se sugiere: correo duplicado entre cuentas.</span>}
+                        {!cu.correo_duplicado && cu.sugerencia.estado === "exacta" && (
                           <label className="asi__campo asi__campo--casilla" style={{ marginBottom: 0 }}>
                             <input type="checkbox" checked={Boolean(marcado)} onChange={(e) => marcar(cu, e.target.checked ? cand[0] : null)} />
                             <span>
@@ -197,7 +236,7 @@ export default function VincularCuentasDialogo({ onCerrar, onVinculado }) {
                             </span>
                           </label>
                         )}
-                        {cu.sugerencia.estado === "varias" && (
+                        {!cu.correo_duplicado && cu.sugerencia.estado === "varias" && (
                           <div className="asi__campo" style={{ marginBottom: 0 }}>
                             <label htmlFor={`cand-${cu.id}`} className="asi__sec">Elige el empleado de {cu.correo}</label>
                             <select
@@ -208,9 +247,12 @@ export default function VincularCuentasDialogo({ onCerrar, onVinculado }) {
                               <option value="">No vincular todavía</option>
                               {cand.map((x) => <option key={x.id} value={x.id}>{descripcionCandidato(x)}</option>)}
                             </select>
+                            {cu.sugerencia.candidatos_total > cand.length && (
+                              <span className="asi__sec">Hay más candidatos ({cu.sugerencia.candidatos_total - cand.length} más): vincula esta cuenta desde el perfil del empleado.</span>
+                            )}
                           </div>
                         )}
-                        {cu.sugerencia.estado === "sin_coincidencia" && <span className="asi__sec">Sin sugerencia: vincúlala desde el perfil del empleado.</span>}
+                        {!cu.correo_duplicado && cu.sugerencia.estado === "sin_coincidencia" && <span className="asi__sec">Sin sugerencia: vincúlala desde el perfil del empleado.</span>}
                       </td>
                     </tr>
                   );

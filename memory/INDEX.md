@@ -13,6 +13,7 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-28] [coder] → code-notes.md — Correcciones de la revisión de la vinculación de cuentas (V-1..V-17): alcance real del vínculo en toda la UI, solo activos, 409 recarga, candado 4601 en el importador, correos duplicados, ñ, atajo seguro, scripts/cuentas reproducibles
 - [2026-10-28] [coder] → code-notes.md — Vinculación cuenta de usuario <-> empleado (solo empleados.usuario_id): vista previa con sugerencias por nombre, lotes de 50 con 409, selector/desvincular en el perfil, columna 'Correo de la cuenta' en la plantilla; candado 4601; API 101 + Chromium 60 + 16/20 mutantes
 - [2026-10-28] [coder] → code-notes.md — F-R2B-T1/T2: drawer 641-768 px (overlay, Escape, botón Cerrar menú, foco) y animación de cierre del submenú con reduced-motion
 - [2026-10-28] [coder] → code-notes.md — Ronda final Fase 5 parte 2a (menú sin altura fija, permisos de lectura RH, CSV de detalle filtrado en servidor, verificar-motor 129/129, jest estable 15/15)
@@ -261,3 +262,4 @@
 - [2026-10-28] [tester] → decisions.md — PARA RESOLVER F-R2A-T1 (alto: `max-height: 600px` del submenú de RH oculta Resultados/Periodos/Parámetros), T2 (`/ejecuciones` sin limite → 400), T3 (label-in-name de la cuadrícula), T4 (Empleados:edicion vs Asistencia:consulta), T5 (CSV de detalle filtrado con tope), T6 (verificar-motor.js obsoleto)
 - [2026-10-28] [tester] → tests.md — Re-test: menú y layout global, permisos y CSV filtrado (HEAD 80c0a71; Chromium + Firefox, pg17 con db-init real x2, build base 12be73a lado a lado): 8 enlaces de Asistencia alcanzables a 7 anchos (68/68 + 28/28), 60 capturas lado a lado idénticas a 360/1024/1280, permisos 22/22 + UI 47/47 x2, CSV filtrado 15/15 x2, axe sin label-in-name ni target-size, jest 11/12 (flaky preexistente), eslint/build OK; 2 hallazgos nuevos
 - [2026-10-28] [tester] → decisions.md — PARA RESOLVER F-R2B-T1 (641-768 px: el menú abre pero no cierra sin navegar) y F-R2B-T2 (se perdió la animación de cierre de los grupos)
+- [2026-10-28] [revisor] → reviews.md#2026-10-28-revisor--vinculación-de-cuentas-de-usuario-con-empleados — Vinculación de cuentas (feat/cuentas-empleados, 788832f): CON OBSERVACIONES; 0 críticos, 1 alto (V-1 texto de riesgo subestimado), 9 medios (V-2..V-9, V-18), 8 bajos; decisiones del 10-28 ausentes en la rama

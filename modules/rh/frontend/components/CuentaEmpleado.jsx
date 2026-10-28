@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import ConfirmarDialogo from "./asistencia/ConfirmarDialogo";
-import { obtenerCuentasDisponibles, cambiarCuentaEmpleado } from "../services/empleados.service";
+import { obtenerCuentasDisponibles, cambiarCuentaEmpleado, obtenerSubordinados } from "../services/empleados.service";
+import { AVISO_ALCANCE, MENSAJE_SOLO_ACTIVOS } from "../utils/cuentasEmpleado";
 import "../styles/asistencia.css";
 
 /**
@@ -8,7 +9,11 @@ import "../styles/asistencia.css";
  * permite vincular una cuenta SIN empleado con un selector buscable o desvincularla (con confirmación). No crea cuentas ni
  * toca roles o contraseñas: eso es de la administración de usuarios.
  */
-export default function CuentaEmpleado({ empleadoId, nombreEmpleado, usuarioId, usuarioCorreo, enBaja, puedeEditar, onCambio }) {
+const MIN_BUSQUEDA = 2;
+
+export default function CuentaEmpleado({ empleadoId, nombreEmpleado, usuarioId, usuarioCorreo, estatus = "activo", puedeEditar, onCambio }) {
+  const noActivo = estatus !== "activo";
+  const [subordinados, setSubordinados] = useState(0);
   const [busqueda, setBusqueda] = useState("");
   const [consulta, setConsulta] = useState("");
   const [lista, setLista] = useState({ cuentas: [], total: 0 });
@@ -28,7 +33,8 @@ export default function CuentaEmpleado({ empleadoId, nombreEmpleado, usuarioId, 
   }, [busqueda]);
 
   useEffect(() => {
-    if (!puedeEditar || vinculada || enBaja) return undefined;
+    if (!puedeEditar || vinculada || noActivo) return undefined;
+    if (consulta.length < MIN_BUSQUEDA) { setLista({ cuentas: [], total: 0 }); setCargando(false); return undefined; }
     let activo = true;
     setCargando(true);
     setErrorLista("");
@@ -37,12 +43,22 @@ export default function CuentaEmpleado({ empleadoId, nombreEmpleado, usuarioId, 
       .catch((e) => { if (activo) setErrorLista((e && e.message) || "No se pudieron cargar las cuentas"); })
       .finally(() => { if (activo) setCargando(false); });
     return () => { activo = false; };
-  }, [consulta, puedeEditar, vinculada, enBaja]);
+  }, [consulta, puedeEditar, vinculada, noActivo]);
+
+  // Cuántas personas dependen del empleado (si es jefe, su cuenta podrá aprobar sus vacaciones): se muestra al confirmar
+  useEffect(() => {
+    if (confirmar !== "vincular") return undefined;
+    let activo = true;
+    obtenerSubordinados(empleadoId)
+      .then((r) => { if (activo && r && r.exito) setSubordinados((r.datos || []).length); })
+      .catch(() => { if (activo) setSubordinados(0); });
+    return () => { activo = false; };
+  }, [confirmar, empleadoId]);
 
   async function ejecutar() {
     if (confirmar === "desvincular") {
       await cambiarCuentaEmpleado(empleadoId, null);
-      setAviso("Cuenta desvinculada. La persona ya no verá la asistencia de este empleado.");
+      setAviso("Cuenta desvinculada. La persona ya no verá ni gestionará lo de este empleado.");
     } else {
       if (elegida.privilegiada && !entiendo) throw new Error("Marca la casilla de confirmación aparte para la cuenta con rol privilegiado");
       const r = await cambiarCuentaEmpleado(empleadoId, elegida.id, { confirmarPrivilegiada: entiendo });
@@ -71,28 +87,29 @@ export default function CuentaEmpleado({ empleadoId, nombreEmpleado, usuarioId, 
         </>
       ) : (
         <>
-          <span>Sin cuenta vinculada: esta persona no puede ver su asistencia ni sus vacaciones.</span>
-          {puedeEditar && enBaja && <small>Un empleado dado de baja no se vincula a una cuenta.</small>}
-          {puedeEditar && !enBaja && (
+          <span>Sin cuenta vinculada: esta persona no puede entrar a ver lo suyo (asistencia, expediente, recibos de nómina, vacaciones).</span>
+          {puedeEditar && noActivo && <small>{MENSAJE_SOLO_ACTIVOS} Este empleado está en estatus «{estatus}».</small>}
+          {puedeEditar && !noActivo && (
             <div className="asi__campo" style={{ marginTop: "0.5rem" }}>
-              <label htmlFor={buscarId}>Buscar cuenta sin empleado (nombre o correo)</label>
+              <label htmlFor={buscarId}>Buscar cuenta sin empleado (nombre o correo, mínimo {MIN_BUSQUEDA} caracteres)</label>
               <input id={buscarId} type="search" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} autoComplete="off" maxLength={100} />
               {errorLista && <div role="alert" className="asi__aviso asi__aviso--error"><p>{errorLista}</p></div>}
               <fieldset style={{ border: "1px solid var(--color-borde)", borderRadius: "0.5rem", padding: "0.5rem", margin: "0.5rem 0 0", minWidth: 0 }}>
-                <legend className="asi__sec" aria-live="polite">{cargando ? "Buscando…" : `${lista.total} cuenta(s) sin empleado`}</legend>
+                <legend className="asi__sec" aria-live="polite">{consulta.length < MIN_BUSQUEDA ? "Escribe al menos 2 caracteres para buscar" : cargando ? "Buscando…" : `${lista.total} cuenta(s) sin empleado`}</legend>
                 {lista.cuentas.map((c) => (
                   <label key={c.id} className="asi__campo asi__campo--casilla" style={{ marginBottom: "0.3rem", alignItems: "flex-start" }}>
-                    <input type="radio" name={`cuenta-${empleadoId}`} checked={elegida ? elegida.id === c.id : false} onChange={() => { setElegida(c); setEntiendo(false); setAviso(""); }} />
+                    <input type="radio" name={`cuenta-${empleadoId}`} disabled={c.correo_duplicado} checked={elegida ? elegida.id === c.id : false} onChange={() => { setElegida(c); setEntiendo(false); setAviso(""); }} />
                     <span style={{ overflowWrap: "anywhere" }}>
                       <strong>{[c.nombre, c.apellido].filter(Boolean).join(" ")}</strong>
                       <span className="asi__sec">{c.correo}</span>
                       {c.privilegiada && <span className="asi__sec"><strong>Rol privilegiado</strong></span>}
                       {!c.con_acceso_asistencia && <span className="asi__sec">Sin rol con acceso a Asistencia</span>}
                       {!c.activo && <span className="asi__sec">Cuenta inactiva</span>}
+                      {c.correo_duplicado && <span className="asi__sec"><strong>Correo duplicado entre cuentas</strong>: no se puede vincular; corrígelo en la administración de usuarios</span>}
                     </span>
                   </label>
                 ))}
-                {!cargando && lista.cuentas.length === 0 && <span className="asi__sec">No hay cuentas disponibles con ese criterio.</span>}
+                {!cargando && consulta.length >= MIN_BUSQUEDA && lista.cuentas.length === 0 && <span className="asi__sec">No hay cuentas disponibles con ese criterio.</span>}
               </fieldset>
               <div style={{ marginTop: "0.5rem" }}>
                 <button type="button" className="asi__btn asi__btn--primario" disabled={!elegida} onClick={() => setConfirmar("vincular")}>Vincular cuenta seleccionada…</button>
@@ -113,7 +130,8 @@ export default function CuentaEmpleado({ empleadoId, nombreEmpleado, usuarioId, 
           {confirmar === "vincular" ? (
             <>
               <p>Vincular la cuenta <strong>{nombreCuenta}</strong> ({elegida.correo}) con el empleado <strong>{nombreEmpleado}</strong>.</p>
-              <p>Esa persona verá la asistencia y las vacaciones de este empleado: revisa que sean la misma persona.</p>
+              <p>{AVISO_ALCANCE}</p>
+              {subordinados > 0 && <p><strong>Este empleado es jefe de {subordinados} {subordinados === 1 ? "persona" : "personas"}</strong>: la cuenta podrá aprobar o rechazar sus vacaciones.</p>}
               {!elegida.con_acceso_asistencia && <p>La cuenta no tiene un rol con acceso a Asistencia: no verá "Mi asistencia" hasta que el administrador de usuarios se lo asigne.</p>}
               {elegida.privilegiada && (
                 <div className="asi__campo asi__campo--casilla">
@@ -123,7 +141,7 @@ export default function CuentaEmpleado({ empleadoId, nombreEmpleado, usuarioId, 
               )}
             </>
           ) : (
-            <p>Desvincular la cuenta <strong>{usuarioCorreo}</strong> del empleado <strong>{nombreEmpleado}</strong>. La persona dejará de ver la asistencia y las vacaciones de este empleado; la cuenta no se borra.</p>
+            <p>Desvincular la cuenta <strong>{usuarioCorreo}</strong> del empleado <strong>{nombreEmpleado}</strong>. La persona dejará de ver y gestionar lo de este empleado (asistencia, expediente, recibos de nómina y, si es jefe, las vacaciones de su equipo); la cuenta no se borra.</p>
           )}
         </ConfirmarDialogo>
       )}

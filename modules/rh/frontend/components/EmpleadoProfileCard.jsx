@@ -449,7 +449,7 @@ export default function EmpleadoProfileCard({ empleadoId, alVolver }) {
                   nombreEmpleado={nombreCompleto}
                   usuarioId={empleado.usuario_id}
                   usuarioCorreo={empleado.usuario_correo}
-                  enBaja={empleado.estatus === "baja"}
+                  estatus={empleado.estatus || "activo"}
                   puedeEditar={puedeEditarCuentas}
                   onCambio={() => cargarEmpleado({ silencioso: true })}
                 />

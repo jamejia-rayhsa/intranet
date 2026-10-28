@@ -1,6 +1,6 @@
 // BD en memoria para las pruebas del importador de empleados: interpreta solo las consultas que hace
 // Empleado.importarLote / asignarJefes y el controlador (catálogos, búsqueda por claves, INSERT, UPDATE, jefes, transacciones).
-function crearBd({ empleados = [], puestos = [], departamentos = [], ubicaciones = [], usuarios = [], fallaEn } = {}) {
+function crearBd({ empleados = [], puestos = [], departamentos = [], ubicaciones = [], usuarios = [], sinUnique = false, fallaEn } = {}) {
   const estado = {
     empleados: empleados.map((e) => ({ ...e })),
     sigId: Math.max(0, ...empleados.map((e) => e.id || 0)) + 1,
@@ -47,7 +47,7 @@ function crearBd({ empleados = [], puestos = [], departamentos = [], ubicaciones
       return {
         rows: usuarios
           .filter((u) => params[0].includes(u.correo.toLowerCase()))
-          .map((u) => ({ id: u.id, correo: u.correo, nombre: u.nombre || "X", apellido: u.apellido || "", activo: u.activo !== false, roles: u.roles || [], con_acceso_asistencia: u.con_acceso_asistencia !== false })),
+          .map((u) => ({ id: u.id, correo: u.correo, nombre: u.nombre || "X", apellido: u.apellido || "", activo: u.activo !== false, roles: u.roles || [], con_acceso_asistencia: u.con_acceso_asistencia !== false, con_permisos_admin: Boolean(u.con_permisos_admin), correo_duplicado: Boolean(u.correo_duplicado) })),
       };
     }
     if (/^SELECT usuario_id, id FROM empleados WHERE usuario_id = ANY\(\$1::int\[\]\)/.test(q)) {
@@ -56,7 +56,7 @@ function crearBd({ empleados = [], puestos = [], departamentos = [], ubicaciones
     if (/^UPDATE empleados SET usuario_id = \$1, fecha_actualizacion = NOW\(\) WHERE id = \$2 AND usuario_id IS NULL$/.test(q)) {
       const e = estado.empleados.find((x) => x.id === params[1]);
       if (!e || e.usuario_id) return { rows: [], rowCount: 0 };
-      if (estado.empleados.some((x) => x.usuario_id === params[0])) {
+      if (!sinUnique && estado.empleados.some((x) => x.usuario_id === params[0])) {
         throw Object.assign(new Error("duplicate key value violates unique constraint (detalle interno)"), { code: "23505", constraint: "empleados_usuario_id_unique" });
       }
       e.usuario_id = params[0];

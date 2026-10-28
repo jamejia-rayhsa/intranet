@@ -9,8 +9,22 @@ const cta = (id, nombre, apellido) => ({ id, nombre, apellido });
 describe("normalizarNombre", () => {
   it("quita acentos, mayúsculas, signos y espacios dobles", () => {
     expect(normalizarNombre("  José   Ángel ")).toBe("jose angel");
-    expect(normalizarNombre("Peña-Núñez")).toBe("pena nunez");
+    expect(normalizarNombre("Peña-Núñez")).toBe("peña nuñez");
     expect(normalizarNombre(null)).toBe("");
+  });
+});
+
+describe("la ñ es una letra distinta", () => {
+  it("quita acentos pero conserva la ñ (también con ñ descompuesta)", () => {
+    expect(normalizarNombre("Peña")).toBe("peña");
+    expect(normalizarNombre("PEÑA")).toBe("peña");
+    expect(normalizarNombre("Pen\u0303a")).toBe("peña");
+    expect(normalizarNombre("Pena")).toBe("pena");
+    expect(normalizarNombre("Peña")).not.toBe(normalizarNombre("Pena"));
+  });
+  it("Peña no coincide con Pena en las sugerencias", () => {
+    const s = sugerirCoincidencias([{ id: 1, nombre: "Luis", apellido: "Pena" }], [{ id: 9, nombre: "Luis", apellido_paterno: "Peña", apellido_materno: null }]);
+    expect(s.get(1).estado).toBe("sin_coincidencia");
   });
 });
 

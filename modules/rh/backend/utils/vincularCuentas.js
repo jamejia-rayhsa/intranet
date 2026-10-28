@@ -12,12 +12,14 @@ const ESTADOS_SUGERENCIA = {
   SIN: "sin_coincidencia",
 };
 
-// Minúsculas, sin acentos ni signos, espacios simples. Sirve para comparar nombres y apellidos.
+// Minúsculas, sin acentos ni signos, espacios simples. La ñ se CONSERVA ('Peña' no es 'Pena': son apellidos distintos):
+// solo se quitan los acentos (marcas combinantes) de las demás letras.
 function normalizarNombre(texto) {
   return String(texto === null || texto === undefined ? "" : texto)
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
+    .normalize("NFD")
+    .replace(/n\u0303/g, "ñ")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9ñ]+/g, " ")
     .trim();
 }
