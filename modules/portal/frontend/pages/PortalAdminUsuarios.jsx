@@ -1,7 +1,13 @@
 import { useState, useEffect } from "react";
 import { solicitar } from "../utils/api";
+import { usarAuth } from "../context/AuthContext";
+import ImportarUsuariosDialogo from "../components/ImportarUsuariosDialogo";
+import { puedeImportarUsuarios } from "../utils/importarUsuarios";
 
 export default function PortalAdminUsuarios() {
+  const { usuario: usuarioActual } = usarAuth();
+  const puedeImportar = puedeImportarUsuarios(usuarioActual);
+  const [mostrarImportador, setMostrarImportador] = useState(false);
   const [usuarios, setUsuarios] = useState([]);
   const [roles, setRoles] = useState([]);
   const [cargando, setCargando] = useState(true);
@@ -155,7 +161,19 @@ export default function PortalAdminUsuarios() {
         >
           Nuevo Usuario
         </button>
+        {puedeImportar && (
+          <button type="button" onClick={() => setMostrarImportador(true)}>
+            Importar usuarios
+          </button>
+        )}
       </div>
+
+      {mostrarImportador && puedeImportar && (
+        <ImportarUsuariosDialogo
+          onCerrar={() => setMostrarImportador(false)}
+          onImportado={cargarDatos}
+        />
+      )}
 
       {mostrarFormulario && (
         <div className="formulario-modal">

@@ -53,7 +53,7 @@ const estilos = {
     marginBottom: '1rem',
   }),
   etiquetaCol: {
-    fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-texto-claro)',
+    fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-texto)',
     textTransform: 'uppercase', letterSpacing: '0.04em', padding: '0.5rem 0.75rem',
     background: 'var(--color-fondo)', borderBottom: '2px solid var(--color-borde)',
     textAlign: 'left', whiteSpace: 'nowrap',
@@ -140,7 +140,7 @@ function descargarEjemplo(columnas, filasEjemplo, nombreArchivo) {
 
 // ─── Vistas ──────────────────────────────────────────────────────────────────
 
-function VistaSeleccion({ columnas, filasEjemplo, nombreArchivo, accionesDescarga, onArchivo, onCancelar }) {
+function VistaSeleccion({ columnas, filasEjemplo, nombreArchivo, accionesDescarga, maxFilas, maxBytesArchivo, onArchivo, onCancelar }) {
   const [arrastrandoSobre, setArrastrandoSobre] = useState(false);
   const [errorParseo, setErrorParseo] = useState('');
   const [descargando, setDescargando] = useState('');
@@ -165,8 +165,17 @@ function VistaSeleccion({ columnas, filasEjemplo, nombreArchivo, accionesDescarg
       setErrorParseo('Formato no válido. Usa .xlsx, .xls o .csv');
       return;
     }
+    // Topes opcionales (p. ej. importar usuarios: 1 MB y 200 filas): se avisa ANTES de leer o de mostrar la vista previa
+    if (maxBytesArchivo && archivo.size > maxBytesArchivo) {
+      setErrorParseo(`El archivo pesa más de ${(maxBytesArchivo / 1024 / 1024).toFixed(0)} MB (${(archivo.size / 1024 / 1024).toFixed(1)} MB). Divídelo en archivos más pequeños.`);
+      return;
+    }
     try {
       const leido = await parsearArchivo(archivo, columnas);
+      if (maxFilas && leido.filas.length > maxFilas) {
+        setErrorParseo(`El archivo tiene ${leido.filas.length} filas; el máximo es ${maxFilas} por importación. Divídelo en varios archivos.`);
+        return;
+      }
       if (!leido.filas.length && !leido.encabezados.reconocidas.length) { setErrorParseo('El archivo no contiene datos ni encabezados reconocibles'); return; }
       if (!leido.filas.length) { setErrorParseo('El archivo no contiene filas de datos'); return; }
       onArchivo(leido);
@@ -252,13 +261,15 @@ function VistaSeleccion({ columnas, filasEjemplo, nombreArchivo, accionesDescarg
   );
 }
 
-function VistaPreview({ columnas, filas, encabezados, permiteActualizar, textosModo, modo, onModo, procesando, progreso, onConfirmar, onVolver }) {
+function VistaPreview({ columnas, filas, encabezados, permiteActualizar, textosModo, modo, onModo, procesando, progreso, onConfirmar, onVolver, verificar, verificacion, verificando, onVerificar }) {
   const { enviar, omitidas } = useMemo(() => separarFilas(filas, columnas), [filas, columnas]);
   const porFila = useMemo(() => {
     const mapa = {};
     omitidas.forEach(o => { mapa[o.fila] = o.error; });
     return mapa;
   }, [omitidas]);
+  const refVerificacion = useRef(null);
+  useEffect(() => { if (verificacion && refVerificacion.current) refVerificacion.current.focus(); }, [verificacion]);
   const filasMostrar = filas.slice(0, 8);
   const restantes = filas.length - filasMostrar.length;
   const faltantes = encabezados.faltantes;
@@ -312,6 +323,15 @@ function VistaPreview({ columnas, filas, encabezados, permiteActualizar, textosM
           </fieldset>
         )}
 
+        {verificar && verificacion && (
+          // El botón 'Verificar' se deshabilita mientras consulta y el navegador suelta el foco: al llegar la respuesta el foco pasa
+          // al resultado para que el lector de pantalla lo anuncie y Escape / Tab sigan funcionando dentro del diálogo.
+          <div ref={refVerificacion} tabIndex={-1} aria-label="Resultado de la verificación" style={{ outline: 'none' }}>
+            {verificar.vista(verificacion)}
+          </div>
+        )}
+
+        {!(verificar && verificacion) && (
         <div tabIndex={0} role="region" aria-label="Vista previa de las primeras filas" style={{ overflowX: 'auto', borderRadius: '6px', border: '1px solid var(--color-borde)' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
             <thead>
@@ -344,8 +364,9 @@ function VistaPreview({ columnas, filas, encabezados, permiteActualizar, textosM
             </tbody>
           </table>
         </div>
+        )}
 
-        {(restantes > 0 || columnasOcultas > 0) && (
+        {!(verificar && verificacion) && (restantes > 0 || columnasOcultas > 0) && (
           <p style={{ fontSize: '0.8rem', color: 'var(--color-texto-medio)', marginTop: '0.5rem' }}>
             {restantes > 0 && `… y ${restantes} filas más (no mostradas en la vista previa). `}
             {columnasOcultas > 0 && `Se muestran las primeras ${MAX_COLUMNAS_VISTA} columnas; ${columnasOcultas} más se importarán igual.`}
@@ -393,13 +414,23 @@ function VistaPreview({ columnas, filas, encabezados, permiteActualizar, textosM
         <button style={estilos.botonSecundario} onClick={onVolver} disabled={procesando}>
           ← Seleccionar otro
         </button>
-        <button
-          style={{ ...estilos.botonPrimario, opacity: procesando || enviar.length === 0 || faltantes.length > 0 ? 0.7 : 1 }}
-          onClick={onConfirmar}
-          disabled={procesando || enviar.length === 0 || faltantes.length > 0}
-        >
-          {procesando ? 'Importando…' : `Importar ${enviar.length} registros`}
-        </button>
+        {verificar && !verificacion ? (
+          <button
+            style={{ ...estilos.botonPrimario, opacity: verificando || enviar.length === 0 || faltantes.length > 0 ? 0.7 : 1 }}
+            onClick={onVerificar}
+            disabled={verificando || enviar.length === 0 || faltantes.length > 0}
+          >
+            {verificando ? 'Verificando…' : 'Verificar filas (no se crea nada)'}
+          </button>
+        ) : (
+          <button
+            style={{ ...estilos.botonPrimario, opacity: procesando || enviar.length === 0 || faltantes.length > 0 || (verificar && !verificar.puedeAplicar(verificacion)) ? 0.7 : 1 }}
+            onClick={onConfirmar}
+            disabled={procesando || enviar.length === 0 || faltantes.length > 0 || (verificar && !verificar.puedeAplicar(verificacion))}
+          >
+            {procesando ? 'Importando…' : verificar ? verificar.textoBoton(verificacion) : `Importar ${enviar.length} registros`}
+          </button>
+        )}
       </div>
     </>
   );
@@ -437,12 +468,14 @@ function TarjetaResumen({ tipo, valor, etiqueta }) {
   );
 }
 
-function VistaResultado({ resultado, columnas, onNuevo, onCerrar }) {
+function VistaResultado({ resultado, columnas, onNuevo, onCerrar, etiquetasResultado }) {
   const {
     insertados = 0, actualizados = 0, sin_cambios: sinCambios = 0, duplicados = 0, errores = [],
     duplicados_detalle: detalleDup = [], actualizados_detalle: detalleAct = [], advertencias = [],
     advertencias_omitidas: advOmitidas = 0, jefes = null, interrupcion = '', cuentas_vinculadas: cuentasVinculadas = 0,
+    verificar: porVerificar = 0,
   } = resultado;
+  const et = etiquetasResultado || {};
   const etiquetas = etiquetasDe(columnas);
   const modoActualizar = actualizados > 0 || sinCambios > 0 || resultado.modo === 'actualizar';
   const avisos = avisosSinCatalogo(resultado.sin_catalogo);
@@ -459,11 +492,12 @@ function VistaResultado({ resultado, columnas, onNuevo, onCerrar }) {
         <div ref={encabezadoRef} tabIndex={-1} role="status" style={{ outline: 'none' }}>
           <h3 style={{ margin: '0 0 0.75rem', fontSize: '1rem', color: 'var(--color-texto)' }}>Resultado de la importación</h3>
           <div style={estilos.resumen}>
-            <TarjetaResumen tipo="ok" valor={insertados} etiqueta="Insertados" />
+            <TarjetaResumen tipo="ok" valor={insertados} etiqueta={et.insertados || 'Insertados'} />
             {modoActualizar && <TarjetaResumen tipo="ok" valor={actualizados} etiqueta="Actualizados" />}
             {modoActualizar && <TarjetaResumen tipo="" valor={sinCambios} etiqueta="Sin cambios" />}
             {cuentasVinculadas > 0 && <TarjetaResumen tipo="ok" valor={cuentasVinculadas} etiqueta="Cuentas vinculadas" />}
-            <TarjetaResumen tipo={duplicados ? 'warn' : ''} valor={duplicados} etiqueta={modoActualizar ? 'Repetidos en el archivo' : 'Duplicados (omitidos)'} />
+            <TarjetaResumen tipo={duplicados ? 'warn' : ''} valor={duplicados} etiqueta={modoActualizar ? 'Repetidos en el archivo' : (et.duplicados || 'Duplicados (omitidos)')} />
+            {porVerificar > 0 && <TarjetaResumen tipo="err" valor={porVerificar} etiqueta="Por verificar" />}
             <TarjetaResumen tipo={errores.length ? 'err' : ''} valor={errores.length} etiqueta="Errores" />
             {(advertencias.length > 0 || advOmitidas > 0) && <TarjetaResumen tipo="warn" valor={advertencias.length + advOmitidas} etiqueta="Advertencias" />}
           </div>
@@ -472,7 +506,7 @@ function VistaResultado({ resultado, columnas, onNuevo, onCerrar }) {
         {interrupcion && (
           <div role="alert" style={{ marginBottom: '1rem', padding: '0.75rem 1rem', background: 'var(--color-error-suave)', borderLeft: '4px solid var(--color-error)', color: 'var(--color-texto)', fontSize: '0.875rem', overflowWrap: 'anywhere' }}>
             <strong>La importación se interrumpió.</strong> {interrupcion}
-            {' '}Revisa la lista antes de volver a importar: reimportar el archivo completo duplica las filas que no tienen CURP ni número de nómina.
+            {' '}{et.interrupcion || 'Revisa la lista antes de volver a importar: reimportar el archivo completo duplica las filas que no tienen CURP ni número de nómina.'}
           </div>
         )}
 
@@ -633,7 +667,7 @@ function VistaResultado({ resultado, columnas, onNuevo, onCerrar }) {
         )}
         {insertados === 0 && actualizados === 0 && (
           <p style={{ color: 'var(--color-texto)', fontWeight: 600, marginTop: '0.5rem' }}>
-            No se insertó ni se actualizó ningún registro.
+            {et.ninguno || 'No se insertó ni se actualizó ningún registro.'}
           </p>
         )}
       </div>
@@ -676,13 +710,18 @@ const TEXTOS_MODO_POR_OMISION = {
  *   onExito      — (resultado) => void  — SOLO recarga la lista: NO debe cerrar el modal, la vista de
  *                  resultados se queda abierta hasta que el usuario pulse Cerrar (onCancelar).
  *   onCancelar   — () => void
+ *   maxFilas / maxBytesArchivo — topes opcionales del archivo (se avisa antes de la vista previa)
+ *   etiquetasResultado — { insertados, duplicados, interrupcion, ninguno }: textos propios de la pantalla de resultado
+ *   aviso        — texto fijo bajo el título (alcance de lo que hace la importación)
+ *   verificar    — { ejecutar: async (filas) => datos, vista: (datos) => nodo, puedeAplicar: (datos) => bool, textoBoton: (datos) => string }:
+ *                  vista previa DEL SERVIDOR obligatoria antes de aplicar (no escribe nada); sin ella el botón de aplicar no existe
  */
 // Espera para el reintento de un 409 (otra importación en curso)
 const esperar = (ms) => new Promise((resolver) => setTimeout(resolver, ms));
 
 export default function ImportadorArchivo({
   titulo, columnas, filasEjemplo, nombreArchivo, onImportar, onImportarJefes, permiteActualizar, textosModo, accionesDescarga,
-  onExito, onCancelar,
+  onExito, onCancelar, maxFilas, maxBytesArchivo, etiquetasResultado, aviso, verificar,
 }) {
   const [vista, setVista] = useState('seleccion');
   const [filas, setFilas] = useState([]);
@@ -692,6 +731,8 @@ export default function ImportadorArchivo({
   const [progreso, setProgreso] = useState(null);
   const [errorApi, setErrorApi] = useState('');
   const [resultado, setResultado] = useState(null);
+  const [verificacion, setVerificacion] = useState(null); // respuesta de `verificar.ejecutar` (vista previa del servidor)
+  const [verificando, setVerificando] = useState(false);
   const modalRef = useRef(null);
 
   const enCurso = useRef(false); // guardia contra doble clic: el estado `procesando` llega un render tarde
@@ -709,6 +750,25 @@ export default function ImportadorArchivo({
     try {
       await ejecutarImportacion();
     } finally {
+      enCurso.current = false;
+    }
+  }
+
+  // Vista previa del servidor (opcional): NO escribe nada. Hasta que responde bien no se ofrece el botón de aplicar.
+  async function ejecutarVerificacion() {
+    if (enCurso.current || !verificar) return;
+    enCurso.current = true;
+    setVerificando(true);
+    setErrorApi('');
+    try {
+      const { enviar } = separarFilas(filas, columnas);
+      const datos = await verificar.ejecutar(enviar);
+      setVerificacion(datos);
+    } catch (err) {
+      setErrorApi((err && err.message) || 'No se pudo verificar el archivo');
+      if (modalRef.current) modalRef.current.focus();
+    } finally {
+      setVerificando(false);
       enCurso.current = false;
     }
   }
@@ -814,6 +874,7 @@ export default function ImportadorArchivo({
   }
 
   function reiniciar() {
+    setVerificacion(null);
     setVista('seleccion');
     setFilas([]);
     setErrorApi('');
@@ -849,13 +910,21 @@ export default function ImportadorArchivo({
           </div>
         )}
 
+        {aviso && vista !== 'resultado' && (
+          <div role="note" style={{ padding: '0.75rem 1.5rem', background: 'var(--color-advertencia-suave)', borderLeft: '4px solid var(--color-advertencia)', color: 'var(--color-texto)', fontSize: '0.85rem', overflowWrap: 'anywhere' }}>
+            {aviso}
+          </div>
+        )}
+
         {vista === 'seleccion' && (
           <VistaSeleccion
             columnas={columnas}
             filasEjemplo={filasEjemplo}
             nombreArchivo={nombreArchivo}
             accionesDescarga={accionesDescarga}
-            onArchivo={(leido) => { setFilas(leido.filas); setEncabezados(leido.encabezados); setVista('preview'); }}
+            maxFilas={maxFilas}
+            maxBytesArchivo={maxBytesArchivo}
+            onArchivo={(leido) => { setFilas(leido.filas); setEncabezados(leido.encabezados); setVerificacion(null); setErrorApi(''); setVista('preview'); }}
             onCancelar={onCancelar}
           />
         )}
@@ -873,6 +942,10 @@ export default function ImportadorArchivo({
             progreso={progreso}
             onConfirmar={confirmarImportacion}
             onVolver={reiniciar}
+            verificar={verificar}
+            verificacion={verificacion}
+            verificando={verificando}
+            onVerificar={ejecutarVerificacion}
           />
         )}
 
@@ -882,6 +955,7 @@ export default function ImportadorArchivo({
             columnas={columnas}
             onNuevo={reiniciar}
             onCerrar={onCancelar}
+            etiquetasResultado={etiquetasResultado}
           />
         )}
       </div>

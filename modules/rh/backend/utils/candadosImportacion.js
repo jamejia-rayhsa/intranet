@@ -7,6 +7,7 @@
 // (por departamento / empleado). La importación usa el espacio 4410 con claves fijas 1 (empleados y su segunda pasada
 // de jefes) y 2 (departamentos). La ingesta de marcas no usa candados de aplicación. El motor de asistencia usa el espacio 4501 (clave 1, pg_try_advisory_lock de sesión; services/asistencia/candado.js) y no se anida con los anteriores. El orden de adquisición es siempre
 // 4410 primero y luego 4301 (la importación de departamentos asigna turnos): ningún flujo toma 4301 y después 4410.
+// 'Importar usuarios' (portal) usa el espacio 4701 (clave 1; portal/backend/models/usuarioImportacion.model.js) y, dentro de la misma transacción, luego 4601 (vincular): orden 4701 -> 4601, sin inversión posible (ningún flujo toma 4601 y después 4701).
 // La vinculación cuenta<->empleado usa su propio espacio 4601 (clave 1; models/empleadoCuenta.model.js). Orden de adquisición: la
 // importación con la columna 'Correo de la cuenta' toma 4410 y luego 4601; la vinculación solo toma 4601 (sin inversión posible).
 const ESPACIO_IMPORTACION = 4410;

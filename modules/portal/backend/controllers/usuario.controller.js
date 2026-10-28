@@ -149,6 +149,13 @@ const ControladorUsuario = {
             if (contraseña) {
               const actual = await Usuario.buscarPorId(req.params.id, cliente);
               if (!actual) return null;
+              // Una cuenta de Microsoft (ms365) entra solo con Microsoft: ponerle contraseña abriría una segunda puerta
+              if (actual.auth_tipo !== "local") {
+                throw new Delegacion.ErrorDelegacion(
+                  400,
+                  "Las cuentas de Microsoft no tienen contraseña local: inician sesión con Microsoft",
+                );
+              }
               if (!actual.auth_uid) {
                 throw new Delegacion.ErrorDelegacion(
                   409,
