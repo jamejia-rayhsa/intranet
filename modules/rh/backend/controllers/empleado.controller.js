@@ -344,6 +344,12 @@ const ControladorEmpleado = {
           .json({ exito: false, mensaje: "Empleado no encontrado" });
       }
 
+      // Un ciclo de jefes (A jefe de B y B de A) haría que cada uno viera la asistencia del otro
+      const jefeNuevo = req.body && req.body.jefe_inmediato_id;
+      if (jefeNuevo && Number(jefeNuevo) !== Number(anterior.jefe_inmediato_id) && (await Empleado.creaCicloDeJefes(req.params.id, jefeNuevo))) {
+        return res.status(400).json({ exito: false, mensaje: "El jefe inmediato elegido crearía un ciclo de jefes (A jefe de B y B de A, directa o indirectamente)" });
+      }
+
       const empleado = await Empleado.actualizar(req.params.id, req.body);
 
       try {

@@ -21,10 +21,11 @@ export const ORDEN_TARJETAS = [
   'puntual', 'retardo', 'falta', 'salida_anticipada', 'incompleta', 'vacaciones', 'permiso', 'festivo', 'descanso', 'justificada', 'pendiente', 'sin_turno',
 ];
 export const ESTATUS_JUSTIFICABLES = ['falta', 'retardo', 'salida_anticipada', 'incompleta'];
-// Estatus que cuentan como «día laborable evaluado» (el denominador del % de puntualidad)
-export const ESTATUS_EVALUADOS = ['puntual', 'retardo', 'falta', 'salida_anticipada', 'incompleta', 'justificada'];
+// Estatus que cuentan como «día laborable evaluado» (el denominador del % de puntualidad). Los días justificados NO cuentan:
+// RH los perdonó, así que no bajan el porcentaje ni lo suben.
+export const ESTATUS_EVALUADOS = ['puntual', 'retardo', 'falta', 'salida_anticipada', 'incompleta'];
 export const FORMULA_PUNTUALIDAD =
-  '% de puntualidad = días puntuales ÷ días laborables evaluados (puntuales + retardos + faltas + salidas anticipadas + incompletas + justificadas). No cuentan descansos, festivos, vacaciones, permisos ni días pendientes.';
+  '% de puntualidad = días puntuales ÷ días laborables evaluados (puntuales + retardos + faltas + salidas anticipadas + incompletas). No cuentan descansos, festivos, vacaciones, permisos, días justificados ni días pendientes.';
 
 export function infoEstatus(estatus) {
   return ESTATUS[estatus] || { texto: String(estatus || 'Sin cálculo'), plural: String(estatus || ''), icono: '?', tono: 'neutro' };

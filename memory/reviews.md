@@ -3743,3 +3743,128 @@ Hallazgos abiertos:
 **Notas para el orquestador:**
 - No hay hallazgos críticos, así que no se escala como bloqueo. Se pide decisión humana sobre V-1 (texto de riesgo y jefe vigente), V-5 (suspendidos) y V-18 (decisiones fuera de la rama).
 - El diff no pide split: se revisó completo en una pasada.
+### [2026-10-28] [revisor] — Mi asistencia y Mi equipo (Fase 5, parte 2b)
+**Alcance:** HEAD `1b9d863` (24 archivos, +2485/-41). Leídos: INDEX, decisions (2026-10-21/23/28), code-notes (Fase 5 partes 2a y 2b, motor), docs/asistencia/mi-asistencia.md, reviews (2a: no repetido), react.md. Jest: 72 suites, 2893 pruebas en verde (las dos suites nuevas incluidas). Solo lectura; no se modificó código.
+
+**Veredicto: NO APROBADO** (por R2B-1, crítico). Pendiente de decisión del humano sobre R2B-1, R2B-2, R2B-4 y R2B-5.
+
+**R2B-1. CRÍTICO — El jefe dado de baja conserva el alcance sobre sus subordinados y su propia asistencia**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js:281-285 (`obtenerPorUsuarioId` sin filtro de estatus) y :271-278 (`marcarBaja` no desvincula `usuario_id` ni toca la cuenta); modules/rh/backend/controllers/asistenciaMiAsistencia.controller.js:44-72 (`vinculado`/`es_jefe` sin comprobar el estatus del propio); modules/rh/backend/controllers/asistenciaMotor.controller.js:92-96 y :106 (alcance); modules/rh/backend/models/asistenciaResultados.model.js:39-48 (`idsVisibles`); modules/rh/backend/models/asistenciaMiAsistencia.model.js:55-81 (`equipoHoy`).
+**Problema:** un empleado con `estatus = 'baja'` y `usuario_id` vinculado sigue siendo jefe (`es_jefe`) mientras tenga subordinados con su `jefe_inmediato_id`. `/resultados`, `/resumen`, `/resultados/dia` y `/mi-equipo/hoy` le siguen devolviendo los días y el estado de hoy de su ex-equipo mientras la cuenta exista. La app no lo corta: `marcarBaja` no desvincula ni desactiva el usuario.
+**Severidad:** crítico. Contradice decisions.md (2026-10-21 y 2026-10-28: "el jefe inmediato vigente ve a sus subordinados directos; nadie más"). Escalado al orquestador.
+**Fix sugerido:** (a) un propio con `estatus = 'baja'` no es jefe ni ve equipo, y su acceso a lo propio se decide con el humano (ver R2B-5); (b) al dar de baja, desvincular `empleados.usuario_id` o desactivar la cuenta (decisión del humano); (c) pruebas: jefe dado de baja → 403 con `equipo=1` y `/mi-equipo/hoy` vacío, con el SQL real o con Postgres.
+
+**R2B-2. ALTO — El tipo de permiso (p. ej. "incapacidad", dato de salud) se muestra al jefe**
+**Archivo/línea:** modules/rh/backend/models/asistenciaResultados.model.js:360 (SELECT `tipo`) y :403 (`sinId` lo conserva); modules/rh/frontend/utils/asistenciaMiAsistencia.js:245 (texto «un permiso aprobado (tipo)»).
+**Problema:** el tipo de permiso sale a empleado y jefe. Los tipos válidos incluyen `incapacidad` (permisos.controller.js:8; PermisosForm.jsx:8), que revela una condición de salud. Ninguna decisión autoriza al jefe a verlo. El fixture de la prueba usa `tipo: "salud"`, lo que confirma que el dato llega.
+**Severidad:** alto (dato sensible sin decisión documentada).
+**Fix sugerido:** para no-RH omitir `tipo` en `cruces.permiso` y en el texto («Tienes un permiso aprobado del X al Y»). Preguntar al humano si el propio empleado debe verlo.
+
+**R2B-3. MEDIO — El jefe ve horas exactas de comida y el "exceso de comida" de sus subordinados**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaMiAsistencia.js:297-304 (duración, de la primera a la última marca, «Son N minutos más de los 60 que marca su turno»); modules/rh/frontend/components/asistencia/DetalleDiaPersonaDialogo.jsx:89-98 (marcas «Comida» con hora exacta, con `persona="equipo"`).
+**Problema:** la decisión pide que el jefe vea la asistencia de su equipo, pero no la duración de la comida ni su exceso. Eso es sobreexposición y puede sentirse acusatorio. Hoy 'equipo' y 'yo' usan la misma redacción.
+**Severidad:** medio.
+**Fix sugerido:** con `persona === 'equipo'`, omitir las marcas de comida con hora y el exceso (dejar «Comida: sí/no»). Mantener el detalle completo en 'yo'. Confirmar con el humano.
+
+**R2B-4. MEDIO — Ex-subordinados dados de baja siguen en el equipo de su ex-jefe durante todo el análisis**
+**Archivo/línea:** modules/rh/backend/models/asistenciaResultados.model.js:43 (`fecha_baja >= $2`, con `$2` = inicio de la quincena o del análisis); modules/rh/backend/models/asistenciaMiAsistencia.model.js:75; modules/rh/frontend/utils/asistenciaMiAsistencia.js (`combinarEquipo`, filas `de_baja` tomadas del resumen).
+**Problema:** quien dejó la empresa después del 1-sep sigue apareciendo en `resumen?equipo=1` y en Mi equipo (marcado «baja») con su quincena completa, aunque ya no reporte al jefe. La decisión habla de subordinados directos, no dice si cuentan los que ya salieron. Como `jefe_inmediato_id` no se limpia al dar de baja, la relación se conserva.
+**Severidad:** medio (regla no decidida).
+**Fix sugerido:** decidir con el humano. Si la regla es «vigente», filtrar por `estatus = 'activo'` (o `fecha_baja` > hoy) para el equipo; si se quiere histórico, documentarlo en mi-asistencia.md.
+
+**R2B-5. MEDIO — Un empleado dado de baja conserva "Mi asistencia" sin límite**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js:281-285; modules/rh/backend/models/asistenciaMiAsistencia.model.js:14-29 (`fichaPropia` no comprueba el estatus); asistenciaMiAsistencia.controller.js:50-56.
+**Problema:** un ex-empleado con cuenta activa en GoTrue ve su quincena indefinidamente. La decisión dice «el empleado ve lo suyo» pero no cubre el después de la baja.
+**Severidad:** medio (regla no decidida).
+**Fix sugerido:** decidir el plazo de acceso tras la baja. Aplicar el mismo criterio que R2B-1 y desvincular `usuario_id` al dar de baja.
+
+**R2B-6. MEDIO — El texto del retardo es ambiguo («por eso cuenta como retardo de 14»)**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaMiAsistencia.js:205.
+**Problema:** «La tolerancia es de 10 minutos, por eso cuenta como retardo de 14» atribuye a la tolerancia los 14 minutos. En realidad la tolerancia decide que es retardo y el motor cuenta la llegada tarde completa. Se entiende a medias y puede parecer un cálculo erróneo. Los minutos sí coinciden con el motor (`minutos_tarde` = `minutos_retardo`).
+**Severidad:** medio (comprensión; no es error de cálculo).
+**Fix sugerido:** «Llegaste 14 minutos tarde. Como pasaste de la tolerancia de 10 minutos, cuenta como retardo; se registran los 14 minutos completos.»
+
+**R2B-7. MEDIO — La justificada dice "no cuenta en contra" pero baja el % de puntualidad**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaMiAsistencia.js:271; modules/rh/frontend/utils/asistenciaResultados.js:26-27 (`FORMULA_PUNTUALIDAD`) y :49-55 (`diasEvaluados` incluye `justificada`).
+**Problema:** la justificada entra en el denominador y no en el numerador, así que baja el % igual que un retardo. El texto dice lo contrario y el empleado puede pensar que la justificación no afecta.
+**Severidad:** medio.
+**Fix sugerido:** decisión del humano: (a) excluir justificadas del denominador (cambia también la pantalla de RH) o (b) redactar «No es falta ni retardo, pero cuenta en el % de puntualidad». Mientras tanto, aplicar (b).
+
+**R2B-8. MEDIO — Turnos nocturnos: el panel Hoy dice "Sin marcas" antes de tiempo**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaMiAsistencia.js:393-395 (compara con la salida del mismo día); modules/rh/backend/models/asistenciaMiAsistencia.model.js:59-61 (no devuelve `cruza_medianoche`).
+**Problema:** con turno 22:00-06:00 y sin marcas a las 23:30, el panel dice «No registró ninguna marca hoy. El día se califica en unos minutos», porque 06:00 < 23:30. Es una alarma falsa que además suena acusatoria. Los turnos nocturnos son parte del diseño (decisions 2026-10-21).
+**Severidad:** medio (verificar con un caso real: no hay prueba de turno nocturno en el panel).
+**Fix sugerido:** devolver `cruza_medianoche` y tratar la salida como del día siguiente, o derivar «sin marcas» solo de lo que el motor marcó como pendiente. Añadir prueba con turno nocturno.
+
+**R2B-9. MEDIO — El resumen del panel Hoy cuenta las justificadas como "no trabaja hoy"**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaMiAsistencia.js:433 (`resumenHoy`, `fuera` incluye `justificada`).
+**Problema:** una justificada es un día laborable con incidencia justificada. El resumen dice «1 no trabaja hoy», dato falso para el jefe.
+**Severidad:** medio.
+**Fix sugerido:** quitar `justificada` de `fuera` y tratarla como las demás incidencias.
+
+**R2B-10. MEDIO — Pruebas: matriz simulada y sin los casos que importan**
+**Archivo/línea:** modules/rh/backend/tests/asistenciaMiAsistencia.api.test.js:1-60 (`Empleado.obtenerPorUsuarioId` mockeado, permisos por fake, BD por regex: se verifica el SQL emitido, no el resultado).
+**Problema:** no hay casos de jefe o empleado dado de baja, subordinado `suspendido`, cambio de `jefe_inmediato_id` entre dos peticiones, turno nocturno, tipo de permiso visible al jefe, ni `calculo_original`. El `portal_admin` se simula con `Asistencia:consulta`, no con los grants reales de la migración 012 (la revisión 2a ya lo señaló). Los casos IDOR (A/B, jefe/par, jefe de jefes, ex-subordinado por fecha) sí están cubiertos, pero solo en simulado.
+**Severidad:** medio.
+**Fix sugerido:** pruebas de integración contra Postgres con los grants reales y los casos de R2B-1, R2B-2, R2B-4 y R2B-8.
+
+**R2B-11. BAJO — Criterio de subordinado distinto entre la cuenta de jefes y el alcance**
+**Archivo/línea:** modules/rh/backend/models/asistenciaMiAsistencia.model.js:34 (`estatus = 'activo'`) frente a :75 y modules/rh/backend/models/asistenciaResultados.model.js:43 (`IS DISTINCT FROM 'baja'`, que incluye `suspendido`).
+**Problema:** un jefe con solo subordinados suspendidos no ve «Mi equipo» en el menú, pero `/resultados?equipo=1` sí le da sus datos.
+**Severidad:** bajo.
+**Fix sugerido:** un único predicado SQL de «subordinado vigente» usado en las tres consultas.
+
+**R2B-12. BAJO — `/resultados/dia` devuelve el `detalle` JSON completo a no-RH**
+**Archivo/línea:** modules/rh/backend/models/asistenciaResultados.model.js:380-404 (`sinInternos` no toca `detalle`); modules/rh/backend/services/asistencia/motorAsistencia.js:282 (guarda `calculo_original`, `marcas_duplicadas`, `explicaciones`).
+**Problema:** hoy no hay nada sensible fuera de lo ya tratado, pero cualquier campo nuevo del motor sale a empleado y jefe.
+**Severidad:** bajo.
+**Fix sugerido:** lista blanca de campos de `detalle` para no-RH.
+
+**R2B-13. BAJO — IDs internos a no-RH**
+**Archivo/línea:** modules/rh/backend/models/asistenciaMiAsistencia.model.js:57 (`empleado_id` de subordinados en `/mi-equipo/hoy`); modules/rh/backend/models/asistenciaResultados.model.js:128 (`id` del periodo en `/periodos` para no-RH, no se quita).
+**Problema:** la lista de «ids internos» que pide el encargo no se cumple del todo: `empleado_id` (necesario para abrir el detalle) y el `id` del periodo siguen saliendo. Son enumerables, pero el IDOR está cerrado en servidor.
+**Severidad:** bajo.
+**Fix sugerido:** aceptar `empleado_id` y documentarlo, o usar un identificador opaco; quitar `id` del periodo para no-RH.
+
+**R2B-14. BAJO — Tono: frases que suenan a acusación**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaMiAsistencia.js:395 («No registró ninguna marca hoy»), :217 y :220 («No hay marca de entrada…», falta), :404 («Falta: no hay marca de entrada»).
+**Problema:** el panel de un jefe ve «Falta» y «No registró» como juicio, no como dato.
+**Severidad:** bajo.
+**Fix sugerido:** «Sin marcas registradas hoy todavía; se califica al terminar la jornada» y «Sin marca de entrada registrada».
+
+**R2B-15. BAJO — Periodo actual añadido aunque sea anterior al inicio del análisis**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaMiAsistencia.js (`quincenasVisibles`, rama que agrega `periodoActual` sin filtrar por `analisisDesde`).
+**Problema:** si `analisis_desde` es posterior a la quincena actual, el selector muestra una quincena vacía en lugar del aviso de análisis.
+**Severidad:** bajo.
+**Fix sugerido:** aplicar el mismo filtro `fecha_fin >= analisisDesde` al periodo agregado.
+
+**R2B-16. BAJO — Caché de contexto y cambio de jefe**
+**Archivo/línea:** modules/rh/frontend/hooks/useContextoAsistencia.js:10 (`invalidarContextoAsistencia` nunca se llama); :7 (TTL 60 s).
+**Problema:** tras un cambio de jefe, el menú puede mostrar «Mi equipo» hasta 60 s y luego devolver 403. La caché se indexa por usuario, así que no hay fuga entre cuentas.
+**Severidad:** bajo.
+**Fix sugerido:** llamar a `invalidarContextoAsistencia` al cerrar sesión; tratar el 403 de `/mi-equipo/hoy` como «ya no eres jefe».
+
+**R2B-17. BAJO — Sin validación de ciclos en `jefe_inmediato_id`**
+**Archivo/línea:** modules/rh/backend/controllers/empleado.controller.js:71 y :211 (se guarda el valor sin comprobar ciclos).
+**Problema:** si A es jefe de B y B es jefe de A, cada uno ve al otro. Es anterior a este commit, pero el alcance nuevo lo hace visible.
+**Severidad:** bajo.
+**Fix sugerido:** rechazar al guardar un jefe que cree un ciclo.
+
+**R2B-18. BAJO — Accesibilidad menor**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/DetalleDiaPersonaDialogo.jsx:92 (`title` con UTC en `<time>`); MiEquipoPage.jsx:206-213 (ítems del panel Hoy sin enlace al detalle).
+**Problema:** el UTC solo aparece con el cursor (no accesible por teclado ni táctil). El panel Hoy no permite abrir al subordinado desde ahí.
+**Severidad:** bajo.
+**Fix sugerido:** mostrar el UTC como texto o quitarlo; hacer el nombre del panel Hoy un botón que abra la cuadrícula.
+
+**Verificado sin hallazgos**
+- Cambio de `jefe_inmediato_id` en caliente: el servidor lee el jefe en cada petición (`idsVisibles`, `obtenerPorUsuarioId`), así que el jefe anterior pierde el acceso al instante.
+- IDOR en `/resultados`, `/resultados/dia` y `/resumen`: 403 uniforme para empleado ajeno, par, jefe de jefes y nietos; `equipo=1` acota a directos también para RH; `equipo` con otro valor da 400; `ids = []` no equivale a «todos».
+- `terminal_sn`, nombre de quien justificó, quién cerró o reabrió y motivo de reapertura: solo RH (modelo y controlador).
+- Usuario sin empleado vinculado: 200 con `vinculado:false` en `/mi-contexto`, 403 en lectura de datos.
+- Zona horaria: `hoyMexico` en America/Mexico_City; `Intl` con `hourCycle: 'h23'` (sin «24:00» a medianoche); fechas como texto con `to_char`.
+- CSS: sin hex nuevos; `--color-acento`, `--color-exito-suave`, `--color-advertencia-suave` están definidas globalmente; `prefers-reduced-motion`; objetivos táctiles de 44 px.
+- Menú: `tieneAccesoMenu` + `visibleSegunContexto`; `super_admin` pasa la regla de permiso pero el contexto del servidor decide; sin contexto no se muestra nada.
+
+**Notas para el orquestador:**
+- Escalado por R2B-1 (crítico). Decisiones que necesito del humano: (1) ¿el empleado o jefe dado de baja conserva acceso y por cuánto tiempo?; (2) ¿el jefe puede ver el tipo de permiso (incapacidad)?; (3) ¿el ex-subordinado sigue en el equipo de su ex-jefe?; (4) ¿la justificada cuenta en el % de puntualidad?
+- No se modificó código. Las pruebas se ejecutaron tal como están (72 suites, 2893 en verde).

@@ -49,7 +49,7 @@ const ROLES = {
   // grants reales de la migración 012: cualquier rol con Vacaciones/Empleados de consulta recibe Asistencia:consulta
   portal_admin: { user: { usuario_id: 7, rol_id: 7, rol_nombre: "portal_admin" }, permisos: { Asistencia: ["consulta"] } },
 };
-const FICHAS = { 1: { id: 10 }, 2: { id: 20 }, 4: { id: 40 }, 5: { id: 50 }, 7: { id: 70 } };
+const FICHAS = { 1: { id: 10, estatus: "activo" }, 2: { id: 20, estatus: "activo" }, 4: { id: 40, estatus: "activo" }, 5: { id: 50, estatus: "activo" }, 7: { id: 70, estatus: "activo" } };
 const como = (rol) => {
   mockUser = ROLES[rol].user;
   bd.estado.permisos = ROLES[rol].permisos;
