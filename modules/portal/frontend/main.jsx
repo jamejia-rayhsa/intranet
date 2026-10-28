@@ -47,6 +47,8 @@ import AsistenciaLlavesPage from '../../rh/frontend/pages/AsistenciaLlavesPage';
 import AsistenciaResultadosPage from '../../rh/frontend/pages/AsistenciaResultadosPage';
 import AsistenciaPeriodosPage from '../../rh/frontend/pages/AsistenciaPeriodosPage';
 import AsistenciaParametrosPage from '../../rh/frontend/pages/AsistenciaParametrosPage';
+import MiAsistenciaPage from '../../rh/frontend/pages/MiAsistenciaPage';
+import MiEquipoPage from '../../rh/frontend/pages/MiEquipoPage';
 import PuestosPage from '../../rh/frontend/pages/PuestosPage';
 import DepartamentosPage from '../../rh/frontend/pages/DepartamentosPage';
 import AreasPage from '../../rh/frontend/pages/AreasPage';
@@ -75,6 +77,8 @@ const BREADCRUMBS = {
   '/rh/admin':           ['Recursos Humanos', 'Permisos y ausencias'],
   '/rh/vacaciones':      ['Recursos Humanos', 'Vacaciones'],
   '/rh/calendario':      ['Recursos Humanos', 'Calendario'],
+  '/rh/asistencia/mi-asistencia': ['Recursos Humanos', 'Mi asistencia'],
+  '/rh/asistencia/mi-equipo':     ['Recursos Humanos', 'Mi equipo'],
   '/rh/asistencia/turnos':        ['Recursos Humanos', 'Asistencia · Turnos'],
   '/rh/asistencia/asignaciones':  ['Recursos Humanos', 'Asistencia · Asignaciones'],
   '/rh/asistencia/marcas':        ['Recursos Humanos', 'Asistencia · Marcas'],
@@ -202,6 +206,8 @@ function AppRutas() {
         <Route path="/rh/vacaciones" element={<RutaProtegida><VacacionesPage /></RutaProtegida>} />
         <Route path="/rh/vacaciones/listado" element={<RutaProtegida><VacacionesListadoPage /></RutaProtegida>} />
         <Route path="/rh/calendario" element={<RutaProtegida><CalendarioLaboralPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/mi-asistencia" element={<RutaProtegida><MiAsistenciaPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/mi-equipo" element={<RutaProtegida><MiEquipoPage /></RutaProtegida>} />
         <Route path="/rh/asistencia/turnos" element={<RutaProtegida><AsistenciaTurnosPage /></RutaProtegida>} />
         <Route path="/rh/asistencia/asignaciones" element={<RutaProtegida><AsistenciaAsignacionesPage /></RutaProtegida>} />
         <Route path="/rh/asistencia/marcas" element={<RutaProtegida><AsistenciaMarcasPage /></RutaProtegida>} />

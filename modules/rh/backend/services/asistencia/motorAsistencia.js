@@ -771,7 +771,7 @@ async function ejecutarCiclo(opciones = {}) {
  * Recalcula un rango (manual, desde la API). Solo periodos abiertos; los cerrados se cuentan en
  * dias_omitidos_cerrados. { ocupado: true } si el candado no se obtuvo en esperaMs.
  */
-async function recalcular({ desde, hasta, empleadoIds, usuarioId, origen = "api", esperaMs = 0, ...resto }) {
+async function recalcular({ desde, hasta, empleadoIds, usuarioId, origen = "api", esperaMs = 0, tiempo, ...resto }) {
   const base = opcionesBase(resto);
   const salida = await conCandadoDelMotor(
     async (c) => {
@@ -796,7 +796,7 @@ async function recalcular({ desde, hasta, empleadoIds, usuarioId, origen = "api"
         };
       });
     },
-    { esperaMs },
+    { esperaMs, tiempo },
   );
   if (salida.ocupado) return { ocupado: true };
   return { ocupado: false, ...salida.valor };
@@ -818,7 +818,7 @@ async function contarPendientes(c, periodoId) {
 }
 
 /** Cierre manual: recalcula una última vez el periodo y lo congela. Devuelve { codigo } ante una condición de negocio. */
-async function cerrarPeriodo({ id, usuarioId, esperaMs = 0, ...resto }) {
+async function cerrarPeriodo({ id, usuarioId, esperaMs = 0, tiempo, ...resto }) {
   const base = opcionesBase(resto);
   const salida = await conCandadoDelMotor(
     async (c) => {
@@ -843,14 +843,14 @@ async function cerrarPeriodo({ id, usuarioId, esperaMs = 0, ...resto }) {
       );
       return { codigo: "ok", periodo_previo: periodo, ...resultado };
     },
-    { esperaMs },
+    { esperaMs, tiempo },
   );
   if (salida.ocupado) return { codigo: "ocupado" };
   return salida.valor;
 }
 
 /** Reapertura: solo la usa RH (rh_admin / super_admin). Deja el periodo abierto, sin cierre automático, y lo recalcula. */
-async function reabrirPeriodo({ id, usuarioId, motivo, esperaMs = 0, ...resto }) {
+async function reabrirPeriodo({ id, usuarioId, motivo, esperaMs = 0, tiempo, ...resto }) {
   const base = opcionesBase(resto);
   const salida = await conCandadoDelMotor(
     async (c) => {
@@ -883,7 +883,7 @@ async function reabrirPeriodo({ id, usuarioId, motivo, esperaMs = 0, ...resto })
         },
       ).then((r) => ({ ...r, codigo: "ok" }));
     },
-    { esperaMs },
+    { esperaMs, tiempo },
   );
   if (salida.ocupado) return { codigo: "ocupado" };
   return salida.valor;

@@ -11,3 +11,17 @@ export function tieneAccesoMenu({ usuario, permisos, modulo, opcion, estricto = 
   if (lista.length === 0 && !estricto) return true;
   return lista.some((p) => String(p.modulo).toLowerCase() === String(modulo).toLowerCase() && p.opcion === opcion);
 }
+
+/**
+ * Entradas del menú que dependen de quién es el usuario para la asistencia (GET /asistencia/mi-contexto):
+ * 'empleado' = tiene empleado vinculado; 'jefe' = jefe inmediato vigente de al menos un empleado activo. Sin contexto
+ * (aún cargando, error o sin permiso) la entrada NO se muestra: el servidor es quien decide.
+ */
+export function visibleSegunContexto(requiereContexto, contexto) {
+  if (!requiereContexto) return true;
+  if (!contexto) return false;
+  // un empleado dado de baja o suspendido (activo:false) pierde las dos entradas aunque conserve su cuenta
+  if (requiereContexto === 'empleado') return Boolean(contexto.vinculado && contexto.activo);
+  if (requiereContexto === 'jefe') return Boolean(contexto.es_jefe && contexto.activo);
+  return false;
+}

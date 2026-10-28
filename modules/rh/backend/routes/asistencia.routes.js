@@ -4,6 +4,7 @@ const ControladorAsignacion = require("../controllers/turnoAsignacion.controller
 const ControladorLlave = require("../controllers/llaveIngesta.controller");
 const ControladorAdmin = require("../controllers/asistenciaAdmin.controller");
 const ControladorMotor = require("../controllers/asistenciaMotor.controller");
+const ControladorMi = require("../controllers/asistenciaMiAsistencia.controller");
 const TurnoAsignacion = require("../models/turnoAsignacion.model");
 const { authenticateJWT } = require("../../../portal/backend/middleware/auth.middleware");
 const { verificarPermiso, tienePermiso } = require("../../../portal/backend/middleware/permisos.middleware");
@@ -120,6 +121,10 @@ const LEER_O_RH = async (req, res, next) => {
     return res.status(500).json({ exito: false, mensaje: "Error al verificar permisos" });
   }
 };
+// «Mi asistencia» y «Mi equipo» (solo lectura): Asistencia:consulta; el controlador decide el alcance (el propio empleado
+// vinculado y sus subordinados directos). Lo de gestión (ids internos, quién cerró, terminales) nunca sale por aquí.
+router.get("/mi-contexto", LEER, ControladorMi.miContexto);
+router.get("/mi-equipo/hoy", LEER, ControladorMi.miEquipoHoy);
 router.get("/resultados", LEER_O_RH, ControladorMotor.resultados);
 router.get("/resultados/dia", LEER_O_RH, ControladorMotor.detalleDia);
 router.post("/resultados/dias", RH_LECTURA, ControladorMotor.diasParaExportar);

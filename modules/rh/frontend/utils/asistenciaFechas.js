@@ -167,3 +167,9 @@ const MENSAJES_ESTADO = {
 
 /** Texto para lectores de pantalla (aria-live): solo depende del ESTADO, no del «hace N min», para no re-anunciarse cada refresco. */
 export const mensajeEstadoRetraso = (estado) => MENSAJES_ESTADO[estado] || MENSAJES_ESTADO.sin_datos;
+
+/** 'HH:MM' en hora de México de un instante ISO con zona; '—' si no hay instante o no es válido. */
+export function horaLocal(instante) {
+  const p = partesLocales(instante);
+  return p ? p.hora.slice(0, 5) : '—';
+}

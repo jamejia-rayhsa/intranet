@@ -284,6 +284,21 @@ const Empleado = {
     return resultado.rows[0];
   },
 
+  /**
+   * ¿Asignar `jefeId` como jefe inmediato de `empleadoId` crea un ciclo (A jefe de B y B de A, directa o indirectamente)?
+   * Sube por la cadena de jefes (tope de 100 pasos: una cadena real nunca es tan larga). Un empleado no puede ser su propio jefe.
+   */
+  async creaCicloDeJefes(empleadoId, jefeId) {
+    let actual = Number(jefeId);
+    const objetivo = Number(empleadoId);
+    for (let i = 0; i < 100 && Number.isInteger(actual) && actual > 0; i += 1) {
+      if (actual === objetivo) return true;
+      const r = await grupo.query("SELECT jefe_inmediato_id FROM empleados WHERE id = $1", [actual]);
+      actual = r.rows[0] ? r.rows[0].jefe_inmediato_id : null;
+    }
+    return false;
+  },
+
   async listarPorJefe(jefeId) {
     const consulta = `
       SELECT e.* FROM empleados e

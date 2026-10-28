@@ -64,14 +64,16 @@ export const editarIpsLlave = (id, ips) => solicitar(`${base}/llaves/${id}/ips`,
 
 // --- Resultados del motor, periodos y parámetros (gestión de RH) ---
 export const listarPeriodos = ({ pagina = 1, limite = 100 } = {}) => solicitar(`${base}/periodos?pagina=${pagina}&limite=${limite}`);
-export const resumenResultados = ({ desde, hasta, departamentoId, pagina = 1, limite = 500 }) => {
+export const resumenResultados = ({ desde, hasta, departamentoId, soloEquipo = false, pagina = 1, limite = 500 }) => {
   const p = new URLSearchParams({ desde, hasta, pagina: String(pagina), limite: String(limite) });
   if (departamentoId) p.set("departamento_id", String(departamentoId));
+  if (soloEquipo) p.set("equipo", "1");
   return solicitar(`${base}/resumen?${p.toString()}`);
 };
-export const listarResultados = ({ desde, hasta, empleadoId, pagina = 1, limite = 500 }) => {
+export const listarResultados = ({ desde, hasta, empleadoId, soloEquipo = false, pagina = 1, limite = 500 }) => {
   const p = new URLSearchParams({ desde, hasta, pagina: String(pagina), limite: String(limite) });
   if (empleadoId) p.set("empleado_id", String(empleadoId));
+  if (soloEquipo) p.set("equipo", "1");
   return solicitar(`${base}/resultados?${p.toString()}`);
 };
 export const diasParaExportar = (datos) => solicitar(`${base}/resultados/dias`, { method: "POST", body: json(datos) });
@@ -91,6 +93,10 @@ export const listarEjecuciones = (limite = 20) => solicitar(`${base}/ejecuciones
 export const obtenerParametros = () => solicitar(`${base}/parametros`);
 export const guardarParametros = (cambios, confirmacion) =>
   solicitar(`${base}/parametros`, { method: "PUT", body: json(confirmacion ? { ...cambios, confirmacion } : cambios) });
+
+// --- Mi asistencia y Mi equipo (solo lectura) ---
+export const miContexto = () => solicitar(`${base}/mi-contexto`);
+export const miEquipoHoy = () => solicitar(`${base}/mi-equipo/hoy`);
 
 /** Mensaje para mostrar: 403 -> sin permiso; el resto, el del servidor o el de red. */
 export function mensajeDeError(err, porDefecto) {

@@ -16,6 +16,32 @@ const sinTotal = (fila) => {
   return copia;
 };
 
+// Campos internos que solo necesita RH (ids de otras tablas, versión del cálculo, marcas usadas): quien consulta lo
+// propio o a su equipo no los recibe
+const CAMPOS_INTERNOS_DIA = ["id", "turno_id", "departamento_id", "periodo_id", "marcas_usadas", "version_calculo"];
+const sinInternos = (fila, campos) => {
+  const copia = { ...fila };
+  for (const c of campos) delete copia[c];
+  return copia;
+};
+
+// Subordinado VIGENTE para el alcance de un jefe: activo, o dado de baja con fecha de baja dentro del rango consultado
+// (`$param` = inicio del rango). Un suspendido NO cuenta: es el mismo criterio de «activo» en todas las consultas.
+const subordinadoVigente = (alias, param) =>
+  `(${alias}.estatus = 'activo' OR (${alias}.estatus = 'baja' AND ${alias}.fecha_baja IS NOT NULL AND ${alias}.fecha_baja >= ${param}::date))`;
+
+// Campos de las filas de /resultados que recibe quien no es RH (lista blanca: un campo nuevo del motor no sale solo)
+const CAMPOS_LISTA_PUBLICOS = [
+  "empleado_id", "nombre", "apellido_paterno", "apellido_materno", "numero_nomina", "fecha", "estatus", "minutos_retardo",
+  "minutos_salida_anticipada", "periodo_estado",
+];
+const CAMPOS_PERIODO_PUBLICOS = ["fecha_inicio", "fecha_fin", "estado"];
+const pick = (obj, campos) => {
+  const r = {};
+  for (const c of campos) if (obj && obj[c] !== undefined) r[c] = obj[c];
+  return r;
+};
+
 const LIMITE_MARCAS_DIA = 100;
 const NOMBRE_EMPLEADO = `e.nombre, e.apellido_paterno, e.apellido_materno, e.numero_nomina`;
 
@@ -25,21 +51,22 @@ const AsistenciaResultados = {
 
   /**
    * Empleado propio y sus subordinados DIRECTOS (jefe inmediato vigente): ids visibles para quien no es RH.
-   * Un subordinado dado de baja solo se lista si su baja no es anterior al rango consultado.
+   * Un subordinado dado de baja solo se lista si su baja no es anterior al rango consultado; un suspendido no se lista.
+   * Quien llama debe haber comprobado que el empleado propio está ACTIVO.
    */
   async idsVisibles(empleadoPropioId, desde, cliente = grupo) {
     const r = await cliente.query(
       `SELECT id FROM empleados
        WHERE jefe_inmediato_id = $1 AND id <> $1
-         AND (estatus IS DISTINCT FROM 'baja' OR (fecha_baja IS NOT NULL AND fecha_baja >= $2::date))
+         AND ${subordinadoVigente("empleados", "$2")}
        ORDER BY id`,
       [empleadoPropioId, desde],
     );
     return [empleadoPropioId, ...r.rows.map((f) => f.id)];
   },
 
-  /** ids: null = todos (RH). Devuelve { filas, total }. */
-  async listarResultados({ ids, desde, hasta, limite, offset }, cliente = grupo) {
+  /** ids: null = todos (RH). `esRH` = false (por omisión) quita los ids internos. Devuelve { filas, total }. */
+  async listarResultados({ ids, desde, hasta, limite, offset, esRH = false }, cliente = grupo) {
     const r = await cliente.query(
       `SELECT d.id, d.empleado_id, ${NOMBRE_EMPLEADO}, to_char(d.fecha, 'YYYY-MM-DD') AS fecha, d.estatus,
               d.minutos_retardo, d.minutos_salida_anticipada, d.primera_marca, d.ultima_marca,
@@ -56,7 +83,8 @@ const AsistenciaResultados = {
        LIMIT $4 OFFSET $5`,
       [ids, desde, hasta, limite, offset],
     );
-    return { filas: r.rows.map(sinTotal), total: r.rows[0] ? Number(r.rows[0].total) : 0 };
+    const filas = r.rows.map(sinTotal);
+    return { filas: esRH ? filas : filas.map((f) => pick(f, CAMPOS_LISTA_PUBLICOS)), total: r.rows[0] ? Number(r.rows[0].total) : 0 };
   },
 
   /**
@@ -87,7 +115,7 @@ const AsistenciaResultados = {
   },
 
   /** Conteos por empleado y estatus */
-  async resumen({ ids, departamentoId, desde, hasta, limite, offset }, cliente = grupo) {
+  async resumen({ ids, departamentoId, desde, hasta, limite, offset, esRH = false }, cliente = grupo) {
     const conteos = ESTATUS.map((s) => `COUNT(*) FILTER (WHERE d.estatus = '${s}')::int AS ${s}`).join(", ");
     const r = await cliente.query(
       `SELECT d.empleado_id, ${NOMBRE_EMPLEADO}, e.departamento_id, dep.nombre AS departamento, ${conteos},
@@ -108,10 +136,11 @@ const AsistenciaResultados = {
        LIMIT $5 OFFSET $6`,
       [ids, desde, hasta, departamentoId || null, limite, offset],
     );
-    return { filas: r.rows.map(sinTotal), total: r.rows[0] ? Number(r.rows[0].total) : 0 };
+    const filas = r.rows.map(sinTotal);
+    return { filas: esRH ? filas : filas.map((f) => sinInternos(f, ["departamento_id"])), total: r.rows[0] ? Number(r.rows[0].total) : 0 };
   },
 
-  /** esRH = false oculta quién reabrió y por qué (datos de gestión) */
+  /** esRH = false oculta los datos de gestión (quién cerró o reabrió, motivo, conteos globales) */
   async listarPeriodos({ estado, limite, offset, esRH = false }, cliente = grupo) {
     const r = await cliente.query(
       `SELECT p.id, to_char(p.fecha_inicio, 'YYYY-MM-DD') AS fecha_inicio, to_char(p.fecha_fin, 'YYYY-MM-DD') AS fecha_fin,
@@ -131,13 +160,9 @@ const AsistenciaResultados = {
     );
     const filas = r.rows.map(sinTotal).map((f) => {
       if (esRH) return f;
-      const publica = { ...f };
-      delete publica.reabierto_motivo;
-      delete publica.reabierto_por;
-      delete publica.reabierto_por_nombre;
-      delete publica.cerrado_por_nombre;
-      delete publica.cerrado_por;
-      return publica;
+      // Solo fechas y estado: sin id, ni quién cerró o reabrió, ni el motivo, ni conteos (días pendientes y ajustes cuentan a
+      // TODOS los empleados: serían datos de otras personas)
+      return pick(f, CAMPOS_PERIODO_PUBLICOS);
     });
     return { filas, total: r.rows[0] ? Number(r.rows[0].total) : 0 };
   },
@@ -304,9 +329,13 @@ const AsistenciaResultados = {
   /**
    * Detalle de UN día: fila calculada con el snapshot del turno, las marcas del día local de México (más el día
    * siguiente si el turno cruza la medianoche), los cruces (vacaciones, permiso, festivo, justificación) y el estado
-   * del periodo. null si el día no tiene resultado. `esRH` = false oculta quién justificó.
+   * del periodo. null si el día no tiene resultado. `vista` decide qué se entrega (por omisión la más restringida):
+   *   'rh'     todo (ids, terminal, quién justificó);
+   *   'propio' el empleado ve lo suyo: sin ids ni terminal ni quién justificó, con el tipo de su permiso y su comida completa;
+   *   'equipo' el jefe ve lo de su subordinado: además sin el tipo de permiso, sin horas ni exceso de comida y sin última marca.
    */
-  async detalleDia({ empleadoId, fecha, esRH = false }, cliente = grupo) {
+  async detalleDia({ empleadoId, fecha, vista = "equipo" }, cliente = grupo) {
+    const esRH = vista === "rh";
     const d = await cliente.query(
       `SELECT d.id, d.empleado_id, to_char(d.fecha, 'YYYY-MM-DD') AS fecha, d.estatus, d.minutos_retardo, d.minutos_salida_anticipada,
               d.primera_marca, d.ultima_marca, d.turno_id, d.turno_nombre, d.origen_turno, d.departamento_id,
@@ -374,18 +403,41 @@ const AsistenciaResultados = {
       comida: (dia.detalle && dia.detalle.comida) || null,
       cruza: Boolean(dia.cruza_medianoche),
     });
-    const fila = { ...dia };
-    for (const interno of ["solicitud_vacaciones_id", "permiso_id", "calendario_id", "incidencia_id", "departamento_actual_id"]) delete fila[interno];
+    const fila = sinInternos(dia, ["solicitud_vacaciones_id", "permiso_id", "calendario_id", "incidencia_id", "departamento_actual_id"]);
+    const conRol = lista.map((m) => ({ ...m, rol: roles[String(m.id)] || "otra" }));
+    const cruces = {
+      vacaciones: vac.rows[0] || null,
+      permiso: per.rows[0] || null,
+      festivo: fes.rows[0] || null,
+      justificacion: inc.rows[0] || null,
+    };
+    if (esRH) return { dia: fila, marcas: conRol, marcas_truncadas: truncadas, cruces };
+
+    // Quien consulta lo propio o a su equipo: lista blanca del detalle del motor (un campo nuevo no sale solo), sin ids
+    // internos (del día, del turno, de las marcas, de los cruces) y sin la terminal. El motivo de la justificación SÍ se
+    // entrega (decisión del humano); quién la hizo no (la consulta ya lo devuelve nulo).
+    const propio = vista === "propio";
+    const det = dia.detalle || {};
+    const detalle = pick(det, ["banderas", "minutos_tarde", "minutos_antes_salida", "calculo_original", "calculo_provisional", "dia_completo"]);
+    if (det.comida) detalle.comida = pick(det.comida, ["desde", "hasta", "marcas"]);
+    if (propio) {
+      Object.assign(detalle, pick(det, ["minutos_comida", "exceso_comida_min"]));
+    } else {
+      // El jefe no ve cuánto duró la comida ni su exceso (solo cuántas marcas hubo)
+      detalle.banderas = (detalle.banderas || []).filter((b) => b !== "exceso_comida");
+    }
+    const sinId = (x) => (x ? sinInternos(x, ["id"]) : null);
+    const permiso = sinId(cruces.permiso);
+    if (permiso && !propio) delete permiso.tipo; // el tipo (p. ej. incapacidad) solo lo ve el propio empleado y RH
+    const visibles = propio ? conRol : conRol.filter((m) => m.rol !== "comida");
+    const publica = { ...sinInternos(fila, [...CAMPOS_INTERNOS_DIA, "calculado_en"]), detalle };
+    if (!propio) delete publica.ultima_marca; // puede ser una marca de comida
     return {
-      dia: fila,
-      marcas: lista.map((m) => ({ ...m, rol: roles[String(m.id)] || "otra" })),
+      dia: publica,
+      marcas: visibles.map((m) => ({ marca_ts: m.marca_ts, rol: m.rol })),
       marcas_truncadas: truncadas,
-      cruces: {
-        vacaciones: vac.rows[0] || null,
-        permiso: per.rows[0] || null,
-        festivo: fes.rows[0] || null,
-        justificacion: inc.rows[0] || null,
-      },
+      ...(propio ? {} : { comida_marcas: conRol.length - visibles.length }),
+      cruces: { vacaciones: sinId(cruces.vacaciones), permiso, festivo: sinId(cruces.festivo), justificacion: sinId(cruces.justificacion) },
     };
   },
 
@@ -425,3 +477,4 @@ const AsistenciaResultados = {
 };
 
 module.exports = AsistenciaResultados;
+module.exports.subordinadoVigente = subordinadoVigente;

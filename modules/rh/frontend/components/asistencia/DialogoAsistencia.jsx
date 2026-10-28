@@ -5,7 +5,7 @@ import useFocoModal from "../../../../portal/frontend/hooks/useFocoModal";
  * Diálogo modal accesible: role dialog/alertdialog, aria-modal, foco atrapado y devuelto al cerrar
  * (useFocoModal), Escape cierra (salvo `bloqueado`). Los hijos van dentro del cuerpo desplazable.
  */
-export default function DialogoAsistencia({ titulo, onCerrar, children, rol = "dialog", bloqueado = false, ancho = "34rem" }) {
+export default function DialogoAsistencia({ titulo, onCerrar, children, rol = "dialog", bloqueado = false, ancho = "34rem", clase = "" }) {
   const dialogoRef = useFocoModal(true);
   const tituloId = useId();
 
@@ -23,7 +23,7 @@ export default function DialogoAsistencia({ titulo, onCerrar, children, rol = "d
   return (
     <div className="rayhsa-modal-overlay asi__overlay">
       <div
-        className="rayhsa-modal asi__modal"
+        className={`rayhsa-modal asi__modal${clase ? ` ${clase}` : ""}`}
         style={{ maxWidth: `min(${ancho}, 100%)` }}
         ref={dialogoRef}
         tabIndex={-1}
