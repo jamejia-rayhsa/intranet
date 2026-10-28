@@ -62,6 +62,36 @@ export const rotarLlave = (id, datos) => solicitar(`${base}/llaves/${id}/rotar`,
 export const revocarLlave = (id) => solicitar(`${base}/llaves/${id}/revocar`, { method: "POST", body: json({}) });
 export const editarIpsLlave = (id, ips) => solicitar(`${base}/llaves/${id}/ips`, { method: "PUT", body: json({ ips_permitidas: ips }) });
 
+// --- Resultados del motor, periodos y parámetros (gestión de RH) ---
+export const listarPeriodos = ({ pagina = 1, limite = 100 } = {}) => solicitar(`${base}/periodos?pagina=${pagina}&limite=${limite}`);
+export const resumenResultados = ({ desde, hasta, departamentoId, pagina = 1, limite = 500 }) => {
+  const p = new URLSearchParams({ desde, hasta, pagina: String(pagina), limite: String(limite) });
+  if (departamentoId) p.set("departamento_id", String(departamentoId));
+  return solicitar(`${base}/resumen?${p.toString()}`);
+};
+export const listarResultados = ({ desde, hasta, empleadoId, pagina = 1, limite = 500 }) => {
+  const p = new URLSearchParams({ desde, hasta, pagina: String(pagina), limite: String(limite) });
+  if (empleadoId) p.set("empleado_id", String(empleadoId));
+  return solicitar(`${base}/resultados?${p.toString()}`);
+};
+export const diasParaExportar = (datos) => solicitar(`${base}/resultados/dias`, { method: "POST", body: json(datos) });
+export const detalleDia = (empleadoId, fecha) => solicitar(`${base}/resultados/dia?empleado_id=${empleadoId}&fecha=${fecha}`);
+export const justificarDia = (datos) => solicitar(`${base}/incidencias`, { method: "POST", body: json(datos) });
+export const anularJustificacion = (id) => solicitar(`${base}/incidencias/${id}/anular`, { method: "POST", body: json({}) });
+export const sinIdentificador = ({ pagina = 1, limite = 100 } = {}) => solicitar(`${base}/sin-identificador?pagina=${pagina}&limite=${limite}`);
+export const registrarExportacionResultados = (tipo, filas) =>
+  solicitar(`${base}/resultados/exportaciones`, { method: "POST", body: json({ tipo, filas }) });
+export const contadoresPeriodo = (id) => solicitar(`${base}/periodos/${id}/contadores`);
+export const cerrarPeriodo = (id, esperados) => solicitar(`${base}/periodos/${id}/cerrar`, { method: "POST", body: json({ esperados }) });
+export const reabrirPeriodo = (id, motivo) => solicitar(`${base}/periodos/${id}/reabrir`, { method: "POST", body: json({ motivo }) });
+export const recalcularRango = (datos) => solicitar(`${base}/recalcular`, { method: "POST", body: json(datos) });
+export const listarAjustes = ({ pagina = 1, limite = 50 } = {}) => solicitar(`${base}/ajustes-pendientes?pagina=${pagina}&limite=${limite}`);
+export const resolverAjuste = (id, nota) => solicitar(`${base}/ajustes-pendientes/${id}/resolver`, { method: "POST", body: json(nota ? { nota } : {}) });
+export const listarEjecuciones = (limite = 20) => solicitar(`${base}/ejecuciones?limite=${limite}`);
+export const obtenerParametros = () => solicitar(`${base}/parametros`);
+export const guardarParametros = (cambios, confirmacion) =>
+  solicitar(`${base}/parametros`, { method: "PUT", body: json(confirmacion ? { ...cambios, confirmacion } : cambios) });
+
 /** Mensaje para mostrar: 403 -> sin permiso; el resto, el del servidor o el de red. */
 export function mensajeDeError(err, porDefecto) {
   if (err && err.status === 403) return "No tienes permiso para esta pantalla o acción.";

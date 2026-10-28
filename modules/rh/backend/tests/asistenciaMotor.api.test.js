@@ -61,12 +61,16 @@ function como(rol) {
 const consultasDatos = (re) => bd.sqls().filter((l) => re.test(l.sql));
 const get = (url) => request(app).get(url);
 const RANGO = "desde=2026-10-01&hasta=2026-10-15";
+const CIERRE = { esperados: { ajustes_pendientes: 0, sin_identificador: 0 } };
 
 beforeEach(() => {
   jest.clearAllMocks();
   bd.reiniciar();
   Empleado.obtenerPorUsuarioId.mockImplementation(async (uid) => FICHAS[uid]);
   bd.cuando(/FROM empleados\s+WHERE jefe_inmediato_id = \$1/, (_sql, p) => ({ rows: (SUBORDINADOS[p[0]] || []).map((id) => ({ id })) }));
+  Motor.leerParametros.mockResolvedValue({ analisis_desde: "2026-09-01", comida_desde: "13:00", comida_hasta: "16:00" });
+  // contadores frescos del cierre: nada pendiente (el servidor los compara con `esperados`)
+  bd.cuando(/FROM asistencia_periodos p\s+WHERE p\.id = \$1/, { rows: [{ estado: "abierto", dias_pendientes: 0, ajustes_pendientes: 0 }] });
   bd.cuando(/FROM asistencia_diaria d/, { rows: [] });
   como("rh_admin");
 });
@@ -195,7 +199,7 @@ describe("recalcular/cerrar/reabrir no esperan el candado", () => {
     Motor.cerrarPeriodo.mockResolvedValue({ codigo: "ocupado" });
     Motor.reabrirPeriodo.mockResolvedValue({ codigo: "ocupado" });
     const r1 = await request(app).post("/api/asistencia/recalcular").send({ desde: "2026-10-01", hasta: "2026-10-02" });
-    const r2 = await request(app).post("/api/asistencia/periodos/3/cerrar");
+    const r2 = await request(app).post("/api/asistencia/periodos/3/cerrar").send(CIERRE);
     const r3 = await request(app).post("/api/asistencia/periodos/3/reabrir").send({ motivo: "motivo válido" });
     for (const r of [r1, r2, r3]) {
       expect(r.status).toBe(409);
@@ -295,7 +299,7 @@ describe("GET /periodos", () => {
 describe("POST /periodos/:id/cerrar y /reabrir", () => {
   const MOTIVO = { motivo: "Marcas tardías de una terminal sin red" };
 
-  describe.each([["cerrar", {}], ["reabrir", MOTIVO]])("%s: matriz de permisos", (accion, cuerpo) => {
+  describe.each([["cerrar", CIERRE], ["reabrir", MOTIVO]])("%s: matriz de permisos", (accion, cuerpo) => {
     it.each(["empleado", "jefe", "otroJefe", "rh_empleado", "rh_lectura", "portal_admin"])("%s -> 403 sin tocar el motor ni auditar", async (rol) => {
       como(rol);
       const r = await request(app).post(`/api/asistencia/periodos/3/${accion}`).send(cuerpo);
@@ -329,13 +333,13 @@ describe("POST /periodos/:id/cerrar y /reabrir", () => {
     ["ocupado", 409], ["no_existe", 404], ["ya_cerrado", 409], ["no_terminado", 409],
   ])("cerrar con código %s -> %i y sin auditoría", async (codigo, estado) => {
     Motor.cerrarPeriodo.mockResolvedValue({ codigo });
-    const r = await request(app).post("/api/asistencia/periodos/3/cerrar");
+    const r = await request(app).post("/api/asistencia/periodos/3/cerrar").send(CIERRE);
     expect(r.status).toBe(estado);
     expect(Auditoria.crear).not.toHaveBeenCalled();
   });
 
-  it("reabrir EXIGE motivo (5 a 500 caracteres, sin caracteres de control)", async () => {
-    for (const cuerpo of [{}, { motivo: "" }, { motivo: "    " }, { motivo: "abc" }, { motivo: 12345 }, { motivo: ["motivo largo"] }, { motivo: "x".repeat(501) }, { motivo: "motivo\u0000raro" }]) {
+  it("reabrir EXIGE motivo (10 a 500 caracteres, sin caracteres de control)", async () => {
+    for (const cuerpo of [{}, { motivo: "" }, { motivo: "    " }, { motivo: "abc" }, { motivo: "123456789" }, { motivo: 12345 }, { motivo: ["motivo largo"] }, { motivo: "x".repeat(501) }, { motivo: "motivo\u0000raro" }]) {
       const r = await request(app).post("/api/asistencia/periodos/3/reabrir").send(cuerpo);
       expect(r.status).toBe(400);
     }
@@ -597,7 +601,7 @@ describe("PUT /parametros", () => {
   it.each(["rh_admin", "super_admin"])("%s guarda parámetros válidos y audita valores previos y nuevos", async (rol) => {
     como(rol);
     Motor.guardarParametros.mockResolvedValue({ previos: { dias_cierre: "3" }, nuevos: { dias_cierre: "5" } });
-    const r = await request(app).put("/api/asistencia/parametros").send({ dias_cierre: "5", margen_dia_completo_min: 90 });
+    const r = await request(app).put("/api/asistencia/parametros").send({ dias_cierre: "5", margen_dia_completo_min: 90, confirmacion: "cambiar" });
     expect(r.status).toBe(200);
     expect(Motor.guardarParametros).toHaveBeenCalledWith({ dias_cierre: 5, margen_dia_completo_min: 90 }, ROLES[rol].user.usuario_id);
     const dato = Auditoria.crear.mock.calls[0][0];
@@ -641,10 +645,10 @@ describe("errores 500 genéricos y auditoría acotada", () => {
   });
 
   it.each([
-    ["post", "/api/asistencia/periodos/3/cerrar", () => Motor.cerrarPeriodo, {}],
+    ["post", "/api/asistencia/periodos/3/cerrar", () => Motor.cerrarPeriodo, CIERRE],
     ["post", "/api/asistencia/periodos/3/reabrir", () => Motor.reabrirPeriodo, { motivo: "motivo válido" }],
     ["post", "/api/asistencia/recalcular", () => Motor.recalcular, { desde: "2026-10-01", hasta: "2026-10-02" }],
-    ["put", "/api/asistencia/parametros", () => Motor.guardarParametros, { dias_cierre: 4 }],
+    ["put", "/api/asistencia/parametros", () => Motor.guardarParametros, { dias_cierre: 4, confirmacion: "CAMBIAR" }],
   ])("%s %s con un error interno -> 500 genérico", async (metodo, url, motor, cuerpo) => {
     motor().mockRejectedValue(Object.assign(new Error("password authentication failed for user postgres"), { code: "28P01" }));
     const espia = jest.spyOn(console, "error").mockImplementation(() => {});
@@ -659,13 +663,13 @@ describe("errores 500 genéricos y auditoría acotada", () => {
     Auditoria.crear.mockRejectedValueOnce(new Error("auditoría caída"));
     Motor.guardarParametros.mockResolvedValue({ previos: {}, nuevos: {} });
     const espia = jest.spyOn(console, "error").mockImplementation(() => {});
-    expect((await request(app).put("/api/asistencia/parametros").send({ dias_cierre: 4 })).status).toBe(200);
+    expect((await request(app).put("/api/asistencia/parametros").send({ dias_cierre: 4, confirmacion: "CAMBIAR" })).status).toBe(200);
     espia.mockRestore();
   });
 
   it("la IP de la auditoría se recorta a 45 caracteres (X-Forwarded-For largo no pierde el registro)", async () => {
     Motor.guardarParametros.mockResolvedValue({ previos: {}, nuevos: {} });
-    await request(app).put("/api/asistencia/parametros").set("X-Forwarded-For", "1.1.1.1, ".repeat(20)).send({ dias_cierre: 4 });
+    await request(app).put("/api/asistencia/parametros").set("X-Forwarded-For", "1.1.1.1, ".repeat(20)).send({ dias_cierre: 4, confirmacion: "CAMBIAR" });
     const ip = Auditoria.crear.mock.calls[0][0].ip_origen;
     expect(ip === null || ip.length <= 45).toBe(true);
   });

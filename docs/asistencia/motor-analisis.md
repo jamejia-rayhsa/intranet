@@ -90,7 +90,7 @@ Los periodos son **quincenas** (1-15 y 16-fin de mes), `asistencia_periodos`. El
 * Las quincenas anteriores (1-15 sep, 16-30 sep, 1-15 oct) **se calculan pero quedan abiertas** hasta que RH las cierre a mano (`POST /periodos/:id/cerrar`), después de validarlas. Un cierre manual exige que la quincena ya haya terminado y también recalcula una última vez.
 * Un periodo **cerrado no se recalcula**: ni el planificador, ni `POST /recalcular`, ni una edición de turnos. Hay tres defensas: el motor omite sus días, la transacción de escritura bloquea el periodo (`FOR SHARE`) y revisa su estado, y un trigger de la BD rechaza insertar o recalcular un día de un periodo cerrado.
 * **Marcas que llegan o se vinculan después del cierre** (`fecha_importacion` posterior a `cerrado_en`, o una marca huérfana que se vincula a un empleado) no recalculan nada: quedan en `asistencia_ajustes_pendientes` (una fila por marca) para que RH decida si reabre el periodo. `POST /ajustes-pendientes/:id/resolver` los marca como atendidos.
-* **Reapertura**: solo `rh_admin` y `super_admin`, con motivo obligatorio (5-500 caracteres) y auditoría. El periodo vuelve a `abierto`, se recalcula y **ya no se cierra solo** (RH lo cierra a mano).
+* **Reapertura**: solo `rh_admin` y `super_admin`, con motivo obligatorio (10-500 caracteres) y auditoría. El periodo vuelve a `abierto`, se recalcula y **ya no se cierra solo** (RH lo cierra a mano).
 * **Justificar** un día (`POST /incidencias`) solo es posible en un periodo abierto; en uno cerrado hay que reabrirlo primero. Las marcas nunca se modifican.
 
 ## 4. Planificador
@@ -125,7 +125,7 @@ Lectura de resultados (necesita `Asistencia:consulta`): **RH** (`Empleados:edici
 | `GET /resultados?desde&hasta[&empleado_id]` | alcance arriba | días calculados con turno, minutos, marcas usadas y `detalle` |
 | `GET /resumen?desde&hasta[&departamento_id]` | alcance arriba | conteos por empleado y estatus (más minutos acumulados) |
 | `GET /periodos[?estado]` | `Asistencia:consulta` | quincenas, estado, cierre, número de reaperturas y ajustes pendientes. `reabierto_motivo` y `reabierto_por` solo los ve RH |
-| `POST /periodos/:id/cerrar` | `Asistencia:edicion` (rh_admin, super_admin) | recalcula y cierra (manual); 409 si ya está cerrado, aún no termina o hay un recálculo en curso |
+| `POST /periodos/:id/cerrar` `{esperados:{ajustes_pendientes,sin_identificador}}` | `Asistencia:edicion` (rh_admin, super_admin) | recalcula y cierra (manual); 409 si ya está cerrado, aún no termina (fecha de México), tiene días `pendiente`, los `esperados` ya no coinciden («Los datos cambiaron…») o hay un recálculo en curso |
 | `POST /periodos/:id/reabrir` `{motivo}` | `Asistencia:edicion` | reabre con motivo; auditado |
 | `POST /recalcular` `{desde,hasta[,empleado_id]}` | `Asistencia:edicion` | solo periodos abiertos; 409 si el motor está ocupado o todo el rango está cerrado |
 | `GET /sin-identificador` | RH (lectura) | empleados que el motor no analiza (sin nómina o nómina repetida) |
@@ -133,7 +133,7 @@ Lectura de resultados (necesita `Asistencia:consulta`): **RH** (`Empleados:edici
 | `POST /ajustes-pendientes/:id/resolver` `{nota?}` | `Asistencia:edicion` | marca el ajuste como atendido |
 | `POST /incidencias` `{empleado_id,fecha,motivo}` | `Asistencia:edicion` | justifica una falta/retardo/salida anticipada/incompleta de un periodo **abierto** y recalcula ese día; a lo más **una** justificación activa por empleado y día (409 si ya hay) |
 | `POST /incidencias/:id/anular` | `Asistencia:edicion` | anula la justificación (periodo abierto) y **recalcula el día**: vuelve a su resultado original |
-| `GET /parametros` · `PUT /parametros` | RH (lectura) · `Asistencia:edicion` | valida rangos; `version_motor` no se edita |
+| `GET /parametros` · `PUT /parametros` | RH (lectura) · `Asistencia:edicion` | valida rangos; `version_motor` no se edita; cambiar `analisis_desde`, `cierre_automatico_desde` o `dias_cierre` exige `confirmacion: "CAMBIAR"` |
 
 Toda escritura queda en la auditoría (`CERRAR_PERIODO`, `REABRIR_PERIODO`, `RECALCULAR`, `RESOLVER_AJUSTE`, `JUSTIFICAR_DIA`, `ANULAR_INCIDENCIA`, `ACTUALIZAR_PARAM`; la columna `accion` admite 20 caracteres). Los errores 500 son genéricos. Con los roles del seed solo `rh_admin` y `super_admin` tienen `Asistencia:edicion`; `rh_empleado` solo tiene `Asistencia:consulta` y ve lo propio.
 

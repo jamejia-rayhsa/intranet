@@ -6,7 +6,7 @@
 //   - Pasa `breadcrumb` al topbar dependiendo de la ruta activa.
 //   - Mantiene el resto del routing exactamente igual.
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import ReactDOM from 'react-dom/client';
 import {
   BrowserRouter,
@@ -44,6 +44,9 @@ import AsistenciaAsignacionesPage from '../../rh/frontend/pages/AsistenciaAsigna
 import AsistenciaMarcasPage from '../../rh/frontend/pages/AsistenciaMarcasPage';
 import AsistenciaSincronizacionPage from '../../rh/frontend/pages/AsistenciaSincronizacionPage';
 import AsistenciaLlavesPage from '../../rh/frontend/pages/AsistenciaLlavesPage';
+import AsistenciaResultadosPage from '../../rh/frontend/pages/AsistenciaResultadosPage';
+import AsistenciaPeriodosPage from '../../rh/frontend/pages/AsistenciaPeriodosPage';
+import AsistenciaParametrosPage from '../../rh/frontend/pages/AsistenciaParametrosPage';
 import PuestosPage from '../../rh/frontend/pages/PuestosPage';
 import DepartamentosPage from '../../rh/frontend/pages/DepartamentosPage';
 import AreasPage from '../../rh/frontend/pages/AreasPage';
@@ -77,6 +80,9 @@ const BREADCRUMBS = {
   '/rh/asistencia/marcas':        ['Recursos Humanos', 'Asistencia · Marcas'],
   '/rh/asistencia/sincronizacion': ['Recursos Humanos', 'Asistencia · Sincronización'],
   '/rh/asistencia/llaves':        ['Recursos Humanos', 'Asistencia · Llaves de ingesta'],
+  '/rh/asistencia/resultados':    ['Recursos Humanos', 'Asistencia · Resultados'],
+  '/rh/asistencia/periodos':      ['Recursos Humanos', 'Asistencia · Periodos'],
+  '/rh/asistencia/parametros':    ['Recursos Humanos', 'Asistencia · Parámetros'],
   '/auditoria':          ['Transversal', 'Auditoría'],
   '/auditoria/logs':     ['Transversal', 'Bitácora'],
   '/comercial':          ['Comercial', 'Dashboard'],
@@ -129,6 +135,21 @@ function LayoutConMenu({ children }) {
   // cierra el drawer cada vez que cambia la ruta (en mobile)
   useEffect(() => { setSidebarAbierto(false); }, [location.pathname]);
 
+  // Cerrar el drawer sin navegar (overlay, botón «Cerrar menú», Escape) devuelve el foco al botón de menú
+  const cerrarMenuConFoco = useCallback(() => {
+    setSidebarAbierto(false);
+    requestAnimationFrame(() => {
+      const boton = document.querySelector('.responsive-hamburger');
+      if (boton && boton.offsetParent !== null) boton.focus();
+    });
+  }, []);
+  useEffect(() => {
+    if (!sidebarAbierto) return undefined;
+    const alTecla = (e) => { if (e.key === 'Escape') cerrarMenuConFoco(); };
+    document.addEventListener('keydown', alTecla);
+    return () => document.removeEventListener('keydown', alTecla);
+  }, [sidebarAbierto, cerrarMenuConFoco]);
+
   if (!usuario) {
     return <main className="contenido-principal">{children}</main>;
   }
@@ -141,14 +162,16 @@ function LayoutConMenu({ children }) {
           permisos={permisos}
           abierto={sidebarAbierto}
           onCerrar={() => setSidebarAbierto(false)}
+          onCerrarMenu={cerrarMenuConFoco}
         />
         <div
           className={`responsive-overlay ${sidebarAbierto ? 'is-open' : ''}`}
-          onClick={() => setSidebarAbierto(false)}
+          onClick={cerrarMenuConFoco}
         />
         <div className="app-main">
           <AppTopbar
             onMenu={() => setSidebarAbierto(true)}
+            menuAbierto={sidebarAbierto}
             breadcrumb={breadcrumbFor(location.pathname)}
           />
           <main className="app-contenido">{children}</main>
@@ -184,6 +207,9 @@ function AppRutas() {
         <Route path="/rh/asistencia/marcas" element={<RutaProtegida><AsistenciaMarcasPage /></RutaProtegida>} />
         <Route path="/rh/asistencia/sincronizacion" element={<RutaProtegida><AsistenciaSincronizacionPage /></RutaProtegida>} />
         <Route path="/rh/asistencia/llaves" element={<RutaProtegida><AsistenciaLlavesPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/resultados" element={<RutaProtegida><AsistenciaResultadosPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/periodos" element={<RutaProtegida><AsistenciaPeriodosPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/parametros" element={<RutaProtegida><AsistenciaParametrosPage /></RutaProtegida>} />
         <Route path="/rh/puestos" element={<RutaProtegida><PuestosPage /></RutaProtegida>} />
         <Route path="/rh/departamentos" element={<RutaProtegida><DepartamentosPage /></RutaProtegida>} />
         <Route path="/rh/areas" element={<RutaProtegida><AreasPage /></RutaProtegida>} />

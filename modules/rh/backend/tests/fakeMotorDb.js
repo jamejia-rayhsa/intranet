@@ -86,6 +86,11 @@ function crearMotorBD(esc) {
     return { rows: [{ primero: abiertos[0] || null }] };
   });
   conFalla(/MAX\(fecha_fin\)/, () => ({ rows: [{ ultimo: esc.periodos.map((p) => p.fecha_fin).sort().pop() || null }] }));
+  // días pendientes de un periodo (cierre manual): por omisión ninguno; `esc.pendientesPeriodo` (o una lista por llamada) los simula
+  conFalla(/FROM asistencia_diaria WHERE periodo_id = \$1 AND estatus = 'pendiente'/, () => {
+    const v = Array.isArray(esc.pendientesPeriodo) ? esc.pendientesPeriodo.shift() : esc.pendientesPeriodo;
+    return { rows: [{ n: v || 0 }] };
+  });
   // periodos
   conFalla(/INSERT INTO asistencia_periodos/, (sql, p) => {
     p[0].forEach((inicio, i) => {

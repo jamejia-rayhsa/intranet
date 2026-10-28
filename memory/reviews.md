@@ -3440,3 +3440,170 @@ Hallazgos abiertos:
 8. Trigger de periodo cerrado: ampliar a todas las columnas (ver MEDIO).
 
 **Veredicto: NO APROBADO** para uso con personas hasta resolver el CRÍTICO (06:50 = falta) y el ALTO de salida temprana. Lo demás es operación y calidad.
+
+### [2026-10-23] [revisor] — Pantallas de resultados, periodos y parámetros de Asistencia (Fase 5, parte 2a)
+**Alcance:** commit f9f0ac5 (HEAD de `feat/asistencia-resultados-rh`, 26 archivos, ~3 200 líneas). Leídos: memory/INDEX.md, decisions.md (2026-10-21/22/23), code-notes.md («Fase 5 (parte 2a)», Fase 4, Fase 5 parte 1), docs/asistencia/motor-analisis.md, pantallas-resultados.md, reviews.md (Fase 4, Fase 5 parte 1, Fase 2/3), .claude/rules/frontend/react.md. Código: rutas, controlador, modelo y motor (cerrar, reabrir, parámetros, justificar/anular, recálculo) en backend; páginas, diálogos, utils, CSS y MenuDinamico en frontend. No se modificó código.
+**Veredicto:** CON OBSERVACIONES. Crítico: 0. Alto: 0. Medio: 12. Bajo: 12. No hay violación de decisions.md ni bug que altere resultados de personas hoy; el motor no se tocó.
+**Verificación ejecutada:** jest `asistenciaResultados.util.test.js` + `asistenciaResultadosRH.api.test.js` 85/85 OK; suite completa de la raíz 70 suites / 2 718 tests en verde (el coder reportó 72 / 2 803: diferencia no explicada, Bajo). No se ejecutó eslint ni navegador (solo lectura).
+
+**Verificado sin hallazgos (lo pedido en el encargo):**
+- Permisos API: `GET /resultados/dia`, `/resumen`, `/resultados` con alcance propio/jefe vigente/RH (`alcanceDeLectura`); ajeno o inexistente = 403 sin consultar (no hay enumeración). `GET /ejecuciones`, `GET /parametros`, `PUT /parametros`, `/sin-identificador`, `/ajustes-pendientes`, `POST /resultados/exportaciones` = RH (`RH_LECTURA` o `ESCRIBIR_ASISTENCIA`); rh_empleado, portal_admin, jefe y empleado reciben 403 en gestión (con los permisos del test).
+- Nombres de quien justificó, cerró y reabrió, y motivo de reapertura: solo RH (`detalleDia` usa `esRH`; `listarPeriodos` borra motivo y nombres si no es RH; `motivo` de reapertura nunca sale a no-RH).
+- Justificar y anular: el servidor bloquea periodo cerrado (FOR SHARE / FOR UPDATE), la UI decide con `dia.periodo_estado` (no con el rango libre), doble envío bloqueado en UI y con índice único parcial (23505 → 409).
+- Parámetros: validación de rango y tipo en servidor (`validarParametro`), `comida_desde < comida_hasta` en servidor, `previos/nuevos` auditados, confirmación con los cambios exactos capturados al revisar. Cambiar `analisis_desde` no recalcula periodos cerrados.
+- Zona horaria: formateador Intl con `America/Mexico_City` y `hourCycle h23`; fechas como texto; `new Date(texto)` no aparece sobre fechas sin zona.
+- Menú: `requiere` solo se usa en las 3 entradas nuevas; el resto de rutas sigue igual (`tieneAcceso` con `estricto`). Sin regresión visible en Turnos, Asignaciones, Marcas, Sincronización o Llaves.
+- CSS: sin hex nuevos; todas las variables usadas están definidas en rayhsa-system.css o globales.css. Estatus con color + ícono (aria-hidden) + texto.
+- Regla y banderas del detalle: vienen de `detalle.explicaciones/banderas` del motor; el umbral «más de 30 min» coincide con `tarde > cfg.umbral` del motor; el duplicado (≤ 60 s de la última conservada) y la comida (inclusive 16:00:59) coinciden con `depurarMarcas` y `esComida`. `incompletas_comida` y `faltas_con_marcas` del servidor coinciden con las banderas y el estatus del motor.
+- `%` de puntualidad = puntual ÷ (puntual+retardo+falta+salida_anticipada+incompleta+justificada), igual en UI, texto y servidor.
+
+**Hallazgos**
+
+**R2A-1. MEDIO — Cerrar: la confirmación usa contadores de la lista cargada al abrir la página, y el servidor congela lo que recalcula**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/PeriodoDialogos.jsx:60-61 y 66-75 (`periodo` es el objeto de la lista); modules/rh/backend/controllers/asistenciaMotor.controller.js:223-238; modules/rh/backend/services/asistencia/motorAsistencia.js:807-830.
+**Problema:** los días pendientes y los ajustes mostrados vienen de la última carga de la tabla, no de un dato fresco al confirmar; el cierre no recibe lo que se mostró, recalcula la quincena y la congela. Si el número cambió entre la carga y el clic (una vuelta del planificador, otra pestaña), RH confirma sobre datos distintos a los mostrados.
+**Severidad:** medio.
+**Fix sugerido:** refrescar el periodo al abrir el diálogo; enviar en el cuerpo `pendientes_esperados` y `ajustes_esperados` y responder 409 («los datos cambiaron, revisa de nuevo») si el recálculo previo al cierre no coincide; devolver `dias_evaluados` y `pendientes_finales` y mostrarlos tras cerrar.
+
+**R2A-2. MEDIO — Cerrar con días pendientes está permitido y el servidor no lo exige**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/PeriodoDialogos.jsx:76 («Puedes cerrar de todos modos…»); modules/rh/frontend/utils/asistenciaPeriodos.js (`resumenCierre`, `hayRiesgo`); modules/rh/backend/controllers/asistenciaMotor.controller.js:223-238.
+**Problema:** un día `pendiente` que siga así al cerrar queda congelado como pendiente: el cierre no lo recalcula y solo la reapertura lo corrige. docs/asistencia/pantallas-resultados.md dice «cierra cuando el conteo de pendientes es 0», pero ni la UI lo impide ni el servidor lo valida. No hay decisión en decisions.md que lo permita o lo prohíba.
+**Severidad:** medio (escalar la decisión: si la política es «cero pendientes», pasa a alto).
+**Fix sugerido:** decidir con el humano. Si es «cero pendientes», rechazar el cierre en servidor con 409 y dejar la excepción solo con frase de confirmación y registro del conteo en la auditoría.
+
+**R2A-3. MEDIO — Parámetros: el impacto de `cierre_automatico_desde` y `dias_cierre` está mal descrito, y la confirmación reforzada solo existe en la UI**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaParametros.js:77-88 (`textosDeImpacto`) y :74 (`requiereConfirmacionReforzada`, solo `analisis_desde`); modules/rh/frontend/pages/AsistenciaParametrosPage.jsx:151-155; modules/rh/backend/controllers/asistenciaMotor.controller.js:417-436; modules/rh/backend/services/asistencia/motorAsistencia.js:653.
+**Problema:** bajar `dias_cierre` o adelantar `cierre_automatico_desde` cierra en la siguiente vuelta las quincenas abiertas ya terminadas (p. ej. las de sep y oct, que hoy se están validando). El texto dice solo «se aplica a partir de la siguiente vuelta» y no nombra las quincenas afectadas. Además, el PUT acepta `analisis_desde` y `cierre_automatico_desde` sin ningún campo de confirmación: la frase «CAMBIAR» solo la pide la UI.
+**Severidad:** medio.
+**Fix sugerido:** en `textosDeImpacto` listar las quincenas abiertas que quedarían cerradas con los valores nuevos (el cálculo lo puede hacer la pantalla con `periodos`); usar frase reforzada también para `cierre_automatico_desde` y `dias_cierre`; y exigir en el PUT un campo `confirmar` cuando cambie cualquiera de estas claves (rechazo 400 si falta).
+
+**R2A-4. MEDIO — Anular: la UI da por hecho el recálculo aunque el servidor diga `recalculado: false`**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/DetalleDiaDialogo.jsx:89-99 (mensaje «el día volvió a su resultado original»); modules/rh/backend/controllers/asistenciaMotor.controller.js:379-400 (devuelve `datos.recalculado`, y el mensaje es siempre «Justificación anulada»).
+**Problema:** si el motor está ocupado, la justificación queda anulada pero el día sigue `justificada` hasta la próxima vuelta. La UI muestra «volvió a su resultado original» y el detalle recargado dice «Justificada»: dos mensajes contradictorios. Justificar sí lo maneja bien (usa `r.mensaje`).
+**Severidad:** medio.
+**Fix sugerido:** usar `r.datos.recalculado` igual que en justificar: si es false, mostrar «Justificación anulada; el día se recalculará en la siguiente vuelta del motor».
+
+**R2A-5. MEDIO — Exportación: el archivo se descarga antes de registrar la auditoría y el número de filas lo declara el cliente**
+**Archivo/línea:** modules/rh/frontend/pages/AsistenciaResultadosPage.jsx:272-279 (`descargarCsv` y después `registrarExportacionResultados`); modules/rh/backend/controllers/asistenciaMotor.controller.js:182-212 (`filas` del cuerpo).
+**Problema:** si la bitácora falla, el archivo con nombres y nóminas ya está en el equipo; la pantalla solo lo avisa. Además, `filas` es lo que dice el navegador, no lo que se exportó. La bitácora registra el tipo y un número no verificado.
+**Severidad:** medio.
+**Fix sugerido:** registrar primero (y no descargar si falla, fail-closed), o generar el CSV en servidor. Como mínimo, que el servidor compare `filas` con su propio conteo cuando la consulta sea reproducible.
+
+**R2A-6. MEDIO — Exportación de detalle: corte silencioso a 15 000 filas en rangos largos**
+**Archivo/línea:** modules/rh/frontend/pages/AsistenciaResultadosPage.jsx:265-268 (`pedirTodas` con tope `TOPE_FILAS_EXPORTACION * 3`); modules/rh/frontend/utils/asistenciaResultados.js:439-443 (`paginasRestantes` con máximo 30 páginas de 500 = 15 000 filas); modules/rh/frontend/pages/AsistenciaResultadosPage.jsx:280-283 (el aviso de truncado solo mira más de 10 000 filas **después** de filtrar).
+**Problema:** `pedirTodas` deja de pedir páginas al llegar a 30, sin aviso, y no compara `total` con las filas recibidas. Un rango libre de 92 días con más de ~165 empleados corta los datos de los últimos empleados sin decirlo, y el CSV queda incompleto como si fuera completo. Además la exportación pide los días de **todos** los empleados y filtra en el cliente después.
+**Severidad:** medio.
+**Fix sugerido:** comparar `total` con las filas recibidas y bloquear la exportación con aviso si faltan; pedir solo los empleados filtrados (paginar por empleado) o exportar desde el servidor.
+
+**R2A-7. MEDIO — Presentación: el encabezado dice «Resumen del periodo» pero las tarjetas y el % cuentan solo la lista filtrada**
+**Archivo/línea:** modules/rh/frontend/pages/AsistenciaResultadosPage.jsx:233 (`totales` de `filtradas`), :308 (`pct`), :362 (título «Resumen del periodo»).
+**Problema:** con «Faltas con marcas», «Con algún día: Falta» o una búsqueda, las tarjetas y el % cambian y siguen bajo el título de la quincena completa. Un revisor puede leer «el % de la quincena es 40 %» cuando es el de 3 personas.
+**Severidad:** medio.
+**Fix sugerido:** calcular las tarjetas sobre `filas` (sin filtros) y mostrar los filtrados aparte, o rotular «Totales de los N empleados mostrados».
+
+**R2A-8. MEDIO — Los días `sin_turno` no aparecen en tarjetas, tabla ni CSV**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaResultados.js:20-22 (`ORDEN_TARJETAS` sin `sin_turno`), :381-391 (`COLUMNAS_RESUMEN` sin `sin_turno`); el servidor sí lo cuenta (modules/rh/backend/models/asistenciaResultados.model.js:5-8).
+**Problema:** un empleado sin turno tiene días que no se ven en ninguna columna, y la suma de tarjetas no iguala el número de días. Es justo el caso que RH debe revisar.
+**Severidad:** medio.
+**Fix sugerido:** añadir `sin_turno` a `ORDEN_TARJETAS` (y a las columnas del CSV), o mostrar la tarjeta solo cuando su valor sea mayor que 0.
+
+**R2A-9. MEDIO — El rol de cada marca se recalcula en el cliente con reglas copiadas del motor**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaResultados.js:298-323 (`rolesDeMarcas`: duplicado ≤ 60 s, ventana de comida, entrada/salida por `marcas_usadas`); modules/rh/frontend/components/asistencia/DetalleDiaDialogo.jsx:62 y 169-180.
+**Problema:** la pantalla muestra «Entrada (tomada)», «Comida», «Duplicada» con su propia lógica, no con la que usó el motor. Hoy coincide con `depurarMarcas` y `esComida` en los casos que se revisaron, pero son dos fuentes de verdad: si el motor cambia (por ejemplo, la F-M4-4 o la regla de duplicados de 60 s abierta en decisions.md), el detalle mostrará algo distinto de lo calificado. Esto va contra el criterio «el detalle muestra lo mismo que calculó el motor».
+**Severidad:** medio.
+**Fix sugerido:** que el motor guarde el rol de cada marca (p. ej. `detalle.marcas_roles` con id → entrada/salida/comida/duplicada/otra) y la UI lo lea. Mientras tanto, prueba de equivalencia con casos de borde (16:00:59, 16:01, 60 s exactos, salida sin entrada).
+
+**R2A-10. MEDIO — Objetivos táctiles menores de 44 px en campos de fecha, búsqueda y textarea**
+**Archivo/línea:** modules/rh/frontend/styles/asistenciaResultados.css:6 (la regla de 44 px solo cubre `time`, `number` y `select`); modules/rh/frontend/styles/asistencia.css:67-76 (`text`, `search`, `date`, `textarea` con padding 0,45 rem y sin altura mínima).
+**Problema:** los campos Desde/Hasta (`res-desde`, `res-hasta`), el buscador (`res-texto`) y los motivos quedan con la altura natural del campo, por debajo de los 44 px que pide el encargo. El reporte de la Fase 5 (2a) dice «táctiles ≥ 44 px», pero la medición cubrió botones y enlaces.
+**Severidad:** medio.
+**Fix sugerido:** añadir `input[type="date"]`, `input[type="search"]`, `input[type="text"]` y `textarea` a la regla `min-height: 44px` dentro de `.asr`, y medirlos en la prueba de 320/360 px.
+
+**R2A-11. MEDIO — Pruebas: sin pruebas de componente ni de alcance real; la matriz usa permisos simulados**
+**Archivo/línea:** modules/rh/backend/tests/asistenciaResultadosRH.api.test.js:14-50 (`ROLES`, con `portal_admin` sin permisos y un «rh_lectura» que no existe en la BD), :75-135 (casos de `/resultados/dia`).
+**Problema:** (a) la matriz no reproduce los grants reales de la migración 012 (`Asistencia:consulta` para cualquier rol con Vacaciones o Empleados de consulta, así que un portal_admin real sí lee `/periodos`, `/resumen` y `/resultados` dentro de su alcance); (b) no hay caso de IDOR de jefe hacia un empleado que no es suyo, ni de jefe hacia subordinado (200), ni de ex-subordinado con `fecha_baja`; (c) el menú con `requiere` no tiene prueba; (d) no hay prueba de componente ni E2E en el repo (lo señalado como P5-7 sigue abierto y aplica igual). La verificación de la Fase 5 (2a) se hizo con un harness externo que no se puede reproducir desde el repo.
+**Severidad:** medio.
+**Fix sugerido:** añadir a la suite API los casos (b) y una matriz con los grants de la migración 012; probar `requiere` del menú con un test unitario sobre `tieneAcceso`; y añadir al menos un E2E de Playwright sobre `/rh/asistencia/periodos` (cerrar con confirmación y reabrir con motivo) que corra en CI.
+
+**R2A-12. MEDIO — Decisión pendiente: el CSV de resultados lleva nombre y nómina, y el equipo tiene escrito el criterio contrario**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaResultados.js:381-391 (`COLUMNAS_RESUMEN` con `nomina` y `nombre`), :403-416 (detalle); modules/rh/backend/controllers/asistenciaMotor.controller.js:182-212; memory/decisions.md:1160 (el tester de la Fase 5 (1) lista «exportación sin nombres y con bitácora» como criterio verificado).
+**Problema:** no es una violación probada: decisions.md no tiene una decisión explícita sobre los CSV de asistencia. La exportación con nombre es razonable para RH porque es lo que ya ve en pantalla y tiene bitácora. Pero el criterio que el propio equipo usa dice «sin nombres», y la pantalla ni siquiera distingue el nivel de detalle.
+**Severidad:** medio (decisión).
+**Fix sugerido:** escalar al orquestador para que el humano confirme la regla. Si se mantiene con nombres, registrar la decisión en decisions.md; si no, exportar solo nómina y quitar el nombre del CSV de resumen.
+
+**R2A-13. BAJO — `terminal_sn` (serie del dispositivo) sale en `GET /resultados/dia` a todo el alcance**
+**Archivo/línea:** modules/rh/backend/models/asistenciaResultados.model.js:303 (`m.terminal_sn`); la pantalla solo usa `terminal_alias`.
+**Problema:** un empleado o un jefe recibe la serie del lector. No es un dato personal, pero no lo necesitan y no lo muestra la pantalla.
+**Severidad:** bajo.
+**Fix sugerido:** no seleccionar `terminal_sn` cuando `esRH` sea false, o quitarlo del SELECT.
+
+**R2A-14. BAJO — `GET /periodos` expone `cerrado_por` (id de usuario) a todo con Asistencia:consulta, y la doc dice «403 en gestión»**
+**Archivo/línea:** modules/rh/backend/models/asistenciaResultados.model.js:86-108 (`listarPeriodos`, `cerrado_por` no se borra para no-RH); modules/rh/backend/routes/asistencia.routes.js:111 (`LEER`); docs/asistencia/pantallas-resultados.md («rh_empleado… no ven…»).
+**Problema:** los nombres y el motivo sí se ocultan, pero el id numérico de quien cerró sí llega a no-RH. Además, la lectura de quincenas es pública dentro de Asistencia:consulta (lo que aplica a rh_empleado y a cualquier rol con Vacaciones o Empleados de consulta). La doc describe 403 en gestión, pero solo es cierto para la pantalla, no para la API.
+**Severidad:** bajo.
+**Fix sugerido:** quitar `cerrado_por` para no-RH y corregir la frase de la doc (el 403 aplica a la gestión, no al listado).
+
+**R2A-15. BAJO — El motivo de la justificación y «Justificación de RH» se muestran a empleado y jefe, sin decisión documentada**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/DetalleDiaDialogo.jsx:208-211; modules/rh/backend/models/asistenciaResultados.model.js:329 (`i.motivo` sin filtro de rol).
+**Problema:** el motivo es texto libre de RH; el encargo pide ocultar a no-RH quién lo registró, y lo hace, pero el texto del motivo sí sale. Puede contener datos personales de terceros (salud, duelo).
+**Severidad:** bajo (decisión).
+**Fix sugerido:** preguntar al humano si jefes y empleados ven el motivo. Si no, devolver solo «Justificada por RH» para no-RH.
+
+**R2A-16. BAJO — `useAccesoAsistencia`: si falla la carga de permisos, rh_admin ve «No tienes permiso»**
+**Archivo/línea:** modules/rh/frontend/hooks/useAccesoAsistencia.js:19 (`catch` → `nivelDePermiso(usuario, [], opcion) || "consulta"`).
+**Problema:** con `consulta` en ambas opciones, `accesoGestionAsistencia` no da lectura y la pantalla dice «sin permiso», cuando el comentario del hook dice que se deja pasar. Un fallo de red esconde la gestión a RH (fail-closed, no inseguro, pero engañoso).
+**Severidad:** bajo.
+**Fix sugerido:** en el error mostrar «No se pudieron cargar tus permisos» con botón Reintentar; no decir «sin permiso».
+
+**R2A-17. BAJO — CSV del detalle: la columna «Quincena» contiene el estado (abierto/cerrado), no el periodo**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaResultados.js:429 (`periodo: d.periodo_estado`) y :403-416 (`COLUMNAS_DETALLE`, título «Quincena»).
+**Problema:** el encabezado no coincide con el dato. Un archivo abierto en otro momento confunde.
+**Severidad:** bajo.
+**Fix sugerido:** columna «Estado de la quincena» o incluir `periodo_inicio`/`periodo_fin`.
+
+**R2A-18. BAJO — CSV: neutralización de fórmulas incompleta y altera nombres legítimos**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaResultados.js:364-366 (`INICIO_FORMULA = /^[=+\-@\t\r]/`).
+**Problema:** no cubre espacios o tabuladores antes del signo (`" =HYPERLINK…"`), que algunas hojas de cálculo sí evalúan. Y antepone `'` a cualquier valor que empiece por `-` o `+`, por ejemplo un apellido legítimo.
+**Severidad:** bajo.
+**Fix sugerido:** usar `/^\s*[=+\-@]/` (sin tabulador en la lista, con `\s` antes) y documentar el efecto en nombres.
+
+**R2A-19. BAJO — Motivo de reapertura: el servidor acepta 5 caracteres y la UI exige 10**
+**Archivo/línea:** modules/rh/backend/controllers/asistenciaMotor.controller.js:241-246 (`motivo.length < 5`); modules/rh/frontend/utils/asistenciaPeriodos.js:6 (`MOTIVO_REAPERTURA_MIN = 10`).
+**Problema:** la regla de negocio tiene dos valores. La API acepta motivos que la pantalla no permite.
+**Severidad:** bajo.
+**Fix sugerido:** subir a 10 en el servidor (el mensaje de la doc ya dice 10).
+
+**R2A-20. BAJO — `validarVentanaComida` se evalúa fuera de la transacción del PUT**
+**Archivo/línea:** modules/rh/backend/controllers/asistenciaMotor.controller.js:427 (`await Motor.leerParametros()`) y motorAsistencia.js:46-70 (`guardarParametros`).
+**Problema:** dos PUT concurrentes pueden validar contra valores viejos y dejar `comida_desde ≥ comida_hasta`. Requiere dos peticiones simultáneas de rh_admin.
+**Severidad:** bajo.
+**Fix sugerido:** validar dentro de `guardarParametros` después del `FOR UPDATE` que ya existe.
+
+**R2A-21. BAJO — Límites silenciosos: marcas del detalle (100) y empleados sin identificador (100)**
+**Archivo/línea:** modules/rh/backend/models/asistenciaResultados.model.js:308 (`LIMIT 100` en marcas); modules/rh/frontend/pages/AsistenciaResultadosPage.jsx:159 (`sinIdentificador({ limite: 100 })`).
+**Problema:** un día con más de 100 marcas, o más de 100 empleados sin identificador, se corta sin avisar. La cifra total sí aparece en el segundo caso, pero la lista no.
+**Severidad:** bajo.
+**Fix sugerido:** devolver `marcas_truncadas: true` y avisar; en la lista de sin identificador, paginar o avisar «mostrando 100 de N».
+
+**R2A-22. BAJO — Cuadrícula: Inicio/Fin no hacen nada en una columna; celdas «Sin cálculo» son enfocables sin acción**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaResultados.js:217-234 (`celdaSiguiente` con `columnas = 1`); modules/rh/frontend/components/asistencia/CuadriculaAsistencia.jsx:80 (`c.dia && onAbrirDia(...)`).
+**Problema:** en móvil Inicio y Fin no se mueven (la fila es una sola celda). Y las celdas sin resultado reciben foco y anuncian «Sin cálculo» pero no hacen nada al pulsar Intro.
+**Severidad:** bajo.
+**Fix sugerido:** en una columna, Inicio/Fin llevan al primer/último día de la quincena; las celdas sin `dia` pasan a `tabIndex=-1` o `aria-disabled` con texto que lo explique.
+
+**R2A-23. BAJO — Atajo «Faltas con marcas»: la ayuda no cubre todos los casos que cuenta el servidor**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaResultados.js:96-101 (ayuda del atajo) frente a modules/rh/backend/models/asistenciaResultados.model.js:66 (`estatus='falta' AND primera_marca IS NOT NULL`).
+**Problema:** el conteo incluye también la marca única fuera de ventana y la salida sin entrada, que la ayuda no menciona («llegó más de 30 min tarde u otra marca fuera de lo esperado» lo cubre solo en parte).
+**Severidad:** bajo.
+**Fix sugerido:** ampliar la ayuda: «Faltas en las que hubo alguna marca (tarde de más de 30 min, marca suelta o salida sin entrada)».
+
+**R2A-24. BAJO — Trazabilidad de pruebas: el coder reporta 72 suites / 2 803 tests; la raíz da 70 / 2 718**
+**Archivo/línea:** code-notes.md («Fase 5 (parte 2a)», Verificación); ejecución de jest en la raíz del repo.
+**Problema:** la cifra del informe no se reproduce desde la raíz (puede venir de otro árbol o de un filtro). No cambia el veredicto.
+**Severidad:** bajo.
+**Fix sugerido:** que el coder indique el comando exacto y el número de suites al cerrar la fase.
+
+**Notas para el orquestador:**
+- No hay hallazgos críticos; no se pide split (el diff es grande pero revisable y se revisó completo).
+- Para decidir con el humano: R2A-2 (cierre con pendientes), R2A-3 (cierre automático al bajar `dias_cierre`), R2A-12 (CSV con nombres) y R2A-15 (motivo visible a no-RH).
+- Los hallazgos de Fase 4 que siguen abiertos (F-M4-4, trigger de periodo cerrado, cursor incremental, vacaciones en sábado) no se repiten aquí y no se ven afectados por este commit.

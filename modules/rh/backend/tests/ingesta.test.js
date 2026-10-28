@@ -436,6 +436,16 @@ describe("Ingesta - errores inesperados del manejador", () => {
 
 describe("Ingesta - rate limit (60 envíos por minuto por llave)", () => {
   it("el envío 61 en un minuto -> 429 con Retry-After; otra llave no se ve afectada", async () => {
+    // Reloj fijo: con el real, una corrida lenta (carga de CI) podía tardar más de un minuto en los 60 envíos y la ventana se deslizaba
+    const reloj = jest.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
+    try {
+      await cuerpoRateLimit();
+    } finally {
+      reloj.mockRestore();
+    }
+  });
+
+  const cuerpoRateLimit = async () => {
     for (let i = 0; i < 60; i += 1) {
       const r = await enviar({ marcas: [marca(5000 + i)] });
       expect(r.status).toBe(200);
@@ -450,7 +460,7 @@ describe("Ingesta - rate limit (60 envíos por minuto por llave)", () => {
     const nueva = generarLlave();
     esc.filas = [esc.fila, { ...esc.fila, id: esc.fila.id + 1000, prefijo: nueva.prefijo, hash_llave: nueva.hash }];
     expect((await enviar({ marcas: [marca(6001)] }, { llave: nueva.llave })).status).toBe(200);
-  });
+  };
 
   it("pasado el minuto vuelve a aceptar; las consultas de estado tienen su propio contador", async () => {
     const reloj = jest.spyOn(Date, "now");

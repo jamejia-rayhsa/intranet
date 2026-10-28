@@ -450,6 +450,21 @@ describe("cierre y reapertura manual", () => {
     expect(esc.upserts).toHaveLength(0);
   });
 
+  it("un día pendiente impide cerrar: no recalcula ni cierra (sin forzar)", async () => {
+    esc.pendientesPeriodo = 3;
+    const r = await Motor.cerrarPeriodo({ id: 1, usuarioId: 9, ahora: AHORA });
+    expect(r).toMatchObject({ codigo: "con_pendientes", pendientes: 3 });
+    expect(esc.cerrados).toHaveLength(0);
+    expect(esc.upserts).toHaveLength(0);
+  });
+
+  it("si tras la última pasada siguen pendientes tampoco se cierra", async () => {
+    esc.pendientesPeriodo = [0, 2]; // antes de recalcular 0, después 2
+    const r = await Motor.cerrarPeriodo({ id: 1, usuarioId: 9, ahora: AHORA });
+    expect(r).toMatchObject({ codigo: "con_pendientes", pendientes: 2 });
+    expect(esc.cerrados).toHaveLength(0);
+  });
+
   it("con el candado ocupado el cierre responde 'ocupado'", async () => {
     esc.cerraduraLibre = false;
     expect((await Motor.cerrarPeriodo({ id: 1, usuarioId: 9, esperaMs: 0, ahora: AHORA })).codigo).toBe("ocupado");
@@ -545,5 +560,25 @@ describe("tope duro: statement_timeout, control y abortar", () => {
     expect((await Motor.reabrirPeriodo({ id: 1, usuarioId: 1, motivo: "motivo válido", ahora: AHORA })).codigo).toBe("ocupado");
     expect(Date.now() - t0).toBeLessThan(200);
     expect(consultas(/pg_try_advisory_lock/)).toHaveLength(3);
+  });
+});
+
+describe("guardarParametros: la ventana de comida se valida dentro de la transacción", () => {
+  beforeEach(() => {
+    esc.parametros = [{ clave: "comida_desde", valor: "13:00" }, { clave: "comida_hasta", valor: "16:00" }, { clave: "dias_cierre", valor: "3" }];
+  });
+  it("bloquea las dos claves de la comida (FOR UPDATE) aunque solo se cambie una y rechaza una ventana invertida sin escribir", async () => {
+    await expect(Motor.guardarParametros({ comida_desde: "17:00" }, 9)).rejects.toMatchObject({ validacion: expect.stringMatching(/anterior a comida_hasta/) });
+    const lectura = consultas(/FROM asistencia_parametros WHERE clave = ANY/)[0];
+    expect(lectura.sql).toMatch(/FOR UPDATE/);
+    expect(lectura.params[0].sort()).toEqual(["comida_desde", "comida_hasta"]);
+    expect(consultas(/INSERT INTO asistencia_parametros/)).toHaveLength(0);
+    expect(consultas(/ROLLBACK/).length).toBeGreaterThan(0);
+  });
+  it("una ventana válida se guarda y devuelve previos y nuevos solo de lo cambiado", async () => {
+    const r = await Motor.guardarParametros({ comida_hasta: "15:00" }, 9);
+    expect(consultas(/INSERT INTO asistencia_parametros/)).toHaveLength(1);
+    expect(r.nuevos).toEqual({ comida_hasta: "15:00" });
+    expect(r.previos).toEqual({ comida_hasta: "16:00" });
   });
 });

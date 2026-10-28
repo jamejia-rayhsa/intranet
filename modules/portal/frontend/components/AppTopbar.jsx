@@ -8,14 +8,14 @@
 import Icons from './Icons';
 import { usarAuth } from '../context/AuthContext';
 
-export default function AppTopbar({ onMenu, breadcrumb = ['Portal'] }) {
+export default function AppTopbar({ onMenu, menuAbierto = false, breadcrumb = ['Portal'] }) {
   const { usuario } = usarAuth();
   const inicial = usuario?.nombre?.charAt(0).toUpperCase() || '?';
   const nombreCorto = usuario?.nombre || 'Usuario';
 
   return (
     <header className="app-topbar">
-      <button className="responsive-hamburger" onClick={onMenu} aria-label="Menú">
+      <button className="responsive-hamburger" onClick={onMenu} aria-label="Menú" aria-expanded={menuAbierto}>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M4 7h16M4 12h16M4 17h16" />
         </svg>

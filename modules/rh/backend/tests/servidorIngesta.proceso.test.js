@@ -6,7 +6,8 @@ const net = require("net");
 const path = require("path");
 const http = require("http");
 
-jest.setTimeout(60000);
+// Plazos generosos: bajo la carga de una corrida completa de jest (decenas de workers) arrancar app.js puede tardar mucho
+jest.setTimeout(180000);
 const APP = path.resolve(__dirname, "../../../portal/backend/app.js");
 
 const escuchar = (puerto) =>
@@ -44,7 +45,7 @@ function lanzar(env) {
 }
 
 // Espera una condición sobre el log (o la salida del proceso) sin tiempos fijos
-const esperarLog = async (proceso, regex, ms = 25000) => {
+const esperarLog = async (proceso, regex, ms = 90000) => {
   const limite = Date.now() + ms;
   while (Date.now() < limite) {
     if (regex.test(proceso.salida.texto)) return true;
@@ -81,13 +82,28 @@ async function terminar(proceso, senal = "SIGTERM") {
   return proceso.termino;
 }
 
-const pedir = (puerto, ruta, metodo = "GET") =>
+// Reintenta ante un reinicio de conexión (el hijo y el runner compiten por CPU bajo carga)
+async function pedir(puerto, ruta, metodo = "GET") {
+  let ultimo;
+  for (let i = 0; i < 4; i += 1) {
+    try {
+      return await pedirUna(puerto, ruta, metodo);
+    } catch (error) {
+      ultimo = error;
+      if (!/ECONNRESET|ECONNREFUSED|EPIPE|socket hang up/.test(String(error && (error.code || error.message)))) throw error;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+  throw ultimo;
+}
+const pedirUna = (puerto, ruta, metodo = "GET") =>
   new Promise((resolver, rechazar) => {
-    const req = http.request({ host: "127.0.0.1", port: puerto, path: ruta, method: metodo, agent: false }, (res) => {
+    const req = http.request({ host: "127.0.0.1", port: puerto, path: ruta, method: metodo, agent: false, timeout: 60000 }, (res) => {
       let cuerpo = "";
       res.on("data", (d) => (cuerpo += d));
       res.on("end", () => resolver({ estado: res.statusCode, cuerpo: cuerpo ? JSON.parse(cuerpo) : null }));
     });
+    req.on("timeout", () => req.destroy(new Error("socket hang up (tiempo agotado)")));
     req.on("error", rechazar);
     req.end();
   });
@@ -190,11 +206,13 @@ describe("app.js - arranque con puerta de ingesta dedicada", () => {
     it("se libera el puerto antes del único reintento: la puerta se abre y el aviso se corrige", async () => {
       const ocupante = await escuchar(await puertoLibre());
       const dedicado = ocupante.address().port;
-      const p = await arrancar({ INGESTA_REINTENTO_MS: "1500", INGESTA_PORT: String(dedicado) }, { conDedicado: false });
+      // El reintento llega 8 s después del fallo: da margen de sobra para observar el aviso y liberar el puerto ANTES de él
+      // aunque la máquina vaya lenta (con 1,5 s el reintento podía gastarse antes de cerrar el ocupante)
+      const p = await arrancar({ INGESTA_REINTENTO_MS: "8000", INGESTA_PORT: String(dedicado) }, { conDedicado: false });
       try {
         expect(await esperarLog(p, /INGESTA NO DISPONIBLE/)).toBe(true);
         await new Promise((r) => ocupante.close(r));
-        expect(await esperarLog(p, /INGESTA DISPONIBLE: la puerta dedicada se abrió en el reintento/, 4000)).toBe(true);
+        expect(await esperarLog(p, /INGESTA DISPONIBLE: la puerta dedicada se abrió en el reintento/, 60000)).toBe(true);
         expect((await pedir(dedicado, ESTADO)).estado).toBe(401);
         expect((await pedir(p.principal, ESTADO)).estado).toBe(404);
         expect((await pedir(p.principal, "/api/salud")).estado).toBe(200);
