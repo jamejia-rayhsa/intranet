@@ -13,6 +13,7 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-28] [coder] → code-notes.md — F-R2B-T1/T2: drawer 641-768 px (overlay, Escape, botón Cerrar menú, foco) y animación de cierre del submenú con reduced-motion
 - [2026-10-28] [coder] → code-notes.md — Ronda final Fase 5 parte 2a (menú sin altura fija, permisos de lectura RH, CSV de detalle filtrado en servidor, verificar-motor 129/129, jest estable 15/15)
 - [2026-10-28] orquestador → decisions.md — Tester de las pantallas de resultados: menú recortado (alto) y otros 5 fallos; última ronda de correcciones
 - [2026-10-28] [coder] → code-notes.md — Correcciones de la revisión de la Fase 5 parte 2a (cierre con contadores esperados y sin pendientes, confirmación reforzada en servidor, rol de marcas del motor, CSV fail-closed; jest 2855, Chromium 96 comprobaciones)
@@ -257,3 +258,5 @@
 - [2026-10-23] [coder] Ronda F-P5T-1..3 de las pantallas de Asistencia -> code-notes.md
 - [2026-10-28] [tester] → tests.md — Pantallas de resultados, periodos y parámetros de Asistencia (Fase 5 parte 2a, HEAD 7d97c61): prueba integrada (frontend real Vite + backend real con el motor activo + supabase/postgres 17.6 y pg16 con db-init real x2, Chromium + Firefox; harness y oráculo propios, 71 empleados por la ingesta real): motor = oráculo en 3 497 días x 2 motores, roles de marca 2 424/2 424, resultados 56/56 x2, detalle 59/59 x6 (México/UTC/Auckland), periodos 34/34 x2, parámetros 30/30 x2, CSV 22/22 x4 (fail-closed, tope 15 000), justificar/anular 28/28 x2, API de cierre/parámetros/permisos/IDOR 76+23 x2 motores, candado y carrera 12/12, 591 empleados 18/18 x2, jest x12 (fallos solo preexistentes), eslint 0 errores; 1 hallazgo ALTO (menú recorta las 3 entradas nuevas) y 5 menores
 - [2026-10-28] [tester] → decisions.md — PARA RESOLVER F-R2A-T1 (alto: `max-height: 600px` del submenú de RH oculta Resultados/Periodos/Parámetros), T2 (`/ejecuciones` sin limite → 400), T3 (label-in-name de la cuadrícula), T4 (Empleados:edicion vs Asistencia:consulta), T5 (CSV de detalle filtrado con tope), T6 (verificar-motor.js obsoleto)
+- [2026-10-28] [tester] → tests.md — Re-test: menú y layout global, permisos y CSV filtrado (HEAD 80c0a71; Chromium + Firefox, pg17 con db-init real x2, build base 12be73a lado a lado): 8 enlaces de Asistencia alcanzables a 7 anchos (68/68 + 28/28), 60 capturas lado a lado idénticas a 360/1024/1280, permisos 22/22 + UI 47/47 x2, CSV filtrado 15/15 x2, axe sin label-in-name ni target-size, jest 11/12 (flaky preexistente), eslint/build OK; 2 hallazgos nuevos
+- [2026-10-28] [tester] → decisions.md — PARA RESOLVER F-R2B-T1 (641-768 px: el menú abre pero no cierra sin navegar) y F-R2B-T2 (se perdió la animación de cierre de los grupos)

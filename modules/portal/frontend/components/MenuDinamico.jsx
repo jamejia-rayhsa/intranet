@@ -15,16 +15,33 @@ const REQUIERE_GESTION_ASISTENCIA = [['Asistencia', 'edicion'], ['Empleados', 'e
 function Subitems({ abierto, children }) {
   const ref = useRef(null);
   const previo = useRef(abierto);
+  const altura = useRef(0);
+  // Altura real del contenido mientras está abierto: se guarda ANTES de cerrar porque leer scrollHeight tras quitar la clase
+  // fuerza un cálculo de estilo con max-height 0 y la transición de cierre arrancaría desde 0 (saltaba en un cuadro)
+  useLayoutEffect(() => {
+    if (abierto && ref.current) altura.current = ref.current.scrollHeight;
+  });
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el || previo.current === abierto) return undefined;
     previo.current = abierto;
+    // prefers-reduced-motion: sin animación (el CSS ya pone la transición en none); solo cambia el estado
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return undefined;
     const limpiar = () => { el.style.maxHeight = ''; };
-    el.style.maxHeight = abierto ? '0px' : `${el.scrollHeight}px`;
-    void el.offsetHeight; // fuerza el cálculo para que arranque la transición
-    el.style.maxHeight = abierto ? `${el.scrollHeight}px` : '0px';
-    const t = setTimeout(limpiar, 320);
-    return () => { clearTimeout(t); limpiar(); };
+    let r1 = 0;
+    let r2 = 0;
+    if (abierto) {
+      el.style.maxHeight = '0px';
+      void el.offsetHeight; // fuerza el cálculo para que arranque la transición
+      el.style.maxHeight = `${el.scrollHeight}px`;
+    } else {
+      // Cierre: el CSS ya dejó max-height en 0 (clase quitada); se fija la altura real y, DOS cuadros después, 0, para que
+      // el navegador vea el cambio px -> 0 y lo anime (con un solo reflow forzado el cierre saltaba en un cuadro)
+      el.style.maxHeight = `${altura.current || el.scrollHeight}px`;
+      r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => { el.style.maxHeight = '0px'; }); });
+    }
+    const t = setTimeout(limpiar, 360);
+    return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); clearTimeout(t); limpiar(); };
   }, [abierto]);
   return <div ref={ref} className={`sidebar-subitems${abierto ? ' abierto' : ''}`}>{children}</div>;
 }
@@ -136,7 +153,7 @@ function SidebarLogo() {
   );
 }
 
-export default function MenuDinamico({ modulos = [], permisos = [], abierto, onCerrar }) {
+export default function MenuDinamico({ modulos = [], permisos = [], abierto, onCerrar, onCerrarMenu }) {
   const { usuario, cerrarSesion } = usarAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -183,6 +200,8 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
 
   return (
     <aside className={`app-sidebar${abierto ? ' abierto' : ''}`}>
+      {/* Solo se ve cuando el menú es un drawer sin otro botón a mano (franja 641-768 px) */}
+      <button type="button" className="sidebar-cerrar-menu" onClick={onCerrarMenu || onCerrar}>Cerrar menú</button>
       <div className="sidebar-logo" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
         <SidebarLogo />
       </div>

@@ -6,7 +6,7 @@
 //   - Pasa `breadcrumb` al topbar dependiendo de la ruta activa.
 //   - Mantiene el resto del routing exactamente igual.
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import ReactDOM from 'react-dom/client';
 import {
   BrowserRouter,
@@ -135,6 +135,21 @@ function LayoutConMenu({ children }) {
   // cierra el drawer cada vez que cambia la ruta (en mobile)
   useEffect(() => { setSidebarAbierto(false); }, [location.pathname]);
 
+  // Cerrar el drawer sin navegar (overlay, botón «Cerrar menú», Escape) devuelve el foco al botón de menú
+  const cerrarMenuConFoco = useCallback(() => {
+    setSidebarAbierto(false);
+    requestAnimationFrame(() => {
+      const boton = document.querySelector('.responsive-hamburger');
+      if (boton && boton.offsetParent !== null) boton.focus();
+    });
+  }, []);
+  useEffect(() => {
+    if (!sidebarAbierto) return undefined;
+    const alTecla = (e) => { if (e.key === 'Escape') cerrarMenuConFoco(); };
+    document.addEventListener('keydown', alTecla);
+    return () => document.removeEventListener('keydown', alTecla);
+  }, [sidebarAbierto, cerrarMenuConFoco]);
+
   if (!usuario) {
     return <main className="contenido-principal">{children}</main>;
   }
@@ -147,14 +162,16 @@ function LayoutConMenu({ children }) {
           permisos={permisos}
           abierto={sidebarAbierto}
           onCerrar={() => setSidebarAbierto(false)}
+          onCerrarMenu={cerrarMenuConFoco}
         />
         <div
           className={`responsive-overlay ${sidebarAbierto ? 'is-open' : ''}`}
-          onClick={() => setSidebarAbierto(false)}
+          onClick={cerrarMenuConFoco}
         />
         <div className="app-main">
           <AppTopbar
             onMenu={() => setSidebarAbierto(true)}
+            menuAbierto={sidebarAbierto}
             breadcrumb={breadcrumbFor(location.pathname)}
           />
           <main className="app-contenido">{children}</main>
