@@ -299,7 +299,7 @@ describe("lotes y resultados", () => {
     expect(acc).toEqual({
       insertados: 100, actualizados: 0, sin_cambios: 0, duplicados: 5, errores: [{ fila: 3, error: "a" }],
       duplicados_detalle: [{ fila: 4, motivo: "m" }], actualizados_detalle: [], advertencias: [], advertencias_omitidas: 0,
-      jefes_pendientes: [], turnos_asignados: 0, turnos_cambiados: 0, turnos_sin_cambio: 0,
+      jefes_pendientes: [], turnos_asignados: 0, turnos_cambiados: 0, turnos_sin_cambio: 0, cuentas_vinculadas: 0,
       sin_catalogo: { puestos: [], departamentos: [], ubicaciones: [] },
     });
   });

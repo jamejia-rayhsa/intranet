@@ -49,3 +49,35 @@ export async function obtenerSubordinados(jefeId) {
 export async function obtenerRoles() {
   return solicitar("/roles");
 }
+
+// Relación cuenta de usuario <-> empleado (solo empleados.usuario_id; solo RH)
+export async function obtenerCuentasDisponibles({ busqueda = "", pagina = 1, limite = 10 } = {}) {
+  const parametros = new URLSearchParams({ pagina, limite });
+  if (busqueda) parametros.append("busqueda", busqueda);
+  return solicitar(`/empleados/cuentas/disponibles?${parametros.toString()}`);
+}
+
+export async function obtenerVistaPreviaCuentas({ pagina = 1, limite = 25, estado = "" } = {}) {
+  const parametros = new URLSearchParams({ pagina, limite });
+  if (estado) parametros.append("estado", estado);
+  return solicitar(`/empleados/cuentas/vista-previa?${parametros.toString()}`);
+}
+
+export async function vincularCuentas(pares, { confirmarPrivilegiadas = false } = {}) {
+  return solicitar("/empleados/cuentas/vincular", {
+    method: "POST",
+    body: JSON.stringify({ pares, confirmar: true, confirmar_privilegiadas: confirmarPrivilegiadas }),
+  });
+}
+
+// usuarioId null = desvincular
+export async function cambiarCuentaEmpleado(empleadoId, usuarioId, { confirmarPrivilegiada = false } = {}) {
+  return solicitar(`/empleados/${empleadoId}/cuenta`, {
+    method: "POST",
+    body: JSON.stringify(
+      usuarioId === null
+        ? { usuario_id: null, confirmar: true }
+        : { usuario_id: usuarioId, confirmar_privilegiada: confirmarPrivilegiada },
+    ),
+  });
+}

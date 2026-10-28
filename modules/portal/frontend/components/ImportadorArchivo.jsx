@@ -441,7 +441,7 @@ function VistaResultado({ resultado, columnas, onNuevo, onCerrar }) {
   const {
     insertados = 0, actualizados = 0, sin_cambios: sinCambios = 0, duplicados = 0, errores = [],
     duplicados_detalle: detalleDup = [], actualizados_detalle: detalleAct = [], advertencias = [],
-    advertencias_omitidas: advOmitidas = 0, jefes = null, interrupcion = '',
+    advertencias_omitidas: advOmitidas = 0, jefes = null, interrupcion = '', cuentas_vinculadas: cuentasVinculadas = 0,
   } = resultado;
   const etiquetas = etiquetasDe(columnas);
   const modoActualizar = actualizados > 0 || sinCambios > 0 || resultado.modo === 'actualizar';
@@ -462,6 +462,7 @@ function VistaResultado({ resultado, columnas, onNuevo, onCerrar }) {
             <TarjetaResumen tipo="ok" valor={insertados} etiqueta="Insertados" />
             {modoActualizar && <TarjetaResumen tipo="ok" valor={actualizados} etiqueta="Actualizados" />}
             {modoActualizar && <TarjetaResumen tipo="" valor={sinCambios} etiqueta="Sin cambios" />}
+            {cuentasVinculadas > 0 && <TarjetaResumen tipo="ok" valor={cuentasVinculadas} etiqueta="Cuentas vinculadas" />}
             <TarjetaResumen tipo={duplicados ? 'warn' : ''} valor={duplicados} etiqueta={modoActualizar ? 'Repetidos en el archivo' : 'Duplicados (omitidos)'} />
             <TarjetaResumen tipo={errores.length ? 'err' : ''} valor={errores.length} etiqueta="Errores" />
             {(advertencias.length > 0 || advOmitidas > 0) && <TarjetaResumen tipo="warn" valor={advertencias.length + advOmitidas} etiqueta="Advertencias" />}

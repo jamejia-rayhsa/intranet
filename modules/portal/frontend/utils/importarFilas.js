@@ -220,7 +220,7 @@ export function resultadoVacio() {
   return {
     insertados: 0, actualizados: 0, sin_cambios: 0, duplicados: 0, errores: [], duplicados_detalle: [],
     actualizados_detalle: [], advertencias: [], advertencias_omitidas: 0, jefes_pendientes: [],
-    turnos_asignados: 0, turnos_cambiados: 0, turnos_sin_cambio: 0,
+    turnos_asignados: 0, turnos_cambiados: 0, turnos_sin_cambio: 0, cuentas_vinculadas: 0,
     sin_catalogo: { puestos: [], departamentos: [], ubicaciones: [] },
   };
 }
@@ -256,6 +256,7 @@ export function sumarResultados(acumulado, parcial) {
     actualizados: (acumulado.actualizados || 0) + (Number(p.actualizados) || 0),
     sin_cambios: (acumulado.sin_cambios || 0) + (Number(p.sin_cambios) || 0),
     duplicados: acumulado.duplicados + (Number(p.duplicados) || 0),
+    cuentas_vinculadas: (acumulado.cuentas_vinculadas || 0) + (Number(p.cuentas_vinculadas) || 0),
     turnos_asignados: (acumulado.turnos_asignados || 0) + (Number(p.turnos_asignados) || 0),
     turnos_cambiados: (acumulado.turnos_cambiados || 0) + (Number(p.turnos_cambiados) || 0),
     turnos_sin_cambio: (acumulado.turnos_sin_cambio || 0) + (Number(p.turnos_sin_cambio) || 0),
