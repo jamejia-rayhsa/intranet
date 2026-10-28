@@ -13,6 +13,8 @@ import {
   TIPOS_CONTRATO,
 } from "../constants/catalogos";
 import ChecklistDocumentos from "./ChecklistDocumentos";
+import CuentaEmpleado from "./CuentaEmpleado";
+import useAccesoAsistencia from "../hooks/useAccesoAsistencia";
 import { obtenerDepartamentos } from "../services/departamentos.service";
 import { obtenerPuestos } from "../services/puestos.service";
 import { obtenerUbicaciones } from "../services/ubicaciones.service";
@@ -83,6 +85,7 @@ const FORMULARIO_VACIO = {
 
 export default function EmpleadoProfileCard({ empleadoId, alVolver }) {
   const [empleado, setEmpleado] = useState(null);
+  const puedeEditarCuentas = useAccesoAsistencia("Empleados") === "edicion";
   const [cargando, setCargando] = useState(true);
   const [editando, setEditando] = useState(false);
   const [pestana, setPestana] = useState("general");
@@ -128,8 +131,9 @@ export default function EmpleadoProfileCard({ empleadoId, alVolver }) {
     }
   }
 
-  async function cargarEmpleado() {
-    setCargando(true);
+  // silencioso: no pone `cargando` (el early return desmontaría CuentaEmpleado y perdería su aviso de resultado)
+  async function cargarEmpleado({ silencioso = false } = {}) {
+    if (!silencioso) setCargando(true);
     try {
       const resp = await obtenerEmpleado(empleadoId);
       if (resp.exito) {
@@ -178,7 +182,7 @@ export default function EmpleadoProfileCard({ empleadoId, alVolver }) {
     } catch (e) {
       console.error("Error al cargar empleado:", e);
     } finally {
-      setCargando(false);
+      if (!silencioso) setCargando(false);
     }
   }
 
@@ -440,6 +444,15 @@ export default function EmpleadoProfileCard({ empleadoId, alVolver }) {
                 <DatoLectura label="Jefe Directo" valor={empleado.jefe_nombre ? `${empleado.jefe_nombre} ${empleado.jefe_apellido}` : null} />
                 <DatoLectura label="Celular Corporativo" valor={empleado.celular_corporativo} />
                 <DatoLectura label="Correo Corporativo" valor={empleado.usuario_correo} />
+                <CuentaEmpleado
+                  empleadoId={empleado.id}
+                  nombreEmpleado={nombreCompleto}
+                  usuarioId={empleado.usuario_id}
+                  usuarioCorreo={empleado.usuario_correo}
+                  enBaja={empleado.estatus === "baja"}
+                  puedeEditar={puedeEditarCuentas}
+                  onCambio={() => cargarEmpleado({ silencioso: true })}
+                />
                 {empleado.estatus === "baja" && (
                   <div className="dato dato-completo desvinculacion-bloque">
                     <label>Desvinculación</label>

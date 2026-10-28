@@ -13,6 +13,7 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-28] [coder] → code-notes.md — Vinculación cuenta de usuario <-> empleado (solo empleados.usuario_id): vista previa con sugerencias por nombre, lotes de 50 con 409, selector/desvincular en el perfil, columna 'Correo de la cuenta' en la plantilla; candado 4601; API 101 + Chromium 60 + 16/20 mutantes
 - [2026-10-28] [coder] → code-notes.md — F-R2B-T1/T2: drawer 641-768 px (overlay, Escape, botón Cerrar menú, foco) y animación de cierre del submenú con reduced-motion
 - [2026-10-28] [coder] → code-notes.md — Ronda final Fase 5 parte 2a (menú sin altura fija, permisos de lectura RH, CSV de detalle filtrado en servidor, verificar-motor 129/129, jest estable 15/15)
 - [2026-10-28] orquestador → decisions.md — Tester de las pantallas de resultados: menú recortado (alto) y otros 5 fallos; última ronda de correcciones

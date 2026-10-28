@@ -465,6 +465,7 @@ const ControladorEmpleado = {
         insertados: resultado.insertados,
         actualizados: resultado.actualizados,
         sin_cambios: resultado.sin_cambios,
+        cuentas_vinculadas: resultado.cuentas_vinculadas,
         duplicados: resultado.duplicados,
         errores: resultado.errores.length,
         advertencias: resultado.advertencias.length + resultado.advertencias_omitidas,

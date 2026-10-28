@@ -1,4 +1,5 @@
 const { grupo } = require("../config/database");
+const EmpleadoCuenta = require("./empleadoCuenta.model");
 const { tomarCandadoImportacion, tomarCupoImportacion } = require("../utils/candadosImportacion");
 const { describirErrorSql } = require("../utils/logSeguro");
 const {
@@ -9,7 +10,7 @@ const {
 // Columnas para comparar/actualizar en la importación (los nombres salen solo de constantes: nunca del archivo).
 // Las fechas se leen como texto AAAA-MM-DD (un DATE de pg llegaría como Date con desfase de zona horaria).
 const SELECT_IMPORTACION = [
-  "id", "puesto_id", "departamento_id", "ubicacion_id", "jefe_inmediato_id",
+  "id", "usuario_id", "puesto_id", "departamento_id", "ubicacion_id", "jefe_inmediato_id",
   "LOWER(curp) AS curp_l", "LOWER(numero_nomina) AS nomina_l",
   ...CAMPOS_DIRECTOS.map((c) => (CAMPOS_FECHA.includes(c) ? `to_char(${c}, 'YYYY-MM-DD') AS ${c}` : c)),
 ].join(", ");
@@ -300,7 +301,7 @@ const Empleado = {
   async listarParaExportar() {
     const directas = CAMPOS_DIRECTOS.map((c) => (CAMPOS_FECHA.includes(c) ? `to_char(e.${c}, 'YYYY-MM-DD') AS ${c}` : `e.${c}`)).join(", ");
     const r = await grupo.query(`
-      SELECT ${directas},
+      SELECT ${directas}, u.correo AS correo_cuenta,
         p.nombre AS puesto, d.nombre AS departamento, ub.nombre AS ubicacion,
         CASE WHEN COALESCE(j.numero_nomina, '') <> '' THEN j.numero_nomina ELSE '' END AS jefe_nomina,
         CASE WHEN COALESCE(j.numero_nomina, '') = '' THEN COALESCE(j.curp, '') ELSE '' END AS jefe_curp
@@ -309,6 +310,7 @@ const Empleado = {
       LEFT JOIN departamentos d ON d.id = e.departamento_id
       LEFT JOIN ubicaciones ub ON ub.id = e.ubicacion_id
       LEFT JOIN empleados j ON j.id = e.jefe_inmediato_id
+      LEFT JOIN usuarios u ON u.id = e.usuario_id
       ORDER BY e.nombre, e.apellido_paterno, e.apellido_materno NULLS FIRST, e.id
     `);
     return r.rows;
@@ -341,7 +343,7 @@ const Empleado = {
 
     const r = {
       insertados: 0, actualizados: 0, sin_cambios: 0, duplicados: 0, duplicados_detalle: [], actualizados_detalle: [],
-      errores: [], advertencias: [], advertencias_omitidas: 0, jefes_pendientes: [],
+      errores: [], advertencias: [], advertencias_omitidas: 0, jefes_pendientes: [], cuentas_vinculadas: 0,
     };
     const faltantes = { puesto: new Map(), departamento: new Map(), ubicacion: new Map() };
     const anotarFaltante = (mapa, nombre) => {
@@ -414,6 +416,11 @@ const Empleado = {
           agregar(porNominaSC, row.nomina_l ? sinCeros(row.nomina_l) : "", entrada);
         }
       }
+
+      // 2b. Cuentas de usuario citadas por correo (columna "Correo de la cuenta"), leídas con el candado ya tomado
+      const correos = [...new Set(validas.map((v) => v.fila.correo_cuenta).filter(Boolean))];
+      const cuentasPorCorreo = correos.length ? await EmpleadoCuenta.cuentasPorCorreo(cliente, correos) : new Map();
+      const duenosCuenta = new Map([...cuentasPorCorreo.values()].filter((c) => c.empleado_id).map((c) => [c.id, c.empleado_id]));
 
       // 3. Fase A: decisión de cada fila, en el orden del archivo
       const ops = [];
@@ -490,7 +497,27 @@ const Empleado = {
           else sinCatalogo.push([clave, fila[clave]]);
         }
 
-        const op = { cruda, fila: datos, avisos, ids, sinCatalogo, destino, curpL, nominaL };
+        // Cuenta de usuario (solo escribe usuario_id): nunca pisa un vínculo, nunca la comparte entre dos empleados
+        // y nunca se vincula a un empleado de baja. Cualquier problema es error de la fila y no se guarda nada de ella.
+        let vincular = null;
+        if (fila.correo_cuenta) {
+          const cuenta = cuentasPorCorreo.get(fila.correo_cuenta);
+          const actualId = destino ? destino.valores.usuario_id : null;
+          const dueno = cuenta ? duenosCuenta.get(cuenta.id) : null;
+          if (!cuenta) { error(cruda, fila, "No existe una cuenta de usuario con ese correo; pide al administrador de usuarios que la cree"); continue; }
+          if (!(destino && actualId === cuenta.id)) {
+            if (actualId !== null && actualId !== undefined) { error(cruda, fila, "El empleado ya tiene otra cuenta vinculada; no se pisa. Desvincúlala desde el perfil del empleado"); continue; }
+            if (dueno) { error(cruda, fila, "Esa cuenta ya está vinculada a OTRO empleado; no se vinculó"); continue; }
+            if ((destino ? destino.valores.estatus : datos.estatus) === "baja") { error(cruda, fila, "El empleado está dado de baja: no se le vincula una cuenta"); continue; }
+            if (cuenta.privilegiada) { error(cruda, fila, "La cuenta tiene un rol privilegiado: vincúlala desde la acción 'Vincular cuentas' con su confirmación aparte"); continue; }
+            if (!cuenta.activo) avisos.push({ campo: "correo_cuenta", valor_recibido: null, motivo: "la cuenta está inactiva: el empleado no podrá entrar hasta que el administrador de usuarios la active" });
+            if (!cuenta.con_acceso_asistencia) avisos.push({ campo: "correo_cuenta", valor_recibido: null, motivo: "la cuenta no tiene un rol con acceso a Asistencia: no verá Mi asistencia hasta que el administrador de usuarios se lo asigne" });
+            vincular = cuenta.id;
+            duenosCuenta.set(cuenta.id, destino ? destino.id : -1);
+          }
+        }
+
+        const op = { cruda, fila: datos, avisos, ids, sinCatalogo, destino, curpL, nominaL, vincular };
         ops.push(op);
         // Las claves de esta fila cuentan para las siguientes (repetidas en el archivo)
         const entrada = destino || { id: null, valores: { ...datos, curp_l: curpL, nomina_l: nominaL }, enArchivo: false };
@@ -556,7 +583,17 @@ const Empleado = {
             op.entrada.id = empleadoId;
             resultado = "insertado";
           }
+          if (op.vincular) {
+            const v = await cliente.query(
+              "UPDATE empleados SET usuario_id = $1, fecha_actualizacion = NOW() WHERE id = $2 AND usuario_id IS NULL",
+              [op.vincular, empleadoId]
+            );
+            if (v.rowCount !== 1) throw Object.assign(new Error("vinculo"), { mensajeFila: "El empleado ya tiene otra cuenta vinculada; no se pisa" });
+            if (resultado === "sin_cambios") resultado = "actualizado";
+            campos++;
+          }
           await cliente.query(`RELEASE SAVEPOINT ${punto}`);
+          if (op.vincular) r.cuentas_vinculadas++;
 
           if (resultado === "insertado") r.insertados++;
           else if (resultado === "sin_cambios") r.sin_cambios++;
@@ -574,7 +611,8 @@ const Empleado = {
         } catch (e) {
           await cliente.query(`ROLLBACK TO SAVEPOINT ${punto}`);
           console.error(`[empleados] importar fila ${numeroFila(cruda)}: ${describirErrorSql(e)}`);
-          error(cruda, datos, "No se pudo guardar la fila");
+          const choqueCuenta = op.vincular && e && e.code === "23505" && String(e.constraint || "").includes("usuario_id");
+          error(cruda, datos, e && e.mensajeFila ? e.mensajeFila : choqueCuenta ? "Esa cuenta ya está vinculada a OTRO empleado; no se vinculó" : "No se pudo guardar la fila");
         }
       }
 

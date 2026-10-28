@@ -70,6 +70,7 @@ const CAMPOS_REFERENCIA = [
   ["departamento", "Departamento", 100],
   ["ubicacion", "Ubicación", 100],
   ["jefe_nomina", "Jefe (número de nómina)", 50],
+  ["correo_cuenta", "Correo de la cuenta", 255],
 ];
 
 const CAMPOS_DIRECTOS = CAMPOS_EMPLEADO.map((c) => c[0]);
@@ -284,6 +285,13 @@ function prepararFilaEmpleado(cruda) {
     if (t === null) { fila[clave] = ""; advertir(clave, null, "valor no válido"); continue; }
     if (t.includes("\u0000")) { fila[clave] = ""; advertir(clave, t, "contiene caracteres no permitidos"); continue; }
     if (t.length > max) { fila[clave] = ""; advertir(clave, t, `excede ${max} caracteres (tiene ${t.length})`); continue; }
+    if (clave === "correo_cuenta" && t) {
+      // Se busca en usuarios.correo sin distinguir mayúsculas: se guarda en minúsculas y sin espacios alrededor
+      const correo = t.toLowerCase();
+      if (!CORREO_RE.test(correo)) { fila[clave] = ""; advertir(clave, t, "correo electrónico inválido: no se vinculó la cuenta"); continue; }
+      fila[clave] = correo;
+      continue;
+    }
     if (clave === "jefe_nomina" && problemaNominaTexto(t)) { fila[clave] = ""; advertir(clave, t, `número de nómina del jefe inválido: ${problemaNominaTexto(t)}`); continue; }
     fila[clave] = t;
   }

@@ -13,6 +13,8 @@ import { obtenerDepartamentos } from "../services/departamentos.service";
 import { obtenerPuestos } from "../services/puestos.service";
 import { obtenerUbicaciones } from "../services/ubicaciones.service";
 import EmpleadoProfileCard from "../components/EmpleadoProfileCard";
+import VincularCuentasDialogo from "../components/VincularCuentasDialogo";
+import useAccesoAsistencia from "../hooks/useAccesoAsistencia";
 import {
   ESTADOS_MEXICO,
   BANCOS_MEXICO,
@@ -118,6 +120,8 @@ export default function EmpleadoPage() {
   const [empleadoSeleccionado, setEmpleadoSeleccionado] = useState(null);
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
   const [mostrarImportador, setMostrarImportador] = useState(false);
+  const [mostrarVincular, setMostrarVincular] = useState(false);
+  const puedeVincularCuentas = useAccesoAsistencia("Empleados") === "edicion";
   const [folioPreview, setFolioPreview] = useState("");
   const [error, setError] = useState("");
   const [crearUsuario, setCrearUsuario] = useState(false);
@@ -305,9 +309,21 @@ export default function EmpleadoPage() {
           >
             ⬆ Importar
           </button>
+          {puedeVincularCuentas && (
+            <button
+              style={{ background: 'transparent', border: '1px solid var(--color-borde)', color: 'var(--color-texto)' }}
+              onClick={() => setMostrarVincular(true)}
+            >
+              Vincular cuentas
+            </button>
+          )}
           <button onClick={() => { setMostrarFormulario(true); setFolioPreview(""); }}>Nuevo Empleado</button>
         </div>
       </div>
+
+      {mostrarVincular && (
+        <VincularCuentasDialogo onCerrar={() => setMostrarVincular(false)} onVinculado={() => { cargarEmpleados({ silencioso: true }); }} />
+      )}
 
       {mostrarImportador && (
         <ImportadorArchivo
