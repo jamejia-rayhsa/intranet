@@ -13,6 +13,9 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-28] orquestador → decisions.md — Mi asistencia y Mi equipo: pruebas (funcional OK, 4 menores) y tanda de correcciones; vinculación de cuentas con correcciones aplicadas
+- [2026-10-28] orquestador → decisions.md — 'Mi asistencia' y 'Mi equipo': revisión NO APROBADA (jefe dado de baja conserva acceso; tipo de permiso al jefe); decisiones para la corrección
+- [2026-10-28] [revisor] → reviews.md#mi-asistencia-y-mi-equipo-fase-5-parte-2b — Mi asistencia y Mi equipo (Fase 5, parte 2b): NO APROBADO por R2B-1 (crítico: jefe dado de baja conserva el alcance)
 - [2026-10-28] orquestador → decisions.md — Aclaración: las cuentas se gestionan en administración de usuarios; solo se relacionan con el empleado (sustituye el diseño con correo_corporativo)
 - [2026-10-28] orquestador → decisions.md — Cuentas de usuario de los empleados: correo corporativo y vinculación a Microsoft (petición del humano)
 - [2026-10-28] orquestador → decisions.md — Decisión: motivo de justificaciones (RH todos, jefe su equipo, empleado lo suyo) y GO a 'Mi asistencia' y 'Mi equipo'; prerrequisito de cuentas de usuario
@@ -264,3 +267,6 @@
 - [2026-10-28] [tester] → tests.md — Re-test: menú y layout global, permisos y CSV filtrado (HEAD 80c0a71; Chromium + Firefox, pg17 con db-init real x2, build base 12be73a lado a lado): 8 enlaces de Asistencia alcanzables a 7 anchos (68/68 + 28/28), 60 capturas lado a lado idénticas a 360/1024/1280, permisos 22/22 + UI 47/47 x2, CSV filtrado 15/15 x2, axe sin label-in-name ni target-size, jest 11/12 (flaky preexistente), eslint/build OK; 2 hallazgos nuevos
 - [2026-10-28] [tester] → decisions.md — PARA RESOLVER F-R2B-T1 (641-768 px: el menú abre pero no cierra sin navegar) y F-R2B-T2 (se perdió la animación de cierre de los grupos)
 - [2026-10-28] [coder] Fase 5 parte 2b: Mi asistencia y Mi equipo (solo lectura) -> code-notes.md; docs/asistencia/mi-asistencia.md
+- [2026-10-28] [tester] → tests.md — Mi asistencia y Mi equipo (Fase 5 parte 2b, HEAD 1b9d863; frontend real Vite + backend real con el motor activo + supabase/postgres 17.6 y pg16 con db-init real x2, Chromium + Firefox, harness y oráculo propios): 3 476 días = oráculo y redacción, IDOR/campos/permisos API 219/219 x2 motores y 6/6 mutantes, Mi asistencia 607/607 x2 navegadores (1 336 detalles c/u), Mi equipo 253/253 x2 + Hoy con descanso/vacaciones/permiso/festivo, menú 324/324 x2 idéntico al base, teclado/axe/44 px/TZ/reduced-motion 97/97 x2 + TZ 50/50 x2, rendimiento 27/27 x2 (jefe con 50 directos, 5 meses), jest 18/18, eslint 0 errores; 4 hallazgos bajos (F-MA-1..4) y R2B-1/R2B-2 reproducidos; 0 bloqueados
+- [2026-10-28] [tester] → decisions.md — PARA RESOLVER F-MA-1 (analisis_desde dentro de una quincena: cuadrícula y detalle se contradicen), F-MA-2 (nómina compartida en Mi equipo sin aviso), F-MA-3 (Cerrar cuadrícula pierde el foco), F-MA-4 (texto de falta en Hoy)
+- [2026-10-28] [coder] Correcciones de la revisión de Mi asistencia/Mi equipo (baja/suspendido, privacidad del jefe, % sin justificadas, F-MA-1..4) y jest determinista -> code-notes.md

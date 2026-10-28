@@ -20,7 +20,8 @@ export function tieneAccesoMenu({ usuario, permisos, modulo, opcion, estricto = 
 export function visibleSegunContexto(requiereContexto, contexto) {
   if (!requiereContexto) return true;
   if (!contexto) return false;
-  if (requiereContexto === 'empleado') return Boolean(contexto.vinculado);
-  if (requiereContexto === 'jefe') return Boolean(contexto.es_jefe);
+  // un empleado dado de baja o suspendido (activo:false) pierde las dos entradas aunque conserve su cuenta
+  if (requiereContexto === 'empleado') return Boolean(contexto.vinculado && contexto.activo);
+  if (requiereContexto === 'jefe') return Boolean(contexto.es_jefe && contexto.activo);
   return false;
 }

@@ -49,7 +49,7 @@ export default function DetalleDiaPersonaDialogo({ empleadoId, nombre, fecha, pe
   }, [cargar]);
 
   const texto = useMemo(
-    () => (datos ? redactarDia({ dia: datos.dia, marcas: datos.marcas, cruces: datos.cruces, hora: horaLocal, persona }) : null),
+    () => (datos ? redactarDia({ dia: datos.dia, marcas: datos.marcas, cruces: datos.cruces, hora: horaLocal, persona, comidaMarcas: datos.comida_marcas }) : null),
     [datos, persona],
   );
   const dia = datos && datos.dia;

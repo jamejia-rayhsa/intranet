@@ -8,7 +8,7 @@ import CuadriculaAsistencia from "../components/asistencia/CuadriculaAsistencia"
 import DetalleDiaPersonaDialogo from "../components/asistencia/DetalleDiaPersonaDialogo";
 import { ESTATUS, ORDEN_TARJETAS, FORMULA_PUNTUALIDAD, porcentajePuntualidad, textoPorcentaje, diasEvaluados } from "../utils/asistenciaResultados";
 import {
-  quincenasVisibles, quincenaPorOmision, claveQuincena, textoQuincena, avisoDelPeriodo, estadoDeCuenta, contarDias, AYUDA_CONTACTAR_RH,
+  quincenasVisibles, quincenaPorOmision, desdeEfectivo, claveQuincena, textoQuincena, avisoDelPeriodo, estadoDeCuenta, contarDias, AYUDA_CONTACTAR_RH,
 } from "../utils/asistenciaMiAsistencia";
 import "../styles/asistencia.css";
 import "../styles/asistenciaResultados.css";
@@ -72,7 +72,7 @@ export default function MiAsistenciaPage() {
     setCargando(true);
     setError("");
     try {
-      const r = await listarResultados({ desde: quincena.fecha_inicio, hasta: quincena.fecha_fin, empleadoId: contexto.empleado.id, limite: 100 });
+      const r = await listarResultados({ desde: desdeEfectivo(quincena, analisisDesde), hasta: quincena.fecha_fin, empleadoId: contexto.empleado.id, limite: 100 });
       if (mia !== solicitud.current) return;
       setDias(r.datos || []);
       setCargadoDe(claveQuincena(quincena));
@@ -83,7 +83,7 @@ export default function MiAsistenciaPage() {
     } finally {
       if (mia === solicitud.current) setCargando(false);
     }
-  }, [contexto, quincena]);
+  }, [contexto, quincena, analisisDesde]);
 
   useEffect(() => {
     if (listo && quincena) cargarDias();
@@ -168,6 +168,7 @@ export default function MiAsistenciaPage() {
                 hasta={quincena.fecha_fin}
                 dias={dias}
                 hoy={hoy}
+                analisisDesde={analisisDesde}
                 abrirSinCalculo
                 onAbrirDia={setDiaAbierto}
                 etiqueta={`Tus días, ${quincena.fecha_inicio} a ${quincena.fecha_fin}`}

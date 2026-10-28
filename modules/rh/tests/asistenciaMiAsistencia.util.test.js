@@ -117,8 +117,9 @@ describe("contarDias y tarjetas", () => {
     ];
     const c = U.contarDias(dias);
     expect(c).toMatchObject({ puntual: 2, retardo: 1, falta: 1, descanso: 1, justificada: 1, dias: 7, minutos_retardo: 19, dias_con_marcas: 4 });
-    expect(R.diasEvaluados(c)).toBe(5);
-    expect(R.porcentajePuntualidad(c)).toBe(40);
+    // la justificada NO entra al denominador: 2 puntuales de 4 días evaluados
+    expect(R.diasEvaluados(c)).toBe(4);
+    expect(R.porcentajePuntualidad(c)).toBe(50);
     expect(U.contarDias(null).dias).toBe(0);
   });
 });
@@ -131,11 +132,11 @@ describe("redactarDia — explicaciones en lenguaje de persona", () => {
   });
   it("retardo: horario, hora real, minutos tarde, tolerancia y minutos de retardo", () => {
     const t = redactar({ estatus: "retardo", minutos_retardo: 14, detalle: { ...DIA.detalle, minutos_tarde: 14 } }, [marca("08:14", "entrada"), marca("17:00", "salida")]);
-    expect(t.frase).toBe("Tu horario de entrada es a las 08:00 y llegaste a las 08:14 (14 minutos tarde). La tolerancia es de 10 minutos, por eso cuenta como retardo de 14 minutos.");
+    expect(t.frase).toBe("Llegaste a las 08:14, 14 minutos después de tu hora de entrada (08:00). La tolerancia es de 10 minutos, así que se registra como retardo.");
   });
   it("retardo con un solo minuto usa el singular", () => {
     const t = redactar({ estatus: "retardo", minutos_retardo: 1, tolerancia_retardo_min: 0, detalle: { ...DIA.detalle, minutos_tarde: 1 } }, [marca("08:01", "entrada")]);
-    expect(t.frase).toMatch(/\(1 minuto tarde\)\. La tolerancia es de 0 minutos, por eso cuenta como retardo de 1 minuto\./);
+    expect(t.frase).toMatch(/1 minuto después de tu hora de entrada \(08:00\)\. La tolerancia es de 0 minutos, así que se registra como retardo\./);
   });
   it("retardo y además salida anticipada lo dice en una nota aparte", () => {
     const t = redactar({ estatus: "retardo", minutos_retardo: 12, minutos_salida_anticipada: 20, detalle: { ...DIA.detalle, minutos_tarde: 12 } }, [marca("08:12", "entrada"), marca("16:40", "salida")]);
@@ -202,9 +203,10 @@ describe("redactarDia — explicaciones en lenguaje de persona", () => {
   });
   it("persona 'equipo' usa tercera persona", () => {
     const t = redactar({ estatus: "retardo", minutos_retardo: 14, detalle: { ...DIA.detalle, minutos_tarde: 14 } }, [marca("08:14", "entrada")], {}, "equipo");
-    expect(t.frase).toMatch(/^Su horario de entrada es a las 08:00 y llegó a las 08:14/);
+    expect(t.frase).toBe("Llegó a las 08:14, 14 minutos después de su hora de entrada (08:00). La tolerancia es de 10 minutos, así que se registra como retardo.");
     const i = redactar({ estatus: "incompleta", detalle: { ...DIA.detalle, banderas: ["ultima_marca_en_comida"] } }, [marca("14:10", "comida")], {}, "equipo");
-    expect(i.frase).toBe("Su última marca fue a las 14:10, dentro del horario de comida; si salió a comer y no regresó a checar, o se retiró temprano, RH puede revisarlo.");
+    // el jefe recibe redacción neutra, sin hora de comida ni suposiciones
+    expect(i.frase).toBe("La última marca del día cae dentro del horario de comida y no hay una marca de salida posterior. RH puede revisarlo.");
     expect(redactar({ estatus: "descanso" }, [], {}, "equipo").frase).toMatch(/su día de descanso según su turno/);
   });
   it("las banderas técnicas no se muestran tal cual: solo las que la persona puede entender", () => {
@@ -266,7 +268,7 @@ describe("Mi equipo: estado de hoy", () => {
     expect(e).toMatchObject({ clave: "ya_checo", etiqueta: "Ya checó", texto: "Ya checó a las 08:03." });
   });
   it("con varias marcas agrega la última", () => {
-    expect(estado({ dia_estatus: "pendiente", marcas_hoy: 3, primera_marca: ts("08:03"), ultima_marca: ts("13:05") }).texto).toBe("Ya checó a las 08:03; su última marca fue a las 13:05.");
+    expect(estado({ dia_estatus: "pendiente", marcas_hoy: 3, primera_marca: ts("08:03") }).texto).toBe("Ya checó a las 08:03."); // sin la hora de la comida
   });
   it("sin marca y dentro del horario: «Aún no checa»", () => {
     expect(estado({ dia_estatus: "pendiente" })).toMatchObject({ clave: "aun_no_checa", texto: "Aún no checa. Su entrada es a las 08:00." });
@@ -281,9 +283,9 @@ describe("Mi equipo: estado de hoy", () => {
     expect(estado({ dia_estatus: "descanso" }).clave).toBe("descanso");
   });
   it("falta y retardo ya definidos", () => {
-    expect(estado({ dia_estatus: "falta" }).texto).toBe("Falta: no hay marca de entrada.");
+    expect(estado({ dia_estatus: "falta" }).texto).toBe("Falta: sin marca de entrada registrada.");
     expect(estado({ dia_estatus: "retardo", minutos_retardo: 14, primera_marca: ts("08:14") }).texto).toBe("Retardo de 14 minutos (entró a las 08:14).");
-    expect(estado({ dia_estatus: "incompleta", ultima_marca_en_comida: true, ultima_marca: ts("14:10") }).texto).toMatch(/su última marca fue a las 14:10, dentro de la comida/);
+    expect(estado({ dia_estatus: "incompleta", ultima_marca_en_comida: true }).texto).toBe("Marca incompleta: la última marca del día cae dentro del horario de comida y falta la de salida.");
     expect(estado({ dia_estatus: "puntual", primera_marca: ts("07:58") }).texto).toBe("Puntual: entró a las 07:58.");
   });
   it("sin nómina: «Sin nómina: no se analiza» aunque haya marcas", () => {
@@ -355,11 +357,14 @@ describe("menú según el contexto del servidor", () => {
     expect(M.visibleSegunContexto("jefe", undefined)).toBe(false);
   });
   it("«Mi asistencia» exige empleado vinculado y «Mi equipo» ser jefe", () => {
-    expect(M.visibleSegunContexto("empleado", { vinculado: true })).toBe(true);
+    expect(M.visibleSegunContexto("empleado", { vinculado: true, activo: true })).toBe(true);
+    expect(M.visibleSegunContexto("empleado", { vinculado: true, activo: false })).toBe(false); // baja o suspendido
+    expect(M.visibleSegunContexto("empleado", { vinculado: true })).toBe(false); // sin dato del servidor: no se muestra
     expect(M.visibleSegunContexto("empleado", { vinculado: false, es_jefe: false })).toBe(false);
     expect(M.visibleSegunContexto("jefe", { vinculado: true, es_jefe: false })).toBe(false);
-    expect(M.visibleSegunContexto("jefe", { vinculado: true, es_jefe: true })).toBe(true);
-    expect(M.visibleSegunContexto("otro", { vinculado: true, es_jefe: true })).toBe(false);
+    expect(M.visibleSegunContexto("jefe", { vinculado: true, activo: true, es_jefe: true })).toBe(true);
+    expect(M.visibleSegunContexto("jefe", { vinculado: true, activo: false, es_jefe: true })).toBe(false);
+    expect(M.visibleSegunContexto("otro", { vinculado: true, activo: true, es_jefe: true })).toBe(false);
   });
   it("combinado con el permiso: requiere Asistencia:consulta o edicion en modo estricto", () => {
     const requiere = [["Asistencia", "consulta"], ["Asistencia", "edicion"]];
@@ -370,5 +375,89 @@ describe("menú según el contexto del servidor", () => {
     expect(ver([])).toBe(false); // modo estricto: lista vacía no abre nada
     expect(ver([{ modulo: "tickets", opcion: "Asistencia", tipo: "consulta" }])).toBe(false);
     expect(ver([], { rol_nombre: "super_admin" })).toBe(true);
+  });
+});
+
+describe("revisión R2B: baja, textos del jefe, nocturnos, justificadas y análisis", () => {
+  const dia = (o, d = {}) => ({ ...DIA, ...o, detalle: { ...DIA.detalle, ...d } });
+  const ctxOk = { vinculado: true, activo: true, es_jefe: true, empleado: { tiene_nomina: true, nomina_compartida: false, turno: {} } };
+
+  it("un empleado dado de baja o suspendido: bloquea con el mensaje y ya no es jefe", () => {
+    const c = { ...ctxOk, activo: false, es_jefe: false };
+    expect(U.estadoDeCuenta(c)).toEqual({ bloquea: true, tipo: "inactivo", mensaje: expect.stringMatching(/^Tu registro está dado de baja o suspendido/) });
+    expect(U.esJefe({ ...ctxOk, activo: false })).toBe(false);
+    expect(U.esJefe(ctxOk)).toBe(true);
+  });
+  it("el jefe lee la comida en palabras: cuántas marcas y la regla, sin horas ni exceso", () => {
+    const t = U.redactarDia({
+      dia: dia({ estatus: "puntual" }, { minutos_comida: 80, exceso_comida_min: 20, comida: { desde: "13:00", hasta: "16:00", marcas: 4 } }),
+      marcas: [marca("08:00", "entrada"), marca("18:00", "salida")], cruces: {}, hora, persona: "equipo", comidaMarcas: 4,
+    });
+    expect(t.comida).toBe("Comida: 4 marcas registradas. El turno marca 60 minutos de comida, que se toma entre las 13:00 y las 16:00; no cambia el resultado del día.");
+    expect(t.comida).not.toMatch(/80|20 minutos|13:05|exceso/);
+    // una sola marca y ninguna
+    expect(U.redactarDia({ dia: dia({}), marcas: [], cruces: {}, hora, persona: "equipo", comidaMarcas: 1 }).comida).toMatch(/^Comida: 1 marca registrada\./);
+    expect(U.redactarDia({ dia: dia({}), marcas: [], cruces: {}, hora, persona: "equipo", comidaMarcas: 0 }).comida).toBe("");
+  });
+  it("aunque llegaran marcas de comida al jefe, no se listan", () => {
+    const t = U.redactarDia({ dia: dia({}), marcas: [marca("08:00", "entrada"), marca("13:05", "comida")], cruces: {}, hora, persona: "equipo" });
+    expect(t.marcas.map((m) => m.hora)).toEqual(["08:00"]);
+  });
+  it("el permiso no menciona el tipo cuando el servidor no lo entrega (jefe) y sí cuando lo entrega (empleado)", () => {
+    const sin = U.redactarDia({ dia: dia({ estatus: "permiso" }), cruces: { permiso: { fecha_inicio: "2026-10-05", fecha_fin: "2026-10-06" } }, hora, persona: "equipo" });
+    expect(sin.frase).toBe("Tiene un permiso aprobado del 2026-10-05 al 2026-10-06, por eso este día no se califica.");
+    const con = U.redactarDia({ dia: dia({ estatus: "permiso" }), cruces: { permiso: { tipo: "incapacidad", fecha_inicio: "2026-10-05", fecha_fin: "2026-10-06" } }, hora, persona: "yo" });
+    expect(con.frase).toMatch(/\(incapacidad\)/);
+  });
+  it("los textos del jefe no son acusatorios", () => {
+    const casos = [
+      U.redactarDia({ dia: dia({ estatus: "falta" }), marcas: [], cruces: {}, hora, persona: "equipo" }),
+      U.redactarDia({ dia: dia({ estatus: "falta" }), marcas: [marca("14:10", "otra")], cruces: {}, hora, persona: "equipo" }),
+      U.redactarDia({ dia: dia({ estatus: "incompleta" }, { banderas: ["ultima_marca_en_comida"] }), marcas: [marca("08:00", "entrada")], cruces: {}, hora, persona: "equipo" }),
+    ];
+    for (const t of casos) expect([t.frase, ...t.explicaciones].join(" ")).not.toMatch(/no registró|se retiró|no regresó|saliste|por eso cuenta como falta/i);
+  });
+  it("Hoy: turno nocturno sin marcas a las 23:30 NO dice «Sin marcas»; uno diurno después de su salida sí lo dice, con tono neutro", () => {
+    const base = { tiene_nomina: true, dia_estatus: "pendiente", marcas_hoy: 0, entrada_programada: "22:00", salida_programada: "06:00", cruza_medianoche: true };
+    expect(U.estadoHoyEquipo(base, { hora, ahoraMin: 23 * 60 + 30 })).toMatchObject({ clave: "aun_no_checa" });
+    const diurno = U.estadoHoyEquipo({ ...base, entrada_programada: "08:00", salida_programada: "18:00", cruza_medianoche: false }, { hora, ahoraMin: 18 * 60 + 10 });
+    expect(diurno).toMatchObject({ clave: "sin_marca_hoy", texto: "Sin marcas registradas hoy; el día se califica al terminar la jornada." });
+  });
+  it("Hoy: falta por llegar tarde dice «llegó con más de 30 minutos de retraso»; sin retraso real es otra cosa (F-MA-4)", () => {
+    const f = { tiene_nomina: true, dia_estatus: "falta", primera_marca: ts("08:48"), minutos_retardo: 48, umbral_falta_min: 30 };
+    expect(U.estadoHoyEquipo(f, { hora }).texto).toBe("Falta: llegó con más de 30 minutos de retraso (entró a las 08:48).");
+    expect(U.estadoHoyEquipo({ ...f, minutos_retardo: 0 }, { hora }).texto).toBe("Falta: sin marca de entrada válida (su primera marca fue a las 08:48).");
+    expect(U.estadoHoyEquipo({ ...f, umbral_falta_min: undefined }, { hora }).texto).toMatch(/más de 30 minutos/);
+  });
+  it("Hoy: nómina repetida avisa que RH debe corregirla (F-MA-2) y se cuenta aparte", () => {
+    const e = U.estadoHoyEquipo({ tiene_nomina: true, nomina_compartida: true, dia_estatus: null }, { hora });
+    expect(e).toMatchObject({ clave: "nomina_repetida", texto: "Su nómina está repetida: RH debe corregirla. Mientras tanto no se analiza." });
+    const filas = U.combinarEquipo([{ empleado_id: 1, nombre: "A", tiene_nomina: true, nomina_compartida: true, estatus: "activo" }], [{ empleado_id: 1, falta: 3, dias_con_marcas: 0 }], { hora });
+    expect(filas[0]).toMatchObject({ nomina_repetida: true, sin_nomina: false });
+    expect(U.filtrarEquipo(filas, { atajo: "sin_marcas" })).toEqual([]);
+    expect(U.resumenHoy([{ clave: "nomina_repetida" }])).toBe("1 persona: 1 con la nómina repetida.");
+  });
+  it("resumenHoy: una justificada no es «no trabaja hoy»", () => {
+    expect(U.resumenHoy([{ clave: "justificada" }, { clave: "vacaciones" }])).toBe("2 personas: 1 no trabaja hoy, 1 con el día justificado.");
+  });
+  it("el % de puntualidad EXCLUYE las justificadas en todas las pantallas y la fórmula lo dice", () => {
+    const c = { puntual: 8, retardo: 1, falta: 1, justificada: 10 };
+    expect(R.diasEvaluados(c)).toBe(10);
+    expect(R.porcentajePuntualidad(c)).toBe(80);
+    expect(R.ESTATUS_EVALUADOS).not.toContain("justificada");
+    expect(R.FORMULA_PUNTUALIDAD).toMatch(/días justificados/);
+    expect(R.FORMULA_PUNTUALIDAD).not.toMatch(/\+ justificadas/);
+    expect(R.porcentajePuntualidad({ justificada: 3 })).toBeNull(); // solo justificadas: sin porcentaje
+  });
+  it("análisis_desde: se pide desde el inicio del análisis cuando cae dentro de la quincena (F-MA-1)", () => {
+    const q = { fecha_inicio: "2026-09-16", fecha_fin: "2026-09-30" };
+    expect(U.desdeEfectivo(q, "2026-09-18")).toBe("2026-09-18");
+    expect(U.desdeEfectivo(q, "2026-09-01")).toBe("2026-09-16");
+    expect(U.desdeEfectivo(q, "")).toBe("2026-09-16");
+    expect(U.desdeEfectivo(null, "2026-09-18")).toBe("");
+  });
+  it("la quincena actual agregada también respeta el inicio del análisis (R2B-15)", () => {
+    const v = U.quincenasVisibles([], "2026-11-01", "2026-10-28", { fecha_inicio: "2026-10-16", fecha_fin: "2026-10-31", estado: "abierto" });
+    expect(v).toEqual([]);
   });
 });

@@ -4,7 +4,7 @@ import { miContexto, mensajeDeError } from "../services/asistencia.service";
 
 // Caché corta en cliente (módulo) de GET /asistencia/mi-contexto: el menú y las dos pantallas lo leen sin repetir la
 // petición. Se descarta al cambiar de usuario, al vencer (TTL) o al pedir una lectura nueva (`reintentar`).
-export const TTL_CONTEXTO_MS = 60 * 1000;
+export const TTL_CONTEXTO_MS = 20 * 1000; // corto: un cambio de jefe o de estatus se nota pronto
 let cache = { clave: null, ts: 0, datos: null, promesa: null };
 
 export function invalidarContextoAsistencia() {
@@ -29,11 +29,11 @@ function leerContexto(clave, forzar) {
 }
 
 /**
- * Contexto de asistencia del usuario (empleado vinculado, si es jefe, turno, periodo actual). `habilitado` = false no hace
+ * Contexto de asistencia del usuario (empleado vinculado, si es jefe, turno, periodo actual). `refrescarCon` vuelve a leer (dentro del TTL, de la caché) cuando cambia. `habilitado` = false no hace
  * ninguna petición (p. ej. el menú de quien no tiene Asistencia:consulta). Un fallo deja `datos` en null y `error` con el mensaje.
  * @returns {{cargando:boolean, error:string, datos:object|null, reintentar:Function}}
  */
-export default function useContextoAsistencia({ habilitado = true } = {}) {
+export default function useContextoAsistencia({ habilitado = true, refrescarCon = "" } = {}) {
   const { usuario } = usarAuth();
   const clave = usuario ? String(usuario.id ?? usuario.usuario_id ?? usuario.correo ?? "") : "";
   const [estado, setEstado] = useState({ cargando: habilitado, error: "", datos: null });
@@ -50,7 +50,7 @@ export default function useContextoAsistencia({ habilitado = true } = {}) {
       .then((datos) => { if (activo) setEstado({ cargando: false, error: "", datos }); })
       .catch((err) => { if (activo) setEstado({ cargando: false, error: mensajeDeError(err, "No se pudo cargar tu información de asistencia"), datos: null }); });
     return () => { activo = false; };
-  }, [habilitado, clave, intento]);
+  }, [habilitado, clave, intento, refrescarCon]); // `refrescarCon` (p. ej. la ruta) relee al navegar: la caché evita repetir la petición
 
   const reintentar = useCallback(() => setIntento((n) => n + 1), []);
   return { ...estado, reintentar };

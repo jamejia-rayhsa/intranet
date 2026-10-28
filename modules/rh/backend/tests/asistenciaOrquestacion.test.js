@@ -198,9 +198,23 @@ describe("recalcular: candado y errores", () => {
   it("dos recalculos simultáneos: el segundo reintenta el candado hasta esperaMs", async () => {
     let intentos = 0;
     bd.estado.reglas.unshift({ re: /pg_try_advisory_lock/, respuesta: () => ({ rows: [{ obtenido: ++intentos >= 3 }] }) });
-    const r = await Motor.recalcular({ desde: "2026-10-19", hasta: "2026-10-19", esperaMs: 3000, ahora: AHORA });
+    // Tiempo inyectado y determinista: cada espera adelanta el reloj 250 ms, sin depender del reloj real del equipo
+    let reloj = 0;
+    const dormir = jest.fn(async (ms) => { reloj += ms; });
+    const r = await Motor.recalcular({ desde: "2026-10-19", hasta: "2026-10-19", esperaMs: 3000, ahora: AHORA, tiempo: { ahora: () => reloj, dormir } });
     expect(r.ocupado).toBe(false);
     expect(intentos).toBe(3);
+    expect(dormir).toHaveBeenCalledTimes(2);
+    expect(dormir).toHaveBeenCalledWith(250);
+  });
+
+  it("si el candado nunca se libera, se rinde al cumplirse esperaMs (reloj inyectado)", async () => {
+    esc.cerraduraLibre = false;
+    let reloj = 0;
+    const dormir = jest.fn(async (ms) => { reloj += ms; });
+    expect(await Motor.recalcular({ desde: "2026-10-19", hasta: "2026-10-19", esperaMs: 1000, ahora: AHORA, tiempo: { ahora: () => reloj, dormir } })).toEqual({ ocupado: true });
+    expect(dormir).toHaveBeenCalledTimes(4);
+    expect(consultas(/pg_try_advisory_lock/)).toHaveLength(5);
   });
 
   it("un error de la BD deja ROLLBACK, bitácora 'error' SIN texto de PostgreSQL, libera el candado y relanza", async () => {
@@ -554,11 +568,12 @@ describe("tope duro: statement_timeout, control y abortar", () => {
 
   it("el candado se toma sin esperar por omisión (API: 409 inmediato, sin retener una conexión)", async () => {
     esc.cerraduraLibre = false;
-    const t0 = Date.now();
-    expect(await Motor.recalcular({ desde: "2026-10-19", hasta: "2026-10-19", ahora: AHORA })).toEqual({ ocupado: true });
-    expect((await Motor.cerrarPeriodo({ id: 1, usuarioId: 1, ahora: AHORA })).codigo).toBe("ocupado");
-    expect((await Motor.reabrirPeriodo({ id: 1, usuarioId: 1, motivo: "motivo válido", ahora: AHORA })).codigo).toBe("ocupado");
-    expect(Date.now() - t0).toBeLessThan(200);
+    const dormir = jest.fn(async () => {});
+    const tiempo = { ahora: () => 0, dormir };
+    expect(await Motor.recalcular({ desde: "2026-10-19", hasta: "2026-10-19", ahora: AHORA, tiempo })).toEqual({ ocupado: true });
+    expect((await Motor.cerrarPeriodo({ id: 1, usuarioId: 1, ahora: AHORA, tiempo })).codigo).toBe("ocupado");
+    expect((await Motor.reabrirPeriodo({ id: 1, usuarioId: 1, motivo: "motivo válido", ahora: AHORA, tiempo })).codigo).toBe("ocupado");
+    expect(dormir).not.toHaveBeenCalled(); // sin espera: 409 inmediato
     expect(consultas(/pg_try_advisory_lock/)).toHaveLength(3);
   });
 });

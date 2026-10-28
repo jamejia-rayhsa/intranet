@@ -21,7 +21,7 @@ function useEstrecha() {
  * y festivos distinguibles. Teclado: flechas, Inicio/Fin, Intro/Espacio abren el detalle. Foco itinerante (una sola
  * celda en el orden de tabulación).
  */
-export default function CuadriculaAsistencia({ desde, hasta, dias, onAbrirDia, etiqueta, abrirSinCalculo = false, hoy = "" }) {
+export default function CuadriculaAsistencia({ desde, hasta, dias, onAbrirDia, etiqueta, abrirSinCalculo = false, hoy = "", analisisDesde = "" }) {
   const { celdas } = useMemo(() => construirCuadricula(desde, hasta, dias), [desde, hasta, dias]);
   const estrecha = useEstrecha();
   const columnas = estrecha ? 1 : 7;
@@ -66,7 +66,7 @@ export default function CuadriculaAsistencia({ desde, hasta, dias, onAbrirDia, e
             const indice = f * 7 + k;
             if (c.vacia) return <div key={c.clave} role="gridcell" aria-hidden="true" className="asr__celda asr__celda--vacia" />;
             const porLlegar = !c.dia && hoy && c.fecha > hoy;
-            const info = c.dia ? infoEstatus(c.dia.estatus) : { texto: porLlegar ? "Aún no llega" : "Sin cálculo", icono: "–", tono: "neutro" };
+            const info = c.dia ? infoEstatus(c.dia.estatus) : { texto: porLlegar ? "Aún no llega" : !c.dia && analisisDesde && c.fecha < analisisDesde ? "Sin análisis" : "Sin cálculo", icono: "–", tono: "neutro" };
             const festivo = c.dia && c.dia.estatus === "festivo";
             return (
               <div key={c.clave} role="gridcell" className="asr__celda-caja">
@@ -88,7 +88,7 @@ export default function CuadriculaAsistencia({ desde, hasta, dias, onAbrirDia, e
                   <span className="asr__celda-estatus">
                     <span aria-hidden="true" className="asr__icono">{info.icono}</span> {info.texto}
                   </span>
-                  {c.dia && Number(c.dia.minutos_retardo) > 0 && <span className="asr__celda-min">{c.dia.minutos_retardo} min</span>}
+                  {c.dia && c.dia.estatus !== "pendiente" && Number(c.dia.minutos_retardo) > 0 && <span className="asr__celda-min">{c.dia.minutos_retardo} min</span>}
                   {/* el nombre accesible nace del contenido: el texto visible va primero y esto solo añade el día completo */}
                   <span className="asi__sr">, {fechaLargaCelda(c)}</span>
                 </button>

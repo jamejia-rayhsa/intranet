@@ -51,7 +51,7 @@ const ROLES = {
   portal_admin: { user: { usuario_id: 7, rol_id: 3, rol_nombre: "portal_admin" }, permisos: {} },
 };
 // Ficha de empleado de cada usuario; el jefe 20 tiene a 21 y 22 como subordinados directos
-const FICHAS = { 1: { id: 10 }, 2: { id: 20 }, 3: { id: 30 }, 4: { id: 40 }, 5: { id: 50 } }; // 8 (rh_lectura): sin ficha
+const FICHAS = { 1: { id: 10, estatus: "activo" }, 2: { id: 20, estatus: "activo" }, 3: { id: 30, estatus: "activo" }, 4: { id: 40, estatus: "activo" }, 5: { id: 50, estatus: "activo" } }; // 8 (rh_lectura): sin ficha
 const SUBORDINADOS = { 20: [21, 22], 30: [31] };
 
 function como(rol) {
@@ -171,7 +171,8 @@ describe("subordinados dados de baja", () => {
     await get("/api/asistencia/resultados?desde=2026-10-01&hasta=2026-10-15");
     const q = consultasDatos(/FROM empleados\s+WHERE jefe_inmediato_id/)[0];
     expect(q.params).toEqual([20, "2026-10-01"]);
-    expect(q.sql).toMatch(/estatus IS DISTINCT FROM 'baja' OR \(fecha_baja IS NOT NULL AND fecha_baja >= \$2::date\)/);
+    expect(q.sql).toMatch(/estatus = 'activo' OR \(empleados\.estatus = 'baja' AND empleados\.fecha_baja IS NOT NULL AND empleados\.fecha_baja >= \$2::date\)/);
+    expect(q.sql).not.toMatch(/IS DISTINCT FROM 'baja'/); // un suspendido no es subordinado vigente
   });
 });
 
@@ -184,7 +185,9 @@ describe("GET /periodos - datos de gestión", () => {
       const d = (await get("/api/asistencia/periodos")).body.datos[0];
       expect(d).not.toHaveProperty("reabierto_motivo");
       expect(d).not.toHaveProperty("reabierto_por");
-      expect(d.veces_reabierto).toBe(1);
+      expect(d).not.toHaveProperty("veces_reabierto");
+      expect(d).not.toHaveProperty("id");
+      expect(d.estado).toBe("abierto");
     }
     for (const rol of ["rh_admin", "rh_lectura", "super_admin"]) {
       como(rol);

@@ -12,6 +12,7 @@ const CLAVE_MOTOR = 1;
 const INTERVALO_REINTENTO_MS = 250;
 
 const dormir = (ms) => new Promise((resolver) => setTimeout(resolver, ms));
+const TIEMPO_REAL = { ahora: () => Date.now(), dormir };
 
 /**
  * Ejecuta fn(cliente) con el candado del motor. Si otro proceso lo tiene devuelve { ocupado: true } sin ejecutar
@@ -21,19 +22,19 @@ const dormir = (ms) => new Promise((resolver) => setTimeout(resolver, ms));
  * `control` (objeto vacío que pasa quien llama) recibe { cliente, pid, liberado }: con él un vigilante puede
  * ABORTAR la corrida (abortarCorrida) si se cuelga. `statementTimeoutMs` pone un statement_timeout de sesión en la
  * conexión dedicada (se restablece antes de devolverla al pool) y lo deja en cliente.timeoutMs para los SET LOCAL
- * de las transacciones de la corrida.
+ * de las transacciones de la corrida. `tiempo` ({ ahora, dormir }) se inyecta en las pruebas: la espera no depende del reloj real.
  */
-async function conCandadoDelMotor(fn, { esperaMs = 0, pool = grupo, control = null, statementTimeoutMs = null } = {}) {
+async function conCandadoDelMotor(fn, { esperaMs = 0, pool = grupo, control = null, statementTimeoutMs = null, tiempo = TIEMPO_REAL } = {}) {
   const cliente = await pool.connect();
   let errorLiberar;
   try {
-    const limite = Date.now() + esperaMs;
+    const limite = tiempo.ahora() + esperaMs;
     let obtenido = false;
     for (;;) {
       const r = await cliente.query("SELECT pg_try_advisory_lock($1::int, $2::int) AS obtenido", [ESPACIO_MOTOR, CLAVE_MOTOR]);
       obtenido = Boolean(r.rows[0] && r.rows[0].obtenido);
-      if (obtenido || Date.now() >= limite) break;
-      await dormir(INTERVALO_REINTENTO_MS);
+      if (obtenido || tiempo.ahora() >= limite) break;
+      await tiempo.dormir(INTERVALO_REINTENTO_MS);
     }
     if (!obtenido) return { ocupado: true };
     if (control) {

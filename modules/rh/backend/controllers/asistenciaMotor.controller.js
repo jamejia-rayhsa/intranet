@@ -83,6 +83,9 @@ function leerRango(origen) {
 const respuestaPaginada = (res, filas, total, pag) =>
   res.json({ exito: true, datos: filas, paginacion: { pagina: pag.pagina, limite: pag.limite, total } });
 
+// Solo un empleado ACTIVO consulta lo propio o a su equipo (fail-closed: sin estatus conocido no hay acceso)
+const estaActivo = (empleado) => Boolean(empleado) && empleado.estatus === "activo";
+
 /**
  * { todos: true } (RH) | { ids } propio + subordinados directos | { vacio: true } sin ficha de empleado.
  * `soloEquipo` (pantalla «Mi equipo»): SOLO los subordinados directos vigentes, sin el propio empleado y sin importar el
@@ -91,7 +94,7 @@ const respuestaPaginada = (res, filas, total, pag) =>
 async function alcanceDeLectura(req, desde, { soloEquipo = false } = {}) {
   if (soloEquipo) {
     const jefe = await Empleado.obtenerPorUsuarioId(req.user.usuario_id);
-    if (!jefe) return { vacio: true };
+    if (!estaActivo(jefe)) return { vacio: true }; // un jefe dado de baja o suspendido no tiene equipo
     const ids = (await Resultados.idsVisibles(jefe.id, desde)).filter((id) => id !== jefe.id);
     return { ids, propio: jefe };
   }
@@ -102,7 +105,8 @@ async function alcanceDeLectura(req, desde, { soloEquipo = false } = {}) {
     return { todos: true };
   }
   const propio = await Empleado.obtenerPorUsuarioId(req.user.usuario_id);
-  if (!propio) return { vacio: true };
+  // Sin ficha, o dado de baja / suspendido: sin acceso (ni a lo propio ni a un equipo que ya no es suyo)
+  if (!estaActivo(propio)) return { vacio: true };
   return { ids: await Resultados.idsVisibles(propio.id, desde), propio };
 }
 
@@ -185,7 +189,8 @@ const Controlador = {
       const alcance = await alcanceDeLectura(req, fecha);
       if (alcance.vacio) return denegar(res);
       if (!alcance.todos && !alcance.ids.includes(id)) return denegar(res);
-      const r = await Resultados.detalleDia({ empleadoId: id, fecha, esRH: Boolean(alcance.todos) });
+      const vista = alcance.todos ? "rh" : alcance.propio && alcance.propio.id === id ? "propio" : "equipo";
+      const r = await Resultados.detalleDia({ empleadoId: id, fecha, vista });
       if (!r) return res.status(404).json({ exito: false, mensaje: "Ese día no tiene un resultado calculado" });
       res.set("Cache-Control", "no-store");
       return res.json({ exito: true, datos: r });

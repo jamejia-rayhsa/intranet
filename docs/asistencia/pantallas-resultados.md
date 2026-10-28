@@ -40,7 +40,7 @@ El motor, sus reglas y sus resultados no se tocaron.
 
 ## Cómo validar una quincena con RH
 
-1. En *Resultados* elige la quincena. Revisa las tarjetas y el % de puntualidad (son del periodo completo; los filtros solo afectan la tabla y su total aparece en una línea aparte) (= puntuales ÷ puntuales + retardos + faltas + salidas anticipadas + incompletas + justificadas; no cuentan descansos, festivos, vacaciones, permisos ni pendientes).
+1. En *Resultados* elige la quincena. Revisa las tarjetas y el % de puntualidad (son del periodo completo; los filtros solo afectan la tabla y su total aparece en una línea aparte) (= puntuales ÷ puntuales + retardos + faltas + salidas anticipadas + incompletas; no cuentan descansos, festivos, vacaciones, permisos, días justificados ni pendientes).
 2. Recorre los atajos «Para revisar»: **Más faltas** (¿no checan por su puesto o su código apunta a otra persona?), **Faltas con marcas** (llegó más de 30 min tarde u otra marca fuera de lo esperado), **Incompletas por comida**
    (la última marca cae entre 13:00 y 16:00: ¿salió a comer y no volvió, o se fue y olvidó checar?) y **Sin ninguna marca**.
 3. Abre la cuadrícula de 5 a 10 empleados y compara con la lista de BioTime. Justifica lo que corresponda (motivo obligatorio); se puede anular y el día vuelve a su cálculo original.

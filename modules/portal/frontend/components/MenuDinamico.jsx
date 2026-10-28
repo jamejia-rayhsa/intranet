@@ -187,7 +187,7 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
 
   // Contexto de asistencia (caché corta en cliente): solo se pide a quien tiene Asistencia:consulta
   const consultaAsistencia = tieneAccesoMenu({ usuario, permisos, modulo: 'rh', opcion: 'Asistencia', requiere: REQUIERE_CONSULTA_ASISTENCIA });
-  const { datos: contextoAsistencia } = useContextoAsistencia({ habilitado: Boolean(usuario) && consultaAsistencia });
+  const { datos: contextoAsistencia } = useContextoAsistencia({ habilitado: Boolean(usuario) && consultaAsistencia, refrescarCon: location.pathname });
   const esAdmin = usuario?.roles?.some(r => ROLES_ADMIN.includes(r));
   const modulosActivos = modulos.filter(m => m.activo);
 

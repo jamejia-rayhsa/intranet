@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listarPeriodos, listarResultados, resumenResultados, miEquipoHoy, mensajeDeError } from "../services/asistencia.service";
-import useContextoAsistencia from "../hooks/useContextoAsistencia";
+import useContextoAsistencia, { invalidarContextoAsistencia } from "../hooks/useContextoAsistencia";
 import useFocoTitulo from "../hooks/useFocoTitulo";
 import EstadoCarga from "../components/asistencia/EstadoCarga";
 import CuadriculaAsistencia from "../components/asistencia/CuadriculaAsistencia";
@@ -8,7 +8,7 @@ import DetalleDiaPersonaDialogo from "../components/asistencia/DetalleDiaPersona
 import { ESTATUS, ORDEN_TARJETAS, FORMULA_PUNTUALIDAD, porcentajePuntualidad, textoPorcentaje, diasEvaluados, totalesDeResumen } from "../utils/asistenciaResultados";
 import { horaLocal, partesLocales } from "../utils/asistenciaFechas";
 import {
-  quincenasVisibles, quincenaPorOmision, claveQuincena, textoQuincena, avisoDelPeriodo, esJefe, combinarEquipo, filtrarEquipo,
+  quincenasVisibles, quincenaPorOmision, desdeEfectivo, claveQuincena, textoQuincena, avisoDelPeriodo, esJefe, estadoDeCuenta, combinarEquipo, filtrarEquipo,
   textoEquipoFiltrado, incidenciasDeFila, nombrePersona, resumenHoy, ATAJOS_EQUIPO, AVISO_MOTOR, MSG_NO_ES_JEFE, MSG_EQUIPO_ACOTADO,
   VISUAL_HOY,
 } from "../utils/asistenciaMiAsistencia";
@@ -55,6 +55,7 @@ export default function MiEquipoPage() {
   const solicitud = useRef(0);
   const solicitudDias = useRef(0);
   const tituloPersonaRef = useRef(null);
+  const tituloQuincenaRef = useRef(null);
 
   const hoy = contexto ? contexto.hoy : "";
   const analisisDesde = contexto ? contexto.analisis_desde : "";
@@ -75,10 +76,11 @@ export default function MiEquipoPage() {
       if (manual) setAvisoHoy(`Estado de hoy actualizado a las ${horaLocal(r.datos.ahora)}.`);
     } catch (err) {
       setErrorHoy(mensajeDeError(err, "No se pudo cargar el estado de hoy de tu equipo"));
+      if (err && err.status === 403) { invalidarContextoAsistencia(); ctx.reintentar(); } // ya no eres jefe: se relee tu contexto
     } finally {
       setCargandoHoy(false);
     }
-  }, []);
+  }, [ctx.reintentar]);
 
   useEffect(() => {
     if (!jefe) return undefined;
@@ -114,7 +116,7 @@ export default function MiEquipoPage() {
     setCargando(true);
     setError("");
     try {
-      const r = await resumenResultados({ desde: quincena.fecha_inicio, hasta: quincena.fecha_fin, soloEquipo: true, limite: 500 });
+      const r = await resumenResultados({ desde: desdeEfectivo(quincena, analisisDesde), hasta: quincena.fecha_fin, soloEquipo: true, limite: 500 });
       if (mia !== solicitud.current) return;
       setResumen(r.datos || []);
     } catch (err) {
@@ -124,7 +126,7 @@ export default function MiEquipoPage() {
     } finally {
       if (mia === solicitud.current) setCargando(false);
     }
-  }, [quincena]);
+  }, [quincena, analisisDesde]);
   useEffect(() => {
     if (jefe && quincena) {
       setPersona(null);
@@ -139,7 +141,7 @@ export default function MiEquipoPage() {
     setCargandoDias(true);
     setErrorDias("");
     try {
-      const r = await listarResultados({ desde: quincena.fecha_inicio, hasta: quincena.fecha_fin, empleadoId: persona.id, soloEquipo: true, limite: 100 });
+      const r = await listarResultados({ desde: desdeEfectivo(quincena, analisisDesde), hasta: quincena.fecha_fin, empleadoId: persona.id, soloEquipo: true, limite: 100 });
       if (mia !== solicitudDias.current) return;
       setDiasPersona(r.datos || []);
     } catch (err) {
@@ -149,7 +151,7 @@ export default function MiEquipoPage() {
     } finally {
       if (mia === solicitudDias.current) setCargandoDias(false);
     }
-  }, [persona, quincena]);
+  }, [persona, quincena, analisisDesde]);
   useEffect(() => {
     if (persona) cargarDias();
   }, [persona, cargarDias]);
@@ -162,11 +164,22 @@ export default function MiEquipoPage() {
   const visibles = useMemo(() => filtrarEquipo(filas, filtros), [filas, filtros]);
   const estadosHoy = useMemo(() => filas.filter((f) => f.hoy && !f.de_baja).map((f) => f.hoy), [filas]);
   const aviso = quincena ? avisoDelPeriodo(quincena.estado, { equipo: true }) : null;
-  const sinAnalizar = filas.filter((f) => f.sin_nomina);
+  const sinNomina = filas.filter((f) => f.sin_nomina);
+  const nominaRepetida = filas.filter((f) => f.nomina_repetida);
 
   function abrirPersona(f) {
-    setPersona({ id: f.empleado_id, nombre: nombrePersona(f), sinNomina: f.sin_nomina });
+    setPersona({ id: f.empleado_id, nombre: nombrePersona(f), sinNomina: f.sin_nomina || f.nomina_repetida });
     setTimeout(() => tituloPersonaRef.current && tituloPersonaRef.current.focus(), 0);
+  }
+  // Al cerrar la cuadrícula el foco vuelve al nombre de esa persona (el botón que la cerró desaparece del DOM)
+  function cerrarCuadricula() {
+    const id = persona && persona.id;
+    setPersona(null);
+    setTimeout(() => {
+      const visible = [...document.querySelectorAll(`[data-persona="${id}"]`)].find((el) => el.offsetParent !== null);
+      if (visible) visible.focus();
+      else if (tituloQuincenaRef.current) tituloQuincenaRef.current.focus();
+    }, 0);
   }
 
   const totales = useMemo(() => totalesDeResumen(resumen), [resumen]);
@@ -181,7 +194,11 @@ export default function MiEquipoPage() {
 
       <EstadoCarga cargando={ctx.cargando} error={ctx.error} onReintentar={ctx.reintentar} />
 
-      {contexto && !jefe && <p className="asi__aviso asi__aviso--info" role="status">{MSG_NO_ES_JEFE}</p>}
+      {contexto && !jefe && (
+        <p className="asi__aviso asi__aviso--info" role="status">
+          {(estadoDeCuenta(contexto) || {}).tipo === "inactivo" ? estadoDeCuenta(contexto).mensaje : MSG_NO_ES_JEFE}
+        </p>
+      )}
 
       {jefe && (
         <>
@@ -218,7 +235,7 @@ export default function MiEquipoPage() {
           </section>
 
           <section aria-labelledby="eq-quincena">
-            <h2 id="eq-quincena">Quincena</h2>
+            <h2 id="eq-quincena" ref={tituloQuincenaRef} tabIndex={-1}>Quincena</h2>
             {errorPeriodos && (
               <div className="asi__aviso asi__aviso--error" role="alert">
                 <span>{errorPeriodos}</span>
@@ -242,9 +259,14 @@ export default function MiEquipoPage() {
                   Puntualidad del equipo en la quincena: <strong>{textoPorcentaje(porcentajePuntualidad(totales))}</strong>
                   {" "}({diasEvaluados(totales)} días evaluados). {FORMULA_PUNTUALIDAD}
                 </p>
-                {sinAnalizar.length > 0 && (
+                {sinNomina.length > 0 && (
                   <p className="asi__aviso asi__aviso--advertencia" role="status">
-                    {sinAnalizar.length === 1 ? "1 persona de tu equipo no tiene" : `${sinAnalizar.length} personas de tu equipo no tienen`} número de nómina y no se analiza(n): {sinAnalizar.map(nombrePersona).join(", ")}. Avisa a RH.
+                    {sinNomina.length === 1 ? "1 persona de tu equipo no tiene" : `${sinNomina.length} personas de tu equipo no tienen`} número de nómina y no se analiza(n): {sinNomina.map(nombrePersona).join(", ")}. Avisa a RH.
+                  </p>
+                )}
+                {nominaRepetida.length > 0 && (
+                  <p className="asi__aviso asi__aviso--advertencia" role="status">
+                    Nómina repetida (RH debe corregirla; mientras tanto no se analiza): {nominaRepetida.map(nombrePersona).join(", ")}.
                   </p>
                 )}
 
@@ -284,11 +306,11 @@ export default function MiEquipoPage() {
                           {visibles.map((f) => (
                             <tr key={f.empleado_id} className={persona && persona.id === f.empleado_id ? "asr__fila-activa" : undefined}>
                               <th scope="row">
-                                <button type="button" className="asr__enlace" onClick={() => abrirPersona(f)}>{nombrePersona(f)}</button>
+                                <button type="button" className="asr__enlace" data-persona={f.empleado_id} onClick={() => abrirPersona(f)}>{nombrePersona(f)}</button>
                                 <span className="asi__sec">{f.numero_nomina || "Sin nómina"}{f.de_baja ? " · baja" : ""}</span>
                               </th>
-                              {f.sin_nomina ? (
-                                <td colSpan={COLUMNAS.length + 1}>Sin nómina: no se analiza</td>
+                              {f.sin_nomina || f.nomina_repetida ? (
+                                <td colSpan={COLUMNAS.length + 1}>{f.sin_nomina ? "Sin nómina: no se analiza" : "Su nómina está repetida: RH debe corregirla"}</td>
                               ) : (
                                 <>
                                   {COLUMNAS.map((e) => <td key={e} className={`asi__num${e === "falta" && f.falta > 0 ? " asr__num-falta" : ""}`}>{f[e]}</td>)}
@@ -304,10 +326,10 @@ export default function MiEquipoPage() {
                     <ul className="asm__equipo" aria-label="Tu equipo en la quincena">
                       {visibles.map((f) => (
                         <li key={f.empleado_id} className="asm__persona">
-                          <button type="button" className="asr__enlace" onClick={() => abrirPersona(f)}>{nombrePersona(f)}</button>
+                          <button type="button" className="asr__enlace" data-persona={f.empleado_id} onClick={() => abrirPersona(f)}>{nombrePersona(f)}</button>
                           <span className="asi__sec">{f.numero_nomina || "Sin nómina"}{f.de_baja ? " · baja" : ""}</span>
-                          {f.sin_nomina ? (
-                            <p className="asm__persona-aviso">Sin nómina: no se analiza</p>
+                          {f.sin_nomina || f.nomina_repetida ? (
+                            <p className="asm__persona-aviso">{f.sin_nomina ? "Sin nómina: no se analiza" : "Su nómina está repetida: RH debe corregirla"}</p>
                           ) : (
                             <>
                               <p className="asm__persona-resumen">{incidenciasDeFila(f)}</p>
@@ -334,7 +356,7 @@ export default function MiEquipoPage() {
             <section aria-labelledby="eq-persona" className="asi__bloque">
               <h2 id="eq-persona" ref={tituloPersonaRef} tabIndex={-1}>Quincena de {persona.nombre}</h2>
               <p className="asi__ayuda">Cada cuadro es un día. Toca uno (o muévete con las flechas e Intro) para ver su detalle.</p>
-              <button type="button" className="asi__btn asi__btn--chico" onClick={() => setPersona(null)}>Cerrar cuadrícula</button>
+              <button type="button" className="asi__btn asi__btn--chico" onClick={cerrarCuadricula}>Cerrar cuadrícula</button>
               <EstadoCarga cargando={cargandoDias} error={errorDias} onReintentar={cargarDias} />
               {!cargandoDias && !errorDias && (
                 <CuadriculaAsistencia
@@ -342,6 +364,7 @@ export default function MiEquipoPage() {
                   hasta={quincena.fecha_fin}
                   dias={diasPersona}
                   hoy={hoy}
+                  analisisDesde={analisisDesde}
                   abrirSinCalculo
                   onAbrirDia={setDiaAbierto}
                   etiqueta={`Días de ${persona.nombre}, ${quincena.fecha_inicio} a ${quincena.fecha_fin}`}

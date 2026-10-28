@@ -31,7 +31,7 @@ function resumenTurno(efectivo, hoy) {
 // El motor crea las quincenas al correr: si la actual aún no existe se calcula con la misma regla (1-15 y 16-fin de mes)
 function periodoSinCrear(hoy) {
   const q = quincenaDe(hoy);
-  return { id: null, fecha_inicio: q.inicio, fecha_fin: q.fin, estado: "abierto" };
+  return { fecha_inicio: q.inicio, fecha_fin: q.fin, estado: "abierto" };
 }
 
 const Controlador = {
@@ -45,7 +45,7 @@ const Controlador = {
       const hoy = await Turno.hoyMexico();
       const parametros = await Motor.leerParametros();
       const periodo = (await Mi.periodoDe(hoy)) || periodoSinCrear(hoy);
-      const base = { hoy, analisis_desde: parametros.analisis_desde, periodo_actual: periodo };
+      const base = { hoy, analisis_desde: parametros.analisis_desde, periodo_actual: { fecha_inicio: periodo.fecha_inicio, fecha_fin: periodo.fecha_fin, estado: periodo.estado } };
       res.set("Cache-Control", "no-store");
       if (!propio) {
         return res.json({ exito: true, datos: { ...base, vinculado: false, empleado: null, es_jefe: false, subordinados_directos: 0 } });
@@ -54,12 +54,20 @@ const Controlador = {
       if (!ficha) {
         return res.json({ exito: true, datos: { ...base, vinculado: false, empleado: null, es_jefe: false, subordinados_directos: 0 } });
       }
+      // Dado de baja o suspendido: ni «Mi asistencia» ni «Mi equipo» (aunque conserve la cuenta y subordinados asignados)
+      if (ficha.estatus !== "activo") {
+        return res.json({
+          exito: true,
+          datos: { ...base, vinculado: true, activo: false, empleado: { nombre: nombreCompleto(ficha), estatus: ficha.estatus }, es_jefe: false, subordinados_directos: 0 },
+        });
+      }
       const [efectivo, subordinados] = await Promise.all([Turno.obtenerEfectivo(propio.id, hoy), Mi.contarSubordinadosDirectos(propio.id)]);
       return res.json({
         exito: true,
         datos: {
           ...base,
           vinculado: true,
+          activo: true,
           empleado: {
             id: ficha.id,
             nombre: nombreCompleto(ficha),
@@ -89,6 +97,7 @@ const Controlador = {
       res.set("Cache-Control", "no-store");
       const ahora = new Date().toISOString();
       if (!propio) return res.json({ exito: true, datos: { hoy, ahora, es_jefe: false, equipo: [], truncado: false } });
+      if (propio.estatus !== "activo") return res.json({ exito: true, datos: { hoy, ahora, es_jefe: false, equipo: [], truncado: false } });
       const filas = await Mi.equipoHoy(propio.id, hoy);
       const equipo = filas.map((f) => ({ ...f, nombre_completo: nombreCompleto(f) }));
       return res.json({
