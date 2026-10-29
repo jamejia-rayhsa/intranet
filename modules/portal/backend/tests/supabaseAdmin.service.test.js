@@ -95,6 +95,27 @@ describe('supabaseAdmin.service', () => {
     expect(e.definitivo).toBeUndefined();
   });
 
+  it.each([400, 422, 500, 502, 504, 429])('un %i con respuesta HTTP lleva conRespuestaHttp (delegacionPermisos compensa como siempre)', async (estado) => {
+    fetch.mockResolvedValueOnce(respuesta(estado, { msg: 'x' }));
+    const e = await SupabaseAdmin.actualizarPassword('x', 'p').catch((x) => x);
+    expect(e.conRespuestaHttp).toBe(true);
+  });
+
+  it('sin respuesta HTTP (timeout/red) NO lleva conRespuestaHttp', async () => {
+    fetch.mockRejectedValueOnce(new Error('ECONNRESET'));
+    const e = await SupabaseAdmin.actualizarPassword('x', 'p').catch((x) => x);
+    expect(e.conRespuestaHttp).toBeUndefined();
+    expect(e.incierto).toBe(true);
+  });
+
+  it('crearUsuario envía appMetadata como app_metadata (no editable por el usuario) y metadata como user_metadata', async () => {
+    fetch.mockResolvedValueOnce(respuesta(200, { id: 'u1' }));
+    await SupabaseAdmin.crearUsuario({ correo: 'a@b.c', metadata: { nombre: 'A' }, appMetadata: { origen: 'importacion_usuarios' } });
+    const cuerpo = JSON.parse(fetch.mock.calls[fetch.mock.calls.length - 1][1].body);
+    expect(cuerpo.app_metadata).toEqual({ origen: 'importacion_usuarios' });
+    expect(cuerpo.user_metadata).toEqual({ nombre: 'A' });
+  });
+
   it.each([400, 401, 403, 404, 409, 422])('un %i es un rechazo DEFINITIVO de GoTrue', async (estado) => {
     fetch.mockResolvedValueOnce(respuesta(estado, { msg: 'x' }));
     const e = await SupabaseAdmin.actualizarPassword('x', 'p').catch((x) => x);

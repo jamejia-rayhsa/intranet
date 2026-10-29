@@ -258,17 +258,26 @@ describe("aplicar", () => {
       expect(estado.empleados[0].usuario_id).toBeNull();
       expect(gotrue.eliminarUsuario).not.toHaveBeenCalled();
     });
+    it("un origen FALSIFICADO en user_metadata (editable por el usuario) no basta para adoptar la cuenta", async () => {
+      gotrue.crearUsuario.mockRejectedValue(Object.assign(new Error("x"), { status: 422, definitivo: true }));
+      gotrue.obtenerPorCorreo.mockResolvedValue({ id: "uid-falso", email: correo("ana"), user_metadata: { origen: "importacion_usuarios" }, app_metadata: { provider: "email" } });
+      const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
+      expect(r.filas[0].estado).toBe("error");
+      expect(r.filas[0].motivo).toMatch(/preexistente, no se adopta/);
+      expect(r.filas[0].motivo).toMatch(/elimínala en Supabase Auth/);
+      expect(estado.usuarios).toHaveLength(0);
+    });
     it("422 con una cuenta que ya usa OTRA fila local: tampoco se adopta", async () => {
       estado.usuarios.push({ id: 90, correo: "otro@rayhsa.com.mx", nombre: "O", apellido: "T", auth_tipo: "ms365", activo: true, auth_uid: "uid-x" });
       gotrue.crearUsuario.mockRejectedValue(Object.assign(new Error("x"), { status: 422, definitivo: true }));
-      gotrue.obtenerPorCorreo.mockResolvedValue({ id: "uid-x", email: correo("ana"), user_metadata: { origen: "importacion_usuarios" } });
+      gotrue.obtenerPorCorreo.mockResolvedValue({ id: "uid-x", email: correo("ana"), app_metadata: { origen: "importacion_usuarios" } });
       const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
       expect(r.filas[0].estado).toBe("error");
       expect(estado.usuarios.map((u) => u.id)).toEqual([90]);
     });
     it("422 con una cuenta marcada por una importación y sin fila local: se ADOPTA (queda activa, con rol y vínculo)", async () => {
       gotrue.crearUsuario.mockRejectedValue(Object.assign(new Error("x"), { status: 422, definitivo: true }));
-      gotrue.obtenerPorCorreo.mockResolvedValue({ id: "uid-huerfano", email: correo("ana"), user_metadata: { origen: "importacion_usuarios" } });
+      gotrue.obtenerPorCorreo.mockResolvedValue({ id: "uid-huerfano", email: correo("ana"), app_metadata: { origen: "importacion_usuarios" } });
       const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
       expect(r.filas[0]).toMatchObject({ estado: "creada", empleado_id: 1 });
       expect(estado.usuarios[0]).toMatchObject({ auth_uid: "uid-huerfano", activo: true, auth_tipo: "ms365" });
@@ -288,6 +297,12 @@ describe("aplicar", () => {
     expect(r.filas[0].estado).toBe("crear");
     expect(r.filas[0].avisos.join(" ")).toMatch(/alias con '\+'/);
   });
+  it("una fila inactiva que conserva su auth_uid se omite con un mensaje que dice qué hacer", async () => {
+    estado.usuarios.push({ id: 70, correo: correo("ana"), nombre: "A", apellido: "B", auth_tipo: "ms365", activo: false, auth_uid: "uid-z" });
+    const r = await Modelo.vistaPrevia(filas({ correo: correo("ana"), numero_nomina: "90001" }));
+    expect(r.filas[0].estado).toBe("omitir");
+    expect(r.filas[0].motivo).toMatch(/inactiva.*elimínala en Administración de usuarios/);
+  });
   it("una excepción inesperada al llamar a GoTrue (sin marca) también es 'verificar' y no borra la fila", async () => {
       gotrue.crearUsuario.mockRejectedValue(new TypeError("Cannot read properties of null"));
       const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
@@ -303,10 +318,13 @@ describe("aplicar", () => {
     });
     it("la cuenta se crea marcada con el origen de la importación y SIN datos internos (usuario_id)", async () => {
       await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
-      const meta = gotrue.crearUsuario.mock.calls[0][0].metadata;
-      expect(meta).toMatchObject({ origen: "importacion_usuarios", nombre: "Ana" });
-      expect(meta.importacion).toMatch(/^[0-9a-f-]{36}$/);
-      expect(meta).not.toHaveProperty("usuario_id");
+      const { metadata, appMetadata } = gotrue.crearUsuario.mock.calls[0][0];
+      // El origen va en app_metadata (el usuario no puede editarla); user_metadata solo lleva el nombre
+      expect(appMetadata).toMatchObject({ origen: "importacion_usuarios" });
+      expect(appMetadata.importacion).toMatch(/^[0-9a-f-]{36}$/);
+      expect(metadata).toEqual({ nombre: "Ana", apellido: "Prueba Ejemplo" });
+      expect(metadata).not.toHaveProperty("origen");
+      expect(JSON.stringify([metadata, appMetadata])).not.toMatch(/usuario_id/);
     });
     it("error 500 definitivo: mensaje propio sin texto de GoTrue", async () => {
       gotrue.crearUsuario.mockRejectedValue(Object.assign(new Error("SUPABASE_SERVICE_ROLE_KEY no configurada"), { status: 500, definitivo: true }));
@@ -330,7 +348,7 @@ describe("aplicar", () => {
       gotrue.crearUsuario.mockRejectedValue(Object.assign(new Error("t"), { status: 504, incierto: true }));
       await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
       gotrue.crearUsuario.mockReset();
-      gotrue.obtenerPorCorreo.mockResolvedValue({ id: "uid-creado-antes", email: correo("ana"), user_metadata: { origen: "importacion_usuarios", importacion: "x" } });
+      gotrue.obtenerPorCorreo.mockResolvedValue({ id: "uid-creado-antes", email: correo("ana"), app_metadata: { origen: "importacion_usuarios", importacion: "x" } });
       const vp = await Modelo.vistaPrevia(filas({ correo: correo("ana"), numero_nomina: "90001" }), 2);
       expect(vp.filas[0].estado).toBe("crear");
       expect(vp.filas[0].avisos.join(" ")).toMatch(/incompleta/);
@@ -448,7 +466,7 @@ describe("aplicar", () => {
     });
     it("si el vínculo falla con una cuenta ADOPTADA no se borra la cuenta de GoTrue: la fila conserva su auth_uid (inactiva)", async () => {
       gotrue.crearUsuario.mockRejectedValue(Object.assign(new Error("x"), { status: 422, definitivo: true }));
-      gotrue.obtenerPorCorreo.mockResolvedValue({ id: "uid-huerfano", email: correo("ana"), user_metadata: { origen: "importacion_usuarios" } });
+      gotrue.obtenerPorCorreo.mockResolvedValue({ id: "uid-huerfano", email: correo("ana"), app_metadata: { origen: "importacion_usuarios" } });
       estado.falla.vinculo = true;
       const r = await Modelo.aplicar(filas({ correo: correo("ana"), numero_nomina: "90001" }), { servicio: gotrue });
       expect(r.filas[0].estado).toBe("error");

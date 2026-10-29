@@ -50,8 +50,11 @@ const llamar = (token, ruta, cuerpo) => {
 };
 const RUTAS = [["/importar/vista-previa", { filas: [fila()] }], ["/importar", { filas: [fila()], confirmar: true }]];
 
+// Reloj fijo: la huella de vista previa depende de la hora; con reloj real una prueba podía depender de saltos del reloj (WSL2) o de la carga
+const AHORA = 1_800_000_000_000;
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.spyOn(Date, 'now').mockReturnValue(AHORA);
   jest.spyOn(console, "error").mockImplementation(() => {});
 });
 afterEach(() => jest.restoreAllMocks());
@@ -160,7 +163,7 @@ describe("importar (aplicar)", () => {
   it("responde con la forma del importador y el detalle por fila", async () => {
     Modelo.aplicar.mockResolvedValue(resultado);
     const r = await llamar("token-super_admin", "/importar", { filas: [conHuella(fila())], confirmar: true });
-    expect(r.status).toBe(200);
+    expect({ status: r.status, mensaje: r.body.mensaje }).toMatchObject({ status: 200 });
     const d = r.body.datos;
     expect(d).toMatchObject({ insertados: 1, duplicados: 1, verificar: 1 });
     expect(d.errores).toEqual([

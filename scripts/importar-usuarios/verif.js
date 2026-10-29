@@ -216,7 +216,8 @@ const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
     sembrar();
     await imp("super_admin", "", { filas: [f(20)], confirmar: true });
     const m = (await gotrueCorreo("n20@rayhsa.com.mx")).user_metadata;
-    ok("metadata en GoTrue: origen e importacion (uuid); sin usuario_id", m.origen === "importacion_usuarios" && /^[0-9a-f-]{36}$/.test(m.importacion) && !("usuario_id" in m) && m.nombre === "Nom20", JSON.stringify(m));
+    const ap20 = (await gotrueCorreo("n20@rayhsa.com.mx")).app_metadata;
+    ok("GoTrue: el origen e id de importación están en app_metadata (no editable por el usuario) y user_metadata solo trae el nombre, sin usuario_id", ap20.origen === "importacion_usuarios" && /^[0-9a-f-]{36}$/.test(ap20.importacion) && !("origen" in m) && !("usuario_id" in m) && m.nombre === "Nom20", JSON.stringify([ap20, m]));
   }
 
   console.log("\n== 9c. Preexistente que NO se adopta / huérfana marcada que SÍ se adopta (sin panel de GoTrue)");
@@ -226,14 +227,28 @@ const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
   const rAj = await imp("super_admin", "", { filas: [{ _fila: 2, correo: "ajena@rayhsa.com.mx", nombre: "Ajena", apellido: "X", numero_nomina: "N1030" }], confirmar: true });
   ok("fila incompleta + cuenta de GoTrue SIN la marca de importación: error 'preexistente, no se adopta'", rAj.status === 200 && rAj.json.datos.errores.length === 1 && /preexistente, no se adopta/.test(rAj.json.datos.errores[0].error));
   ok("no se tocó nada: la fila local sigue incompleta, el empleado libre y la cuenta de GoTrue intacta (sin password nuevo ni borrado)", (await q("SELECT activo, auth_uid FROM usuarios WHERE correo='ajena@rayhsa.com.mx'")).rows[0].auth_uid === null && (await q("SELECT usuario_id FROM empleados WHERE id=$1", [estado().emp[30]])).rows[0].usuario_id === null && Boolean(await gotrueCorreo("ajena@rayhsa.com.mx")));
-  await gt("POST", "/admin/users", { email: "huerfana@rayhsa.com.mx", email_confirm: true, user_metadata: { origen: "importacion_usuarios", importacion: "previa" } });
+  await gt("POST", "/admin/users", { email: "huerfana@rayhsa.com.mx", email_confirm: true, app_metadata: { origen: "importacion_usuarios", importacion: "previa" } });
   const rHu = await imp("super_admin", "", { filas: [{ _fila: 2, correo: "huerfana@rayhsa.com.mx", nombre: "Huerfana", apellido: "Y", numero_nomina: "N1031" }], confirmar: true });
   ok("cuenta marcada por una importación SIN fila local (alguien borró la fila): GoTrue da 422 y se ADOPTA", rHu.status === 200 && rHu.json.datos.insertados === 1 && (await q("SELECT activo, auth_uid FROM usuarios WHERE correo='huerfana@rayhsa.com.mx'")).rows[0].auth_uid === (await gotrueCorreo("huerfana@rayhsa.com.mx")).id, JSON.stringify(rHu.json?.datos?.errores));
-  await gt("POST", "/admin/users", { email: "enuso@rayhsa.com.mx", email_confirm: true, user_metadata: { origen: "importacion_usuarios" } });
+  await gt("POST", "/admin/users", { email: "enuso@rayhsa.com.mx", email_confirm: true, app_metadata: { origen: "importacion_usuarios" } });
   const idUso = (await gotrueCorreo("enuso@rayhsa.com.mx")).id;
   await q("INSERT INTO usuarios (correo, nombre, apellido, auth_tipo, activo, auth_uid) VALUES ('otro-correo@rayhsa.com.mx','O','T','ms365',true,$1)", [idUso]);
   const rUso = await imp("super_admin", "", { filas: [{ _fila: 2, correo: "enuso@rayhsa.com.mx", nombre: "En", apellido: "Uso", numero_nomina: "N1032" }], confirmar: true });
   ok("cuenta marcada pero YA usada por otra fila local: no se adopta (error) y no queda reserva", rUso.json.datos.errores.length === 1 && /no se adopta/.test(rUso.json.datos.errores[0].error) && (await q("SELECT count(*)::int n FROM usuarios WHERE correo='enuso@rayhsa.com.mx'")).rows[0].n === 0);
+
+  console.log("\n== 9c-bis. Un usuario NO puede falsificar el origen (app_metadata) por la API pública de GoTrue");
+  sembrar();
+  await gt("POST", "/admin/users", { email: "falsa@rayhsa.com.mx", email_confirm: true, user_metadata: { nombre: "Falsa" } });
+  const enl = await (await gt("POST", "/admin/generate_link", { type: "magiclink", email: "falsa@rayhsa.com.mx" })).json();
+  const ses = await (await fetch(`${GOTRUE}/verify`, { method: "POST", headers: { apikey: CLAVE, "Content-Type": "application/json" }, body: JSON.stringify({ type: "magiclink", token_hash: enl.hashed_token }) })).json();
+  const comoUsuario = (cuerpo) => fetch(`${GOTRUE}/user`, { method: "PUT", headers: { apikey: CLAVE, Authorization: `Bearer ${ses.access_token}`, "Content-Type": "application/json" }, body: JSON.stringify(cuerpo) });
+  const pu1 = await comoUsuario({ data: { origen: "importacion_usuarios" } });
+  const pu2 = await comoUsuario({ app_metadata: { origen: "importacion_usuarios" } });
+  const gf = await gotrueCorreo("falsa@rayhsa.com.mx");
+  ok(`el propio usuario SÍ puede escribir user_metadata (PUT /user data -> ${pu1.status}, origen=${gf.user_metadata.origen}) pero NO app_metadata (PUT /user app_metadata -> ${pu2.status}, origen=${gf.app_metadata.origen})`, ses.access_token && gf.user_metadata.origen === "importacion_usuarios" && gf.app_metadata.origen !== "importacion_usuarios");
+  await q("INSERT INTO usuarios (correo, nombre, apellido, auth_tipo, activo, auth_uid) VALUES ('falsa@rayhsa.com.mx','Falsa','X','ms365',false,NULL)");
+  const rFa = await imp("super_admin", "", { filas: [{ _fila: 2, correo: "falsa@rayhsa.com.mx", nombre: "Falsa", apellido: "X", numero_nomina: "N1040" }], confirmar: true });
+  ok("con el origen falsificado en user_metadata la cuenta NO se adopta (error 'no se adopta' con instrucción de qué hacer)", rFa.json.datos.errores.length === 1 && /no se adopta/.test(rFa.json.datos.errores[0].error) && /elimínala en Supabase Auth/.test(rFa.json.datos.errores[0].error) && (await q("SELECT auth_uid FROM usuarios WHERE correo='falsa@rayhsa.com.mx'")).rows[0].auth_uid === null);
 
   console.log("\n== 9d. Vista previa obligatoria TAMBIÉN en el servidor (huella firmada) y tope de 1 MB");
   sembrar();
@@ -297,6 +312,19 @@ const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
   ok("auditoría de 200 filas: 200 ids y 200 pares, sin datos personales", audit200.creadas === 200 && audit200.usuarios_creados.length === 200 && audit200.pares.length === 200 && !/@/.test(JSON.stringify(audit200)));
   const sinPool = await api("super_admin", "GET", "/usuarios");
   ok("la API sigue respondiendo tras la importación (pool sano)", sinPool.status === 200);
+
+  console.log("\n== 12b. Un cuerpo enorme se rechaza (413) sin cargarlo en memoria");
+  const pidApi = require("child_process").execSync(`ss -ltnp | grep ":${PUERTO_API} " | grep -o "pid=[0-9]*" | head -1 | cut -d= -f2`).toString().trim();
+  const rss = () => Number(require("child_process").execSync(`ps -o rss= -p ${pidApi}`).toString().trim());
+  const rssAntes = rss();
+  const enorme = Buffer.alloc(60 * 1024 * 1024, 120);
+  const t3 = Date.now();
+  let resp413 = null;
+  for (let i = 0; i < 6; i++) resp413 = await fetch(`http://127.0.0.1:${PUERTO_API}/api/usuarios/importar/vista-previa`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${estado().tokens.super_admin}` }, body: enorme }).catch((e) => ({ status: `error ${e.cause && e.cause.code}` }));
+  const ms413 = Date.now() - t3;
+  await esperar(300);
+  const rssDespues = rss();
+  ok(`6 envíos de 60 MB (360 MB) -> ${resp413.status} en ${ms413} ms en total y la memoria del backend varía ${((rssDespues - rssAntes) / 1024).toFixed(1)} MB (no acumula el cuerpo)`, (resp413.status === 413 || /ECONNRESET|EPIPE/.test(String(resp413.status))) && rssDespues - rssAntes < 40 * 1024);
 
   console.log("\n== 13. I-2: ¿puede una cuenta ms365 obtener contraseña por la puerta pública de GoTrue? (GoTrue real, sin cambiar su configuración)");
   sembrar();

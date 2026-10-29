@@ -24,13 +24,13 @@ Se descarga desde el propio diálogo (CSV con datos ficticios). Columnas (los en
 | CURP | una de las dos | 18 caracteres. Si vienen las dos, deben apuntar al mismo empleado |
 
 Topes: **200 filas y 1 MB por archivo** (el diálogo lo avisa antes de la vista previa). En el servidor: más de 200 filas -> 400 y un
-cuerpo de más de **1 MB -> 413 en JSON** (solo en `/api/usuarios/importar*`; el resto de la API conserva el límite de 100 kb).
+cuerpo de más de **1 MB -> 413 en JSON** (solo en `/api/usuarios/importar*`; el resto de la API conserva el límite de 100 kb). El parser rechaza por `Content-Length` sin leer el cuerpo: 360 MB enviados no aumentan la memoria del backend (probado). Ese parser corre antes de autenticar (hasta 1 MB anónimo en esa ruta; aceptado).
 
 ## Flujo
 
 1. Cargar el archivo. 2. **Verificar filas** (vista previa del servidor, **obligatoria**: sin ella el botón de crear no existe y, además, el
 servidor **exige la huella firmada** que devuelve la vista previa para cada fila: HMAC-SHA256 del usuario, la fila y una caducidad de 30
-minutos; sin huella, con la fila modificada, de otro usuario o vencida -> 400 y no se escribe nada;
+minutos; la clave se deriva del secreto con la etiqueta `importar-usuarios-v1`; sin huella, con la fila modificada, de otro usuario o vencida -> 400 y no se escribe nada;
 `POST /api/usuarios/importar/vista-previa` no escribe en la base ni en GoTrue). Muestra por fila: **se creará** (y con qué empleado),
 **se omitirá** o **error**. 3. **Crear N cuentas** (`POST /api/usuarios/importar` con `confirmar: true`; el servidor revalida cada fila
 con el candado tomado). 4. Reporte por fila (resumen, errores, omitidas, advertencias) y CSV descargable (las celdas que empiezan con
@@ -49,8 +49,9 @@ con el candado tomado). 4. Reporte por fila (resumen, errores, omitidas, adverte
 | Correo, CURP o nómina repetidos dentro del archivo | La primera fila se procesa; las siguientes son error ("ya aparece en la fila N") |
 | El mismo empleado en dos filas | La segunda es error |
 | Nombre del archivo distinto al del empleado | Se crea, con **aviso** (verifica que el correo sea de esa persona) |
-| Correo que ya está en Supabase Auth sin fila local | Si la cuenta la marcó una importación (`origen`) y ninguna fila local la usa: se **adopta**. Si no: error "cuenta preexistente, no se adopta" y se limpia la reserva local |
+| Correo que ya está en Supabase Auth sin fila local | Si la cuenta la marcó una importación (`origen`) y ninguna fila local la usa: se **adopta**. Si no: error "cuenta preexistente, no se adopta" (el mensaje indica eliminarla en Supabase Auth o vincularla a mano) y se limpia la reserva local |
 | Cuenta local incompleta (reserva de una importación interrumpida) | **Se repara al reimportar** (ver abajo): la vista previa la ofrece como "se creará" con el aviso de cuenta incompleta |
+| Fila inactiva que conserva su `auth_uid` (una importación no se completó) | Omitida con mensaje: elimínala en Administración de usuarios (limpia también Supabase Auth) y reimporta |
 | Cuenta incompleta que ya tiene rol o empleado | Error: no se repara sola; revísala en Administración de usuarios |
 
 No hay modo "actualizar": una cuenta existente nunca se modifica (ni su rol ni su estado).
@@ -63,14 +64,15 @@ Por fila: **A)** reserva local `auth_uid NULL, activo = false` (nadie puede entr
 * **Definitivo = solo un rechazo 4xx de GoTrue (salvo 408 y 429)**. 5xx (también un 502/503/504 de un intermediario), tiempo agotado, error de
   red, 2xx sin JSON o sin id y **cualquier excepción inesperada** son **inciertos**: GoTrue pudo haber creado la cuenta. Con un incierto la fila
   queda **"por verificar"** (cuenta local inactiva y sin vincular) y **nunca se borra ni se compensa**. (`supabaseAdmin.service.js` marca
-  `definitivo` o `incierto`; la misma regla vale para el resto de los flujos que usan GoTrue.)
+  `definitivo` o `incierto` y, aparte, `conRespuestaHttp`. **Los demás flujos** (`delegacionPermisos`: editar, resetear contraseña, etc.)
+  siguen compensando ante cualquier respuesta HTTP de GoTrue, como siempre; el criterio 4xx/5xx es solo del importador.)
 * Rechazo 4xx definitivo -> se borra la reserva local recién creada; la fila queda en error.
-* **Reparación sin panel de GoTrue** (reimportar el mismo archivo): cada cuenta se crea con `user_metadata.origen = 'importacion_usuarios'` y un
-  id de importación (sin datos internos como `usuario_id`). Ante una fila "por verificar", una cuenta incompleta o un 422 de GoTrue, el
+* **Reparación sin panel de GoTrue** (reimportar el mismo archivo): cada cuenta se crea con `app_metadata.origen = 'importacion_usuarios'` y un
+  id de importación (**app_metadata**, que el propio usuario NO puede cambiar: comprobado contra GoTrue real, `PUT /auth/v1/user` con
+  `app_metadata` responde 403 y solo deja editar `user_metadata`; sin datos internos como `usuario_id`). Ante una fila "por verificar", una cuenta incompleta o un 422 de GoTrue, el
   reintento consulta GoTrue por **correo exacto**: si existe, tiene ese `origen` y **ninguna fila local usa su id**, la **adopta**
   (completa la fila local, rol y vínculo, sin crear otra cuenta); si existe sin esa marca (o ya la usa otra fila) -> error "cuenta
-  preexistente, no se adopta" y no se toca. Nota: `user_metadata` lo puede editar el propio usuario, pero solo lo puede hacer quien ya
-  controla esa cuenta de GoTrue con ese correo.
+  preexistente, no se adopta" y no se toca. Un `origen` falsificado en `user_metadata` no cuenta: no se adopta.
 * Falla C por un motivo conocido (el empleado cambió, está bloqueado por otra operación, el vínculo no quedó "vinculada" **comprobado dentro de
   la transacción, antes del COMMIT**) -> ROLLBACK y, si la cuenta la creó esta ejecución, se **borra en GoTrue con su id** y la reserva local;
   si GoTrue no deja borrar, o la cuenta era una adoptada, la fila conserva su `auth_uid` (inactiva) y **Eliminar** en Administración de
@@ -115,5 +117,5 @@ Por fila: **A)** reserva local `auth_uid NULL, activo = false` (nadie puede entr
 
 ## Verificación reproducible
 
-`scripts/importar-usuarios/` (README): Postgres y GoTrue **reales** desechables, verificación por HTTP (108 comprobaciones), Chromium (33) y
-mutación (39 mutantes). Datos 100 % ficticios.
+`scripts/importar-usuarios/` (README): Postgres y GoTrue **reales** desechables, verificación por HTTP (111 comprobaciones), Chromium (33) y
+mutación (42 mutantes). Datos 100 % ficticios.

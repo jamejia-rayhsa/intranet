@@ -19,12 +19,12 @@ real** (`supabase/gotrue`, la versión del compose) con un proxy que inyecta fal
    ```
 2. `export VERIF_SALIDA=/tmp/importar-usuarios-verif`; `node scripts/importar-usuarios/gotrue-proxy.js &` (puerto 9999) y
    `scripts/importar-usuarios/backend.sh &` (API en 4670, hablando con el proxy).
-3. `node scripts/importar-usuarios/verif.js`: 108 comprobaciones por HTTP (permisos por rol con la seed real, vista previa sin escribir,
+3. `node scripts/importar-usuarios/verif.js`: 111 comprobaciones por HTTP (permisos por rol con la seed real, vista previa sin escribir,
    alta ms365 sin contraseña + rol + vínculo contra GoTrue real, idempotencia, errores por fila, límites, auditoría, `PUT` sin contraseña
    en ms365, fallos de GoTrue y de la activación con compensación, concurrencia/candados, 200 filas). Re-siembra (`prep.js`) entre secciones.
 4. Chromium (opcional): `playwright` y `axe-core` no son dependencias del repo; indica `PLAYWRIGHT_PATH` y `AXE_PATH`, arranca
    `node node_modules/vite/bin/vite.js --config scripts/importar-usuarios/vite.config.mjs &` (portal real con el `supabase-stub.js` de
    `scripts/cuentas`) y `node scripts/importar-usuarios/ui.js` (33 comprobaciones: permisos del botón, plantilla, topes 200 filas/1 MB, vista
    previa obligatoria, resultado, axe, 360 px, Escape y foco).
-5. Mutación: `python3 scripts/importar-usuarios/mut.py` (39 mutantes sobre las reglas; las pruebas jest deben matarlos; sobrevive uno equivalente: sin `e.enCommit` el error igual cae en "no conocido" -> verificar). Admite filtro: `mut.py COMMIT alias`.
+5. Mutación: `python3 scripts/importar-usuarios/mut.py` (42 mutantes sobre las reglas; las pruebas jest deben matarlos; sobrevive uno equivalente: sin `e.enCommit` el error igual cae en "no conocido" -> verificar). Admite filtro: `mut.py COMMIT alias`.
 6. Limpieza: `docker rm -f gotrue-impusu pg-impusu && docker network rm net-impusu` y parar los procesos de los puertos 9999, 4670 y 5198.

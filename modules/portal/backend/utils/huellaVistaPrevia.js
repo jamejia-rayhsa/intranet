@@ -7,7 +7,9 @@ const crypto = require("crypto");
 const VIGENCIA_MS = 30 * 60 * 1000;
 // Sin SUPABASE_JWT_SECRET (no debería pasar) se usa un secreto aleatorio del proceso: las huellas no sobreviven a un reinicio
 const SECRETO_PROCESO = crypto.randomBytes(32);
-const secreto = () => process.env.SUPABASE_JWT_SECRET || SECRETO_PROCESO;
+// Subclave con etiqueta de dominio: no se reutiliza el secreto crudo que firma los JWT de GoTrue
+const ETIQUETA = "importar-usuarios-v1";
+const secreto = () => crypto.createHmac("sha256", process.env.SUPABASE_JWT_SECRET || SECRETO_PROCESO).update(ETIQUETA).digest();
 
 function carga(usuarioId, fila) {
   return JSON.stringify([usuarioId, fila.fila, fila.correo, fila.nombre, fila.apellido, fila.numero_nomina, fila.curp]);
@@ -27,7 +29,9 @@ function huellaValida(usuarioId, fila, huella, ahora = Date.now()) {
   if (typeof huella !== "string" || huella.length > 120) return false;
   const [venceTexto, firma] = huella.split(".");
   const vence = Number(venceTexto);
-  if (!Number.isSafeInteger(vence) || vence < ahora || vence > ahora + VIGENCIA_MS + 1000 || typeof firma !== "string") return false;
+  // La caducidad va FIRMADA (no se puede alargar sin el secreto): solo se comprueba que no haya vencido. Sin cota superior, un reloj
+  // que retrocede unos segundos entre la vista previa y la aplicación no rechaza una huella legítima
+  if (!Number.isSafeInteger(vence) || vence < ahora || typeof firma !== "string") return false;
   const esperada = Buffer.from(firmar(usuarioId, fila, vence), "hex");
   const recibida = Buffer.from(firma, "hex");
   return esperada.length === recibida.length && crypto.timingSafeEqual(esperada, recibida);

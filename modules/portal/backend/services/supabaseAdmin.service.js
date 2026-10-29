@@ -67,6 +67,9 @@ async function solicitar(metodo, ruta, { cuerpo, conClave = true } = {}) {
       `HTTP ${resp.status}`;
     const e = new Error(`Supabase Auth: ${detalle}`);
     e.status = resp.status;
+    // Hubo respuesta HTTP de GoTrue (cualquiera): los flujos de administración de usuarios (delegacionPermisos) la tratan como "no aplicó" y
+    // compensan, como siempre. El IMPORTADOR usa solo `definitivo`.
+    e.conRespuestaHttp = true;
     // Solo un rechazo 4xx (salvo 408 y 429) garantiza que GoTrue NO aplicó el cambio. Un 5xx (o un 502/503/504 de un proxy
     // intermedio) puede llegar DESPUÉS de que GoTrue aplicó el cambio: resultado INCIERTO, no se compensa.
     if (resp.status >= 400 && resp.status < 500 && resp.status !== 408 && resp.status !== 429) e.definitivo = true;
@@ -77,11 +80,13 @@ async function solicitar(metodo, ruta, { cuerpo, conClave = true } = {}) {
 }
 
 const SupabaseAdmin = {
-  async crearUsuario({ correo, password, passwordHash, metadata }) {
+  async crearUsuario({ correo, password, passwordHash, metadata, appMetadata }) {
     const cuerpo = { email: correo, email_confirm: true };
     if (passwordHash) cuerpo.password_hash = passwordHash;
     else if (password) cuerpo.password = password;
     if (metadata) cuerpo.user_metadata = metadata;
+    // app_metadata NO es editable por el propio usuario (PUT /auth/v1/user solo cambia user_metadata)
+    if (appMetadata) cuerpo.app_metadata = appMetadata;
     const datos = await solicitar("POST", "/admin/users", { cuerpo });
     // 2xx sin JSON válido o sin id: no se sabe si GoTrue creó el usuario
     if (!datos || typeof datos.id !== "string" || !datos.id) {

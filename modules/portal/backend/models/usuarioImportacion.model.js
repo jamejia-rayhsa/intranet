@@ -4,7 +4,7 @@
 // Orden por fila (GoTrue y PostgreSQL no comparten transacción):
 //   A) tx: fila local con auth_uid NULL y activo=false (nadie entra con ella); COMMIT. (Una fila incompleta de una importación
 //      anterior se REUTILIZA en lugar de crear otra.)
-//   B) GoTrue POST /admin/users sin contraseña, marcado con user_metadata.origen = 'importacion_usuarios' (fuera de toda tx).
+//   B) GoTrue POST /admin/users sin contraseña, marcado con app_metadata.origen = 'importacion_usuarios' (no editable por el usuario) (fuera de toda tx).
 //   C) tx: auth_uid + activo=true + rol rh_empleado + vínculo (reutiliza empleadoCuenta, candado 4601); la comprobación del
 //      vínculo va DENTRO de la tx, antes del COMMIT.
 // Qué es "definitivo": solo un rechazo 4xx de GoTrue (salvo 408 y 429). 5xx, timeouts, red, 2xx sin JSON y cualquier excepción
@@ -31,7 +31,7 @@ const ORIGEN_IMPORTACION = "importacion_usuarios";
 const MENSAJE_INCOMPLETA_SUCIA = "Ya existe una cuenta local incompleta (sin cuenta en Supabase Auth) que además tiene rol o empleado: no se repara sola; revísala en Administración de usuarios";
 const AVISO_ALIAS = "El correo lleva un alias con '+': verifica que sea el buzón real de la persona (Microsoft 365 puede entregarlo a otro buzón)";
 const AVISO_REPARAR = "Cuenta incompleta de una importación anterior: al aplicar se consultará Supabase Auth y, si la cuenta la creó una importación, se completará";
-const MENSAJE_AJENA = "La cuenta ya existe en Supabase Auth y no la creó una importación de usuarios (o ya está en uso): cuenta preexistente, no se adopta";
+const MENSAJE_AJENA = "La cuenta ya existe en Supabase Auth y no la creó una importación de usuarios (o ya está en uso): cuenta preexistente, no se adopta. Si es de otra persona o sobra, elimínala en Supabase Auth (consola de Supabase) y reimporta; si es la correcta, vincúlala a mano (Empleados > perfil > Cuenta de usuario)";
 
 class ErrorImportacionUsuarios extends Error {
   constructor(estado, mensaje) {
@@ -99,7 +99,11 @@ async function clasificar(ejecutor, preparadas) {
     const previo = existentes.get(p.fila.correo);
     let reparar = null;
     if (previo) {
-      if (previo.conAuth) return { ...base, estado: "omitir", motivo: "Ya existe una cuenta con ese correo; no se modificó" };
+      if (previo.conAuth) {
+        // Fila inactiva que conserva su auth_uid: una importación anterior no pudo completarla (p. ej. el vínculo falló)
+        const inactiva = previo.filas.every((f) => f.activo === false);
+        return { ...base, estado: "omitir", motivo: inactiva ? "Ya existe una fila inactiva con cuenta en Supabase Auth (una importación anterior no se completó): elimínala en Administración de usuarios (también limpia Supabase Auth) y reimporta" : "Ya existe una cuenta con ese correo; no se modificó" };
+      }
       // Solo con auth_uid NULL: una reserva de una importación interrumpida. Se repara únicamente si está limpia
       const f = previo.filas[0];
       if (previo.filas.length !== 1 || f.activo !== false || f.auth_tipo !== "ms365" || !f.sin_rol || !f.sin_empleado) {
@@ -234,7 +238,8 @@ async function conservarAuthUid(usuarioId, authUid) {
 async function decidirAdopcion(servicio, correo) {
   const hallado = await servicio.obtenerPorCorreo(correo);
   if (!hallado) return { tipo: "no_existe" };
-  const origen = hallado.user_metadata && hallado.user_metadata.origen;
+  // app_metadata: solo la escribe GoTrue/admin; el propio usuario NO puede cambiarla (user_metadata sí, por PUT /auth/v1/user)
+  const origen = hallado.app_metadata && hallado.app_metadata.origen;
   if (origen !== ORIGEN_IMPORTACION || typeof hallado.id !== "string" || !hallado.id) return { tipo: "ajena" };
   const dueno = await grupo.query("SELECT id FROM usuarios WHERE auth_uid = $1", [hallado.id]);
   if (dueno.rows.length > 0) return { tipo: "ajena" };
@@ -284,7 +289,7 @@ async function procesarFila(p, rolId, servicio, importacionId) {
     if (!authUid) {
       try {
         // Sin usuario_id interno en la metadata (el usuario puede editar su user_metadata: no es una fuente de identidad)
-        const nuevo = await servicio.crearUsuario({ correo: p.fila.correo, metadata: { origen: ORIGEN_IMPORTACION, importacion: importacionId, nombre: p.fila.nombre, apellido: p.fila.apellido } });
+        const nuevo = await servicio.crearUsuario({ correo: p.fila.correo, metadata: { nombre: p.fila.nombre, apellido: p.fila.apellido }, appMetadata: { origen: ORIGEN_IMPORTACION, importacion: importacionId } });
         authUid = nuevo && nuevo.id;
       } catch (e) {
         if (!(e && e.definitivo === true && (e.status === 422 || e.status === 409))) throw e;

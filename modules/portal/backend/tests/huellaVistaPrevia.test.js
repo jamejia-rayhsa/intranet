@@ -22,6 +22,25 @@ describe("huellaVistaPrevia", () => {
     const [, firma] = h.split(".");
     expect(H.huellaValida(2, fila(), `${t0 + 10 * H.VIGENCIA_MS}.${firma}`, t0)).toBe(false);
   });
+  it("un reloj que retrocede entre la vista previa y la aplicación NO rechaza una huella legítima (la caducidad va firmada)", () => {
+    const t0 = 1_700_000_000_000;
+    const h = H.crearHuella(2, fila(), t0);
+    expect(H.huellaValida(2, fila(), h, t0 - 60_000)).toBe(true);
+    expect(H.huellaValida(2, fila(), h, t0 - 24 * 3600_000)).toBe(true);
+  });
+  it("la clave se deriva con una etiqueta de dominio: no es el secreto crudo (una huella firmada con el secreto crudo no vale)", () => {
+    const crypto = require("crypto");
+    const original = process.env.SUPABASE_JWT_SECRET;
+    process.env.SUPABASE_JWT_SECRET = "secreto-de-prueba";
+    const vence = Date.now() + 1000;
+    const carga = JSON.stringify([2, fila().fila, fila().correo, fila().nombre, fila().apellido, fila().numero_nomina, fila().curp]);
+    const conCrudo = crypto.createHmac("sha256", "secreto-de-prueba").update(`${vence}|${carga}`).digest("hex");
+    expect(H.huellaValida(2, fila(), `${vence}.${conCrudo}`)).toBe(false);
+    const subclave = crypto.createHmac("sha256", "secreto-de-prueba").update("importar-usuarios-v1").digest();
+    const conSubclave = crypto.createHmac("sha256", subclave).update(`${vence}|${carga}`).digest("hex");
+    expect(H.huellaValida(2, fila(), `${vence}.${conSubclave}`)).toBe(true);
+    if (original === undefined) delete process.env.SUPABASE_JWT_SECRET; else process.env.SUPABASE_JWT_SECRET = original;
+  });
   it("rechaza lo que no es una huella", () => {
     for (const x of [undefined, null, "", "abc", 5, {}, "1.2.3", `${Date.now() + 1000}.zz`, "x".repeat(500)]) expect(H.huellaValida(2, fila(), x)).toBe(false);
   });
