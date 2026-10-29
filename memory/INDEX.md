@@ -13,6 +13,7 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-28] [coder] → code-notes.md — nginx: lista blanca de GoTrue en /auth/v1/ (bloquea recover, PUT user, admin, signup...) contra I-2; password grant sigue abierto (cuentas local); docs/portal/auth-nginx.md
 - [2026-10-28] [coder] → code-notes.md — Correcciones de la revisión de la vinculación de cuentas (V-1..V-17): alcance real del vínculo en toda la UI, solo activos, 409 recarga, candado 4601 en el importador, correos duplicados, ñ, atajo seguro, scripts/cuentas reproducibles
 - [2026-10-28] [coder] → code-notes.md — Vinculación cuenta de usuario <-> empleado (solo empleados.usuario_id): vista previa con sugerencias por nombre, lotes de 50 con 409, selector/desvincular en el perfil, columna 'Correo de la cuenta' en la plantilla; candado 4601; API 101 + Chromium 60 + 16/20 mutantes
 - [2026-10-28] orquestador → decisions.md — Mi asistencia y Mi equipo: pruebas (funcional OK, 4 menores) y tanda de correcciones; vinculación de cuentas con correcciones aplicadas
