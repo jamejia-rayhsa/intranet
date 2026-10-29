@@ -79,17 +79,64 @@ describe('supabaseAdmin.service', () => {
     await expect(SupabaseAdmin.eliminarUsuario('x')).rejects.toMatchObject({ status: 503 });
   });
 
-  it('timeout, red o respuesta perdida son INCIERTOS (sin respuesta HTTP); un 503 con respuesta es definitivo', async () => {
+  it('timeout, red o respuesta perdida son INCIERTOS (sin respuesta HTTP)', async () => {
     fetch.mockRejectedValueOnce(Object.assign(new Error('t'), { name: 'TimeoutError' }));
     await expect(SupabaseAdmin.actualizarPassword('x', 'p')).rejects.toMatchObject({ incierto: true });
     fetch.mockRejectedValueOnce(new Error('ECONNRESET'));
     await expect(SupabaseAdmin.actualizarPassword('x', 'p')).rejects.toMatchObject({ incierto: true });
     fetch.mockResolvedValueOnce({ ok: true, status: 200, text: async () => { throw new Error('reset'); } });
     await expect(SupabaseAdmin.actualizarPassword('x', 'p')).rejects.toMatchObject({ incierto: true });
-    fetch.mockResolvedValueOnce(respuesta(503, { msg: 'overloaded' }));
+  });
+
+  it.each([500, 502, 503, 504, 408, 429])('un %i con respuesta HTTP es INCIERTO (pudo aplicarse antes de fallar): no se compensa', async (estado) => {
+    fetch.mockResolvedValueOnce(respuesta(estado, { msg: 'x' }));
     const e = await SupabaseAdmin.actualizarPassword('x', 'p').catch((x) => x);
-    expect(e).toMatchObject({ status: 503, definitivo: true });
+    expect(e).toMatchObject({ status: estado, incierto: true });
+    expect(e.definitivo).toBeUndefined();
+  });
+
+  it.each([400, 422, 500, 502, 504, 429])('un %i con respuesta HTTP lleva conRespuestaHttp (delegacionPermisos compensa como siempre)', async (estado) => {
+    fetch.mockResolvedValueOnce(respuesta(estado, { msg: 'x' }));
+    const e = await SupabaseAdmin.actualizarPassword('x', 'p').catch((x) => x);
+    expect(e.conRespuestaHttp).toBe(true);
+  });
+
+  it('sin respuesta HTTP (timeout/red) NO lleva conRespuestaHttp', async () => {
+    fetch.mockRejectedValueOnce(new Error('ECONNRESET'));
+    const e = await SupabaseAdmin.actualizarPassword('x', 'p').catch((x) => x);
+    expect(e.conRespuestaHttp).toBeUndefined();
+    expect(e.incierto).toBe(true);
+  });
+
+  it('crearUsuario envía appMetadata como app_metadata (no editable por el usuario) y metadata como user_metadata', async () => {
+    fetch.mockResolvedValueOnce(respuesta(200, { id: 'u1' }));
+    await SupabaseAdmin.crearUsuario({ correo: 'a@b.c', metadata: { nombre: 'A' }, appMetadata: { origen: 'importacion_usuarios' } });
+    const cuerpo = JSON.parse(fetch.mock.calls[fetch.mock.calls.length - 1][1].body);
+    expect(cuerpo.app_metadata).toEqual({ origen: 'importacion_usuarios' });
+    expect(cuerpo.user_metadata).toEqual({ nombre: 'A' });
+  });
+
+  it.each([400, 401, 403, 404, 409, 422])('un %i es un rechazo DEFINITIVO de GoTrue', async (estado) => {
+    fetch.mockResolvedValueOnce(respuesta(estado, { msg: 'x' }));
+    const e = await SupabaseAdmin.actualizarPassword('x', 'p').catch((x) => x);
+    expect(e).toMatchObject({ status: estado, definitivo: true });
     expect(e.incierto).toBeUndefined();
+  });
+
+  it('crearUsuario: un 2xx sin JSON o sin id es INCIERTO (no se sabe si se creó)', async () => {
+    for (const cuerpo of [undefined, null, {}, { id: 5 }, { id: '' }]) {
+      fetch.mockResolvedValueOnce(respuesta(200, cuerpo));
+      await expect(SupabaseAdmin.crearUsuario({ correo: 'a@b.c' })).rejects.toMatchObject({ incierto: true });
+    }
+    fetch.mockResolvedValueOnce({ ok: true, status: 200, text: async () => '<html>no json</html>' });
+    await expect(SupabaseAdmin.crearUsuario({ correo: 'a@b.c' })).rejects.toMatchObject({ incierto: true });
+  });
+
+  it('obtenerPorCorreo devuelve el usuario completo sin distinguir mayúsculas, o null', async () => {
+    fetch.mockResolvedValueOnce(respuesta(200, { users: [{ id: 'u1', email: 'a@b.c', user_metadata: { origen: 'x' } }] }));
+    expect(await SupabaseAdmin.obtenerPorCorreo('A@B.C')).toMatchObject({ id: 'u1', user_metadata: { origen: 'x' } });
+    fetch.mockResolvedValueOnce(respuesta(200, { users: [] }));
+    expect(await SupabaseAdmin.obtenerPorCorreo('z@b.c')).toBeNull();
   });
 
   it('falla claro si falta la service role key', async () => {

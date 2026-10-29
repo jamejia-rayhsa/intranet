@@ -217,6 +217,101 @@ const EmpleadoCuenta = {
     };
   },
 
+  // Toma el candado propio (xact) con lock_timeout local a la transacción de `cliente`; 409 si otra vinculación lo tiene.
+  // Lo usa también el importador de usuarios (portal) dentro de SU transacción: así la vinculación es la misma regla y el mismo candado.
+  async tomarCandadoVinculacion(cliente) {
+    try {
+      await cliente.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
+      await cliente.query("SELECT pg_advisory_xact_lock($1::int, $2::int)", [ESPACIO_VINCULACION, CLAVE_VINCULACION]);
+    } catch (e) {
+      if (e && e.code === "55P03") throw new ErrorVinculacion(409, MENSAJE_EN_CURSO);
+      throw e;
+    }
+  },
+
+  // Revalida y aplica los pares con las filas bloqueadas, DENTRO de la transacción abierta de `cliente` (que ya tomó el candado
+  // y hará COMMIT/ROLLBACK). Lanza ErrorVinculacion (409/400) sin escribir nada si algo no se puede aplicar.
+  async vincularEnTransaccion(cliente, pares, { confirmarPrivilegiadas = false } = {}) {
+    const empleadoIds = pares.map((p) => p.empleado_id).sort((a, b) => a - b);
+    const usuarioIds = pares.map((p) => p.usuario_id).sort((a, b) => a - b);
+    const empleados = new Map(
+      (await cliente.query(
+        "SELECT id, usuario_id, COALESCE(estatus, 'activo') AS estatus FROM empleados WHERE id = ANY($1::int[]) ORDER BY id FOR UPDATE",
+        [empleadoIds],
+      )).rows.map((f) => [f.id, f]),
+    );
+    const cuentas = new Map(
+      (await cliente.query(`${SQL_CUENTAS} WHERE u.id = ANY($1::int[]) ORDER BY u.id`, [usuarioIds])).rows
+        .map((f) => [f.id, formatearCuenta(f)]),
+    );
+    await cliente.query("SELECT 1 FROM usuarios WHERE id = ANY($1::int[]) ORDER BY id FOR SHARE", [usuarioIds]);
+    const duenos = new Map(
+      (await cliente.query("SELECT id, usuario_id FROM empleados WHERE usuario_id = ANY($1::int[])", [usuarioIds])).rows
+        .map((f) => [f.usuario_id, f.id]),
+    );
+
+    const conflictos = [];
+    const trabajo = [];
+    for (const p of pares) {
+      const e = empleados.get(p.empleado_id);
+      const c = cuentas.get(p.usuario_id);
+      let motivo = null;
+      if (!e) motivo = "empleado_no_existe";
+      else if (!c) motivo = "cuenta_no_existe";
+      else if (e.usuario_id === p.usuario_id) { trabajo.push({ ...p, cuenta: c, omitida: true }); continue; }
+      else if (e.estatus !== "activo") motivo = "empleado_no_activo";
+      else if (c.correo_duplicado) motivo = "cuenta_correo_duplicado";
+      else if (e.usuario_id !== null) motivo = "empleado_ya_vinculado";
+      else if (duenos.has(p.usuario_id)) motivo = "cuenta_ya_vinculada";
+      if (motivo) conflictos.push({ usuario_id: p.usuario_id, empleado_id: p.empleado_id, motivo });
+      else trabajo.push({ ...p, cuenta: c, omitida: false });
+    }
+    if (conflictos.length) {
+      throw new ErrorVinculacion(
+        409,
+        `Los datos cambiaron desde la vista previa: ${conflictos.length} vínculo(s) ya no se pueden aplicar. No se aplicó nada; actualiza la vista previa`,
+        { conflictos },
+      );
+    }
+    const privilegiadas = trabajo.filter((t) => !t.omitida && t.cuenta.privilegiada).map((t) => t.usuario_id);
+    if (privilegiadas.length && !confirmarPrivilegiadas) {
+      throw new ErrorVinculacion(
+        400,
+        "El lote incluye cuentas con rol privilegiado: vincularlas da a esa persona el acceso a lo del empleado (asistencia, expediente, recibos y, si es jefe, vacaciones de su equipo). Requiere una confirmación aparte; no se aplicó nada",
+        { requiere_confirmacion_privilegiadas: true, cuentas_privilegiadas: privilegiadas },
+      );
+    }
+
+    const detalle = [];
+    let vinculadas = 0;
+    let omitidas = 0;
+    for (const t of trabajo.sort((a, b) => a.empleado_id - b.empleado_id)) {
+      if (!t.omitida) {
+        let r;
+        try {
+          r = await cliente.query(
+            "UPDATE empleados SET usuario_id = $1, fecha_actualizacion = NOW() WHERE id = $2 AND usuario_id IS NULL",
+            [t.usuario_id, t.empleado_id],
+          );
+        } catch (e) {
+          if (e && e.code === "23505") throw new ErrorVinculacion(409, "La cuenta ya está vinculada a otro empleado; no se aplicó nada", { conflictos: [{ usuario_id: t.usuario_id, empleado_id: t.empleado_id, motivo: "cuenta_ya_vinculada" }] });
+          throw e;
+        }
+        if (r.rowCount !== 1) throw new ErrorVinculacion(409, "El empleado ya está vinculado; no se aplicó nada", { conflictos: [{ usuario_id: t.usuario_id, empleado_id: t.empleado_id, motivo: "empleado_ya_vinculado" }] });
+        vinculadas++;
+      } else omitidas++;
+      detalle.push({
+        usuario_id: t.usuario_id, empleado_id: t.empleado_id, resultado: t.omitida ? "omitida" : "vinculada",
+        sin_acceso_asistencia: !t.cuenta.con_acceso_asistencia, privilegiada: t.cuenta.privilegiada, inactiva: !t.cuenta.activo,
+      });
+    }
+    return {
+      vinculadas, omitidas, detalle,
+      sin_acceso_asistencia: detalle.filter((d) => d.resultado === "vinculada" && d.sin_acceso_asistencia).length,
+      privilegiadas: detalle.filter((d) => d.resultado === "vinculada" && d.privilegiada).length,
+    };
+  },
+
   // Aplica un lote de vínculos { usuario_id, empleado_id } en UNA transacción con el candado propio. Revalida todo con
   // las filas bloqueadas: si algo cambió desde la vista previa (cuenta o empleado ya vinculados, empleado de baja,
   // cuenta o empleado inexistentes) no se aplica NADA y se lanza ErrorVinculacion 409. Un par ya aplicado (el mismo
@@ -236,94 +331,11 @@ const EmpleadoCuenta = {
     try {
       await cliente.query("BEGIN");
       transaccion = true;
-      try {
-        await cliente.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
-        await cliente.query("SELECT pg_advisory_xact_lock($1::int, $2::int)", [ESPACIO_VINCULACION, CLAVE_VINCULACION]);
-      } catch (e) {
-        if (e && e.code === "55P03") throw new ErrorVinculacion(409, MENSAJE_EN_CURSO);
-        throw e;
-      }
-
-      const empleadoIds = pares.map((p) => p.empleado_id).sort((a, b) => a - b);
-      const usuarioIds = pares.map((p) => p.usuario_id).sort((a, b) => a - b);
-      const empleados = new Map(
-        (await cliente.query(
-          "SELECT id, usuario_id, COALESCE(estatus, 'activo') AS estatus FROM empleados WHERE id = ANY($1::int[]) ORDER BY id FOR UPDATE",
-          [empleadoIds],
-        )).rows.map((f) => [f.id, f]),
-      );
-      const cuentas = new Map(
-        (await cliente.query(`${SQL_CUENTAS} WHERE u.id = ANY($1::int[]) ORDER BY u.id`, [usuarioIds])).rows
-          .map((f) => [f.id, formatearCuenta(f)]),
-      );
-      await cliente.query("SELECT 1 FROM usuarios WHERE id = ANY($1::int[]) ORDER BY id FOR SHARE", [usuarioIds]);
-      const duenos = new Map(
-        (await cliente.query("SELECT id, usuario_id FROM empleados WHERE usuario_id = ANY($1::int[])", [usuarioIds])).rows
-          .map((f) => [f.usuario_id, f.id]),
-      );
-
-      const conflictos = [];
-      const trabajo = [];
-      for (const p of pares) {
-        const e = empleados.get(p.empleado_id);
-        const c = cuentas.get(p.usuario_id);
-        let motivo = null;
-        if (!e) motivo = "empleado_no_existe";
-        else if (!c) motivo = "cuenta_no_existe";
-        else if (e.usuario_id === p.usuario_id) { trabajo.push({ ...p, cuenta: c, omitida: true }); continue; }
-        else if (e.estatus !== "activo") motivo = "empleado_no_activo";
-        else if (c.correo_duplicado) motivo = "cuenta_correo_duplicado";
-        else if (e.usuario_id !== null) motivo = "empleado_ya_vinculado";
-        else if (duenos.has(p.usuario_id)) motivo = "cuenta_ya_vinculada";
-        if (motivo) conflictos.push({ usuario_id: p.usuario_id, empleado_id: p.empleado_id, motivo });
-        else trabajo.push({ ...p, cuenta: c, omitida: false });
-      }
-      if (conflictos.length) {
-        throw new ErrorVinculacion(
-          409,
-          `Los datos cambiaron desde la vista previa: ${conflictos.length} vínculo(s) ya no se pueden aplicar. No se aplicó nada; actualiza la vista previa`,
-          { conflictos },
-        );
-      }
-      const privilegiadas = trabajo.filter((t) => !t.omitida && t.cuenta.privilegiada).map((t) => t.usuario_id);
-      if (privilegiadas.length && !confirmarPrivilegiadas) {
-        throw new ErrorVinculacion(
-          400,
-          "El lote incluye cuentas con rol privilegiado: vincularlas da a esa persona el acceso a lo del empleado (asistencia, expediente, recibos y, si es jefe, vacaciones de su equipo). Requiere una confirmación aparte; no se aplicó nada",
-          { requiere_confirmacion_privilegiadas: true, cuentas_privilegiadas: privilegiadas },
-        );
-      }
-
-      const detalle = [];
-      let vinculadas = 0;
-      let omitidas = 0;
-      for (const t of trabajo.sort((a, b) => a.empleado_id - b.empleado_id)) {
-        if (!t.omitida) {
-          let r;
-          try {
-            r = await cliente.query(
-              "UPDATE empleados SET usuario_id = $1, fecha_actualizacion = NOW() WHERE id = $2 AND usuario_id IS NULL",
-              [t.usuario_id, t.empleado_id],
-            );
-          } catch (e) {
-            if (e && e.code === "23505") throw new ErrorVinculacion(409, "La cuenta ya está vinculada a otro empleado; no se aplicó nada", { conflictos: [{ usuario_id: t.usuario_id, empleado_id: t.empleado_id, motivo: "cuenta_ya_vinculada" }] });
-            throw e;
-          }
-          if (r.rowCount !== 1) throw new ErrorVinculacion(409, "El empleado ya está vinculado; no se aplicó nada", { conflictos: [{ usuario_id: t.usuario_id, empleado_id: t.empleado_id, motivo: "empleado_ya_vinculado" }] });
-          vinculadas++;
-        } else omitidas++;
-        detalle.push({
-          usuario_id: t.usuario_id, empleado_id: t.empleado_id, resultado: t.omitida ? "omitida" : "vinculada",
-          sin_acceso_asistencia: !t.cuenta.con_acceso_asistencia, privilegiada: t.cuenta.privilegiada, inactiva: !t.cuenta.activo,
-        });
-      }
+      await EmpleadoCuenta.tomarCandadoVinculacion(cliente);
+      const resultado = await EmpleadoCuenta.vincularEnTransaccion(cliente, pares, { confirmarPrivilegiadas });
       await cliente.query("COMMIT");
       transaccion = false;
-      return {
-        vinculadas, omitidas, detalle,
-        sin_acceso_asistencia: detalle.filter((d) => d.resultado === "vinculada" && d.sin_acceso_asistencia).length,
-        privilegiadas: detalle.filter((d) => d.resultado === "vinculada" && d.privilegiada).length,
-      };
+      return resultado;
     } catch (e) {
       if (transaccion) {
         try { await cliente.query("ROLLBACK"); } catch (e2) { rollbackFallo = e2; console.error(`[empleados] rollback de vincular cuentas: ${describirErrorSql(e2)}`); }

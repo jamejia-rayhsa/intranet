@@ -52,6 +52,8 @@ app.use('/api/usuarios', require('../routes/usuario.routes'));
 
 // Error HTTP explícito de GoTrue (garantiza que NO aplicó el cambio) / resultado incierto (sin respuesta HTTP)
 const errorHttp = (msg, status = 500) => Object.assign(new Error(msg), { status, definitivo: true });
+// Un 5xx real del servicio de GoTrue: el importador lo trata como incierto, pero estos flujos siguen compensando (hubo respuesta HTTP)
+const errorHttp5xx = (msg, status = 502) => Object.assign(new Error(msg), { status, incierto: true, conRespuestaHttp: true });
 const errorIncierto = (msg) => Object.assign(new Error(msg), { status: 503, incierto: true });
 
 const comoSuperAdmin = () => {
@@ -709,7 +711,7 @@ describe('POST /usuarios/:id/rol y PUT /usuarios/:id: asignación de roles', () 
       });
 
       it.each(operaciones)('%s con error HTTP explícito de GoTrue (4xx/5xx): 502, compensa y el estado es idéntico al inicial', async (_n, peticion) => {
-        for (const fallo of [errorHttp('ECONNREFUSED', 500), errorHttp('invalid', 422)]) {
+        for (const fallo of [errorHttp('ECONNREFUSED', 500), errorHttp('invalid', 422), errorHttp5xx('ECONNREFUSED', 502), errorHttp5xx('ECONNREFUSED', 504), errorHttp5xx('ECONNREFUSED', 500)]) {
           mockPool.reiniciar();
           const antes = mockPool.foto();
           supabaseAdmin.actualizarPassword.mockImplementation(lento(30, fallo));

@@ -4,6 +4,7 @@ Quien entra a la intranet con Microsoft necesita una **cuenta de usuario** (la c
 correo corporativo de Microsoft y su rol; GoTrue no permite el registro libre). Para que esa persona vea **Mi asistencia**,
 **Mi equipo** y sus vacaciones, su cuenta debe estar **vinculada a su empleado** (`empleados.usuario_id`). Esta función de RH
 solo hace esa vinculación: **no crea cuentas, no asigna ni cambia roles, no cambia contraseñas ni envía correos**.
+Las cuentas nuevas en bloque (con su vínculo) las crea un `super_admin` con **Importar usuarios** (`docs/portal/importar-usuarios.md`).
 
 > **Alcance real de un vínculo.** Al vincular, quien use esa cuenta verá y podrá gestionar lo que corresponde a ese empleado: su
 > asistencia, su expediente, sus recibos de nómina y, si es jefe, aprobar vacaciones de su equipo. Verifica que cuenta y empleado

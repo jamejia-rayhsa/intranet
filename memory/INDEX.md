@@ -13,6 +13,9 @@
 
 ## Últimas entradas
 <!-- formato: - [YYYY-MM-DD] [agente] → archivo#anchor — título -->
+- [2026-10-28] [coder] → code-notes.md — Importar usuarios: re-revisión R-2..R-7 (origen en app_metadata, huella con subclave y sin cota de reloj, flujos de usuarios siguen compensando 5xx, mensajes con instrucción)
+- [2026-10-28] [coder] → code-notes.md — Importar usuarios: correcciones de la revisión I-1..I-13 (5xx = incierto, adopción de cuentas por marca de origen, huella de vista previa en el servidor, límite 1 MB, hallazgo I-2 de contraseña por GoTrue escalado)
+- [2026-10-28] [coder] → code-notes.md — Importar usuarios (solo super_admin): cuentas ms365 sin contraseña + rol rh_empleado + vínculo al empleado, vista previa obligatoria, PUT sin contraseña en ms365, auditoría IMPORTAR_USUARIOS, verificada con Postgres y GoTrue reales (jest 3272, HTTP 79, Chromium 33, 28/28 mutantes)
 - [2026-10-28] [coder] → code-notes.md — nginx: lista blanca de GoTrue en /auth/v1/ (bloquea recover, PUT user, admin, signup...) contra I-2; password grant sigue abierto (cuentas local); docs/portal/auth-nginx.md
 - [2026-10-28] [coder] → code-notes.md — Correcciones de la revisión de la vinculación de cuentas (V-1..V-17): alcance real del vínculo en toda la UI, solo activos, 409 recarga, candado 4601 en el importador, correos duplicados, ñ, atajo seguro, scripts/cuentas reproducibles
 - [2026-10-28] [coder] → code-notes.md — Vinculación cuenta de usuario <-> empleado (solo empleados.usuario_id): vista previa con sugerencias por nombre, lotes de 50 con 409, selector/desvincular en el perfil, columna 'Correo de la cuenta' en la plantilla; candado 4601; API 101 + Chromium 60 + 16/20 mutantes

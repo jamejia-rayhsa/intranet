@@ -220,7 +220,7 @@ export function resultadoVacio() {
   return {
     insertados: 0, actualizados: 0, sin_cambios: 0, duplicados: 0, errores: [], duplicados_detalle: [],
     actualizados_detalle: [], advertencias: [], advertencias_omitidas: 0, jefes_pendientes: [],
-    turnos_asignados: 0, turnos_cambiados: 0, turnos_sin_cambio: 0, cuentas_vinculadas: 0,
+    turnos_asignados: 0, turnos_cambiados: 0, turnos_sin_cambio: 0, cuentas_vinculadas: 0, verificar: 0,
     sin_catalogo: { puestos: [], departamentos: [], ubicaciones: [] },
   };
 }
@@ -257,6 +257,7 @@ export function sumarResultados(acumulado, parcial) {
     sin_cambios: (acumulado.sin_cambios || 0) + (Number(p.sin_cambios) || 0),
     duplicados: acumulado.duplicados + (Number(p.duplicados) || 0),
     cuentas_vinculadas: (acumulado.cuentas_vinculadas || 0) + (Number(p.cuentas_vinculadas) || 0),
+    verificar: (acumulado.verificar || 0) + (Number(p.verificar) || 0),
     turnos_asignados: (acumulado.turnos_asignados || 0) + (Number(p.turnos_asignados) || 0),
     turnos_cambiados: (acumulado.turnos_cambiados || 0) + (Number(p.turnos_cambiados) || 0),
     turnos_sin_cambio: (acumulado.turnos_sin_cambio || 0) + (Number(p.turnos_sin_cambio) || 0),
@@ -323,10 +324,11 @@ export function nombreDeError(e) {
   return '';
 }
 
-function celdaCsv(valor) {
+// Celda CSV entre comillas, con `"` duplicadas y neutralizada contra fórmulas de Excel: si el texto (tras espacios o tabuladores
+// iniciales) empieza con =, +, - o @, o empieza con tabulador o retorno de carro, se antepone un apóstrofo.
+export function celdaCsv(valor) {
   let s = valor === null || valor === undefined ? '' : String(valor);
-  // Evita que Excel interprete el texto como fórmula.
-  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  if (/^[\t\r]/.test(s) || /^[ \t\r\n]*[=+\-@]/.test(s)) s = "'" + s;
   return '"' + s.replace(/"/g, '""') + '"';
 }
 

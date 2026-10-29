@@ -299,7 +299,7 @@ describe("lotes y resultados", () => {
     expect(acc).toEqual({
       insertados: 100, actualizados: 0, sin_cambios: 0, duplicados: 5, errores: [{ fila: 3, error: "a" }],
       duplicados_detalle: [{ fila: 4, motivo: "m" }], actualizados_detalle: [], advertencias: [], advertencias_omitidas: 0,
-      jefes_pendientes: [], turnos_asignados: 0, turnos_cambiados: 0, turnos_sin_cambio: 0, cuentas_vinculadas: 0,
+      jefes_pendientes: [], turnos_asignados: 0, turnos_cambiados: 0, turnos_sin_cambio: 0, cuentas_vinculadas: 0, verificar: 0,
       sin_catalogo: { puestos: [], departamentos: [], ubicaciones: [] },
     });
   });
@@ -315,6 +315,16 @@ describe("lotes y resultados", () => {
     });
     const muchos = Array.from({ length: 150 }, (_, i) => ({ nombre: "P" + i, filas: 1 }));
     expect(U.sumarResultados(U.resultadoVacio(), { sin_catalogo: { puestos: muchos } }).sin_catalogo.puestos).toHaveLength(100);
+  });
+
+  it("celdaCsv: entrecomilla, duplica comillas y neutraliza fórmulas (también tras espacios, tabulador o CR iniciales)", () => {
+    expect(U.celdaCsv('a "b"')).toBe('"a ""b"""');
+    expect(U.celdaCsv(null)).toBe('""');
+    for (const peligro of ["=1+1", "+1", "-1", "@SUM(A1)", " =HYPERLINK(\"x\")", "\t=1", "\r=1", "  \t@x", "\n=1"]) {
+      expect([peligro, U.celdaCsv(peligro).startsWith("\"'")]).toEqual([peligro, true]);
+    }
+    expect(U.celdaCsv("texto normal")).toBe('"texto normal"');
+    expect(U.celdaCsv("a=b")).toBe('"a=b"');
   });
 
   it("los avisos de catálogo salen en la vista y en el CSV como 'Aviso'", () => {
