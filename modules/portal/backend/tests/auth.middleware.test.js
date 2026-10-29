@@ -130,6 +130,108 @@ describe('authenticateJWT', () => {
     });
   });
 
+  describe('cuentas ms365: solo entran con Microsoft (amr oauth)', () => {
+    const AMR_OAUTH = [{ method: 'oauth', timestamp: 1 }];
+    const AMR_PASSWORD = [{ method: 'password', timestamp: 1 }];
+    const ms365 = { ...usuarioFila, auth_tipo: 'ms365' };
+    const MENSAJE_401 = { exito: false, mensaje: 'Token inválido o expirado' };
+
+    // Los rechazos no consumen la respuesta del rol: sin reset quedaria en la cola y contaminaria otros tests.
+    afterEach(() => grupo.query.mockReset());
+
+    async function ejecutar(fila, extra) {
+      grupo.query
+        .mockResolvedValueOnce({ rows: [fila] })
+        .mockResolvedValueOnce({ rows: [{ rol_id: 2, rol_nombre: 'empleado' }] });
+      const m = crearMocks(tokenSupabase(extra));
+      await authenticateJWT(m.req, m.res, m.next);
+      return m;
+    }
+
+    it('ms365 + azure (amr oauth) entra, con provider email como lo emite GoTrue', async () => {
+      const { next, req } = await ejecutar(ms365, {
+        amr: AMR_OAUTH,
+        app_metadata: { provider: 'email', providers: ['email', 'azure'] },
+      });
+      expect(next).toHaveBeenCalled();
+      expect(req.user.usuario_id).toBe(7);
+    });
+
+    it('ms365 + password se rechaza con 401 uniforme, sin next ni consultar el rol', async () => {
+      const { next, res } = await ejecutar(ms365, {
+        amr: AMR_PASSWORD,
+        app_metadata: { provider: 'email', providers: ['email', 'azure'] },
+      });
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith(MENSAJE_401);
+      expect(next).not.toHaveBeenCalled();
+      expect(grupo.query).toHaveBeenCalledTimes(1);
+    });
+
+    it('la respuesta es identica a la de un token invalido (no revela el motivo)', async () => {
+      const a = await ejecutar(ms365, { amr: AMR_PASSWORD });
+      const b = crearMocks(jwt.sign({ sub: UID, aud: 'authenticated' }, SECRETO_AJENO));
+      await authenticateJWT(b.req, b.res, b.next);
+      expect(a.res.status.mock.calls[0]).toEqual(b.res.status.mock.calls[0]);
+      expect(a.res.json.mock.calls[0]).toEqual(b.res.json.mock.calls[0]);
+    });
+
+    it.each([
+      ['sin claim amr', undefined],
+      ['amr vacio', []],
+      ['amr no es arreglo', 'oauth'],
+      ['amr con elementos basura', [null, 'oauth', 5]],
+      ['amr otp (magic link)', [{ method: 'otp' }]],
+    ])('ms365 con token %s se rechaza (fail-closed)', async (_n, amr) => {
+      const { res, next } = await ejecutar(ms365, amr === undefined ? {} : { amr });
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('ms365 no se salva por traer provider azure en app_metadata/user_metadata (editables o ambiguos)', async () => {
+      const { res, next } = await ejecutar(ms365, {
+        amr: AMR_PASSWORD,
+        app_metadata: { provider: 'azure', providers: ['azure'] },
+        user_metadata: { provider: 'azure' },
+      });
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('refresh de una sesion Microsoft (mismo amr oauth, iat nuevo) sigue entrando; el de una sesion por contrasena no', async () => {
+      const ok = await ejecutar(ms365, { amr: AMR_OAUTH, iat: Math.floor(Date.now() / 1000) + 5 });
+      expect(ok.next).toHaveBeenCalled();
+      const mal = await ejecutar(ms365, { amr: AMR_PASSWORD, iat: Math.floor(Date.now() / 1000) + 5 });
+      expect(mal.res.status).toHaveBeenCalledWith(401);
+    });
+
+    it('amr con oauth entre varios metodos (p. ej. MFA adicional) entra', async () => {
+      const { next } = await ejecutar(ms365, { amr: [{ method: 'totp' }, { method: 'oauth' }] });
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('ms365 desactivado con token por contrasena sigue siendo 401 (el proveedor se comprueba primero)', async () => {
+      const { res } = await ejecutar({ ...ms365, activo: false }, { amr: AMR_PASSWORD });
+      expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    it('local + password entra', async () => {
+      const { next } = await ejecutar({ ...usuarioFila, auth_tipo: 'local' }, { amr: AMR_PASSWORD });
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('local sin claim amr (o con oauth) entra: la regla no aplica', async () => {
+      expect((await ejecutar({ ...usuarioFila, auth_tipo: 'local' }, {})).next).toHaveBeenCalled();
+      expect((await ejecutar({ ...usuarioFila, auth_tipo: 'local' }, { amr: AMR_OAUTH })).next).toHaveBeenCalled();
+    });
+
+    it('no agrega consultas: una sola query de usuario (con auth_tipo) + la del rol', async () => {
+      await ejecutar(ms365, { amr: AMR_OAUTH });
+      expect(grupo.query).toHaveBeenCalledTimes(2);
+      expect(grupo.query.mock.calls[0][0]).toMatch(/auth_tipo/);
+    });
+  });
+
   it('responde 403 si el usuario no esta registrado en la intranet', async () => {
     grupo.query.mockResolvedValue({ rows: [] });
     const { req, res, next } = crearMocks(tokenSupabase());

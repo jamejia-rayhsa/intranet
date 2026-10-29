@@ -17,7 +17,7 @@ function verificarTokenSupabase(token) {
   }
 }
 
-const COLUMNAS_USUARIO = "id, correo, nombre, apellido, activo, auth_uid";
+const COLUMNAS_USUARIO = "id, correo, nombre, apellido, activo, auth_uid, auth_tipo";
 
 /**
  * Busca el usuario local por auth_uid (sub del token de GoTrue).
@@ -35,6 +35,19 @@ async function resolverUsuarioSupabase(claims) {
     [claims.sub],
   );
   return porUid.rows[0] || null;
+}
+
+/**
+ * true si la sesion de GoTrue nacio de un login OAuth (Microsoft/azure): el claim amr trae un metodo "oauth".
+ * GoTrue lo fija por sesion y lo conserva en los refresh (comprobado con GoTrue v2.196.0); un login por
+ * contrasena trae method "password". app_metadata.provider NO sirve (es "email" tambien para cuentas Microsoft
+ * dadas de alta por la API admin) y azure es el unico proveedor OAuth habilitado. Fail-closed si falta amr.
+ */
+function tokenViaOAuth(claims) {
+  return (
+    Array.isArray(claims.amr) &&
+    claims.amr.some((a) => a && typeof a === "object" && a.method === "oauth")
+  );
 }
 
 /**
@@ -117,6 +130,14 @@ async function authenticateJWT(req, res, next) {
         return res.status(403).json({
           exito: false,
           mensaje: "Usuario no registrado en la intranet",
+        });
+      }
+      // Defensa en profundidad: las cuentas ms365 entran SOLO con Microsoft. Un token por contrasena
+      // (p. ej. si GoTrue les llegara a fijar una) se rechaza con la misma respuesta que un token invalido.
+      if (usuario.auth_tipo === "ms365" && !tokenViaOAuth(claims)) {
+        return res.status(401).json({
+          exito: false,
+          mensaje: "Token inválido o expirado",
         });
       }
       if (usuario.activo === false) {
