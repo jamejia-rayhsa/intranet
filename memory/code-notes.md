@@ -729,3 +729,8 @@ Archivos modificados:
 **Patrón reusable:** fail-closed ante claim ausente solo para la clase restringida (auth.middleware.js `tokenViaOAuth`); respuesta de rechazo idéntica a la de token inválido.
 **Verificación:** GoTrue real + postgres:16 + IdP OIDC simulado (flujo PKCE completo authorize -> callback -> token): OAuth/refresh x2 = amr oauth; password y su refresh = amr password; backend real (app.js, /api/auth/perfil): ms365+oauth y refresh pasan el middleware, ms365+password y su refresh 401, local+password pasa. jest portal+rh 3265 verdes, eslint 0 errores, build OK. Contenedores borrados.
 **NO verificado:** Microsoft/Entra real (el IdP era simulado; el amr lo fija GoTrue, no el IdP); tokens ms365 emitidos antes de que GoTrue registrara amr (sesiones muy viejas serían rechazadas hasta nuevo login); `/api/auth/perfil` terminó en 500 por tablas mínimas del arnés (el middleware ya había pasado); otros módulos usan el mismo middleware del portal (no hay otro).
+
+### [2026-10-28] [coder] — Auth ms365: correcciones de revisión (H-1, H-2, H-5)
+**Decisión de código:** la guarda ahora es `auth_tipo !== 'local'` (fail-closed: 'MS365', 'x', vacío, null exigen OAuth; la columna es NOT NULL DEFAULT 'local' y hoy solo hay 'local'/'ms365', sin cambio para ellas); `amr` con `password` se rechaza aunque traiga `oauth`. `scripts/cuentas/prep.js` y `scripts/importar-usuarios/prep.js` firman tokens ms365 con `amr oauth`; `verificar-motor.js` crea cuentas `local` (sin cambio).
+**Trampa evitada:** el fixture de `auth.middleware.test.js` no tenía `auth_tipo` y con fail-closed pasó a 401; ahora lleva `'local'`.
+**NO verificado:** no repetí la prueba con GoTrue real tras estos ajustes (solo jest); los harnesses no se re-ejecutaron.

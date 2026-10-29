@@ -48,8 +48,8 @@ GoTrue además distingue mayúsculas y no hace caso de `X-HTTP-Method-Override`.
   `auth_tipo = 'ms365'` cuyo claim `amr` no traiga un método `oauth`. Se decide con `amr[].method`, NO con `app_metadata.provider`: comprobado con GoTrue
   v2.196.0 real y un IdP Azure simulado, `provider` vale `email` también en el token OAuth de una cuenta creada por la API admin (`providers: [email, azure]`
   en ambos), así que no distingue. `amr` sí: `oauth` en la sesión Microsoft, `password` en la de contraseña; se conserva en los refresh (y tras un `PUT /user`
-  con sesión OAuth). Sin `amr` o con otro método (`password`, `otp`) la cuenta ms365 no entra (fail-closed). Cuentas `local`: sin cambio. Sin consultas extra
-  (`auth_tipo` va en el SELECT que ya se hacía). Límite: `oauth` no nombra al proveedor; es seguro mientras `azure` sea el único OAuth habilitado en GoTrue.
+  con sesión OAuth). Sin `amr`, con otro método (`password`, `otp`) o con `password` junto a `oauth` en el mismo `amr`, la cuenta no entra (fail-closed). Cuentas `local`: sin cambio. Sin consultas extra
+  (`auth_tipo` va en el SELECT que ya se hacía). Límite (H-3): `oauth` no nombra al proveedor; es seguro SOLO mientras `azure` sea el único OAuth habilitado en GoTrue; al habilitar otro (Google, etc.) hay que revisar esta guarda.
   Una sesión Microsoft abierta antes de poner contraseña sigue siendo una sesión Microsoft legítima (válida hasta que se revoque/expire).
 - Fuerza bruta contra `token?grant_type=password` de cuentas `local`: solo el rate limit de GoTrue. Sin `limit_req` en nginx.
 - Desarrollo (`docker-compose.dev.yml`) usa el proxy de Vite, sin este bloqueo.

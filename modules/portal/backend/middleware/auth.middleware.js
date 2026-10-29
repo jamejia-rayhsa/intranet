@@ -44,10 +44,10 @@ async function resolverUsuarioSupabase(claims) {
  * dadas de alta por la API admin) y azure es el unico proveedor OAuth habilitado. Fail-closed si falta amr.
  */
 function tokenViaOAuth(claims) {
-  return (
-    Array.isArray(claims.amr) &&
-    claims.amr.some((a) => a && typeof a === "object" && a.method === "oauth")
-  );
+  if (!Array.isArray(claims.amr)) return false;
+  const metodos = claims.amr.map((a) => (a && typeof a === "object" ? a.method : undefined));
+  // Un password en la misma sesion descarta el token aunque traiga tambien oauth.
+  return metodos.includes("oauth") && !metodos.includes("password");
 }
 
 /**
@@ -132,9 +132,10 @@ async function authenticateJWT(req, res, next) {
           mensaje: "Usuario no registrado en la intranet",
         });
       }
-      // Defensa en profundidad: las cuentas ms365 entran SOLO con Microsoft. Un token por contrasena
+      // Defensa en profundidad: las cuentas no locales (ms365) entran SOLO con Microsoft. Un token por contrasena
       // (p. ej. si GoTrue les llegara a fijar una) se rechaza con la misma respuesta que un token invalido.
-      if (usuario.auth_tipo === "ms365" && !tokenViaOAuth(claims)) {
+      // Fail-closed: solo 'local' (valor exacto; la columna es NOT NULL DEFAULT 'local') queda exento.
+      if (usuario.auth_tipo !== "local" && !tokenViaOAuth(claims)) {
         return res.status(401).json({
           exito: false,
           mensaje: "Token inválido o expirado",

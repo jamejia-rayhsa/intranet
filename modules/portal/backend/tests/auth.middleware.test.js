@@ -25,7 +25,7 @@ function crearMocks(token) {
   return { req, res, next };
 }
 
-const usuarioFila = { id: 7, correo: 'ana@rayhsa.com', nombre: 'Ana', apellido: 'P', activo: true, auth_uid: UID };
+const usuarioFila = { id: 7, correo: 'ana@rayhsa.com', nombre: 'Ana', apellido: 'P', activo: true, auth_uid: UID, auth_tipo: 'local' };
 
 describe('authenticateJWT', () => {
   beforeEach(() => {
@@ -213,6 +213,20 @@ describe('authenticateJWT', () => {
     it('ms365 desactivado con token por contrasena sigue siendo 401 (el proveedor se comprueba primero)', async () => {
       const { res } = await ejecutar({ ...ms365, activo: false }, { amr: AMR_PASSWORD });
       expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    it.each([['MS365'], ['x'], [''], [null], [undefined]])('auth_tipo raro %p exige OAuth (fail-closed)', async (tipo) => {
+      const malo = await ejecutar({ ...usuarioFila, auth_tipo: tipo }, { amr: AMR_PASSWORD });
+      expect(malo.res.status).toHaveBeenCalledWith(401);
+      expect(malo.next).not.toHaveBeenCalled();
+      const bueno = await ejecutar({ ...usuarioFila, auth_tipo: tipo }, { amr: AMR_OAUTH });
+      expect(bueno.next).toHaveBeenCalled();
+    });
+
+    it('amr con oauth Y password a la vez se rechaza', async () => {
+      const { res, next } = await ejecutar(ms365, { amr: [{ method: 'oauth' }, { method: 'password' }] });
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(next).not.toHaveBeenCalled();
     });
 
     it('local + password entra', async () => {
