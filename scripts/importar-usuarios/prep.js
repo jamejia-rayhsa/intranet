@@ -30,7 +30,7 @@ const curp = (i) => `XEJE000101HDFXXX${i.toString(36).toUpperCase().padStart(2, 
     const uid = crypto.randomUUID();
     const u = (await q("INSERT INTO usuarios (correo, nombre, apellido, auth_tipo, auth_uid) VALUES ($1,$2,$3,'ms365',$4) RETURNING id", [correo, nombre, apellido, uid])).rows[0].id;
     if (rolNombre) await q("INSERT INTO usuario_rol (usuario_id, rol_id) VALUES ($1,$2)", [u, rol[rolNombre]]);
-    return { id: u, uid, token: jwt.sign({ sub: uid, aud: "authenticated", role: "authenticated" }, SECRETO, { algorithm: "HS256", expiresIn: "3h" }) };
+    return { id: u, uid, token: jwt.sign({ sub: uid, aud: "authenticated", role: "authenticated", amr: [{ method: "oauth", timestamp: Math.floor(Date.now() / 1000) }] }, SECRETO, { algorithm: "HS256", expiresIn: "3h" }) };
   };
   const actores = {};
   for (const r of ["super_admin", "portal_admin", "rh_admin", "rh_empleado"]) actores[r] = await mkUser(`${r}@actor.ejemplo.test`, `Nom${r}`, "Actor", r);

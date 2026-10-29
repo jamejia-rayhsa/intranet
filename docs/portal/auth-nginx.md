@@ -44,7 +44,13 @@ GoTrue además distingue mayúsculas y no hace caso de `X-HTTP-Method-Override`.
 - **`grant_type=password` sigue abierto** porque las cuentas `local` entran así desde el frontend. nginx no sabe el `auth_tipo` de quien llama. Una cuenta `ms365` no
   tiene contraseña conocida (GoTrue guarda un hash aleatorio) y ya no tiene forma de ponerse una desde fuera; pero si un admin le fija una contraseña por otra vía (el portal ya lo impide
   para `auth_tipo != 'local'`) o `cambiar-password` (sin mirar `auth_tipo`; exige la contraseña actual, que no existe) se abusara, el login por contraseña funcionaría.
-  Defensa en profundidad pendiente (código, no nginx): que `auth.middleware` rechace tokens de cuentas `ms365` cuyo `amr`/`app_metadata.provider` no sea `azure`.
+  **Defensa en profundidad (hecha en código):** `auth.middleware.js` rechaza con 401 (misma respuesta que un token inválido) el token de una cuenta
+  `auth_tipo = 'ms365'` cuyo claim `amr` no traiga un método `oauth`. Se decide con `amr[].method`, NO con `app_metadata.provider`: comprobado con GoTrue
+  v2.196.0 real y un IdP Azure simulado, `provider` vale `email` también en el token OAuth de una cuenta creada por la API admin (`providers: [email, azure]`
+  en ambos), así que no distingue. `amr` sí: `oauth` en la sesión Microsoft, `password` en la de contraseña; se conserva en los refresh (y tras un `PUT /user`
+  con sesión OAuth). Sin `amr`, con otro método (`password`, `otp`) o con `password` junto a `oauth` en el mismo `amr`, la cuenta no entra (fail-closed). Cuentas `local`: sin cambio. Sin consultas extra
+  (`auth_tipo` va en el SELECT que ya se hacía). Límite (H-3): `oauth` no nombra al proveedor; es seguro SOLO mientras `azure` sea el único OAuth habilitado en GoTrue; al habilitar otro (Google, etc.) hay que revisar esta guarda.
+  Una sesión Microsoft abierta antes de poner contraseña sigue siendo una sesión Microsoft legítima (válida hasta que se revoque/expire).
 - Fuerza bruta contra `token?grant_type=password` de cuentas `local`: solo el rate limit de GoTrue. Sin `limit_req` en nginx.
 - Desarrollo (`docker-compose.dev.yml`) usa el proxy de Vite, sin este bloqueo.
 - Cualquiera que ya tenga acceso a la red interna (contenedores del stack) llega a GoTrue sin pasar por nginx.
