@@ -313,3 +313,4 @@
 - [2026-10-28] [tester] → decisions.md — PARA RESOLVER F-MA-1 (analisis_desde dentro de una quincena: cuadrícula y detalle se contradicen), F-MA-2 (nómina compartida en Mi equipo sin aviso), F-MA-3 (Cerrar cuadrícula pierde el foco), F-MA-4 (texto de falta en Hoy)
 - [2026-10-28] [coder] Correcciones de la revisión de Mi asistencia/Mi equipo (baja/suspendido, privacidad del jefe, % sin justificadas, F-MA-1..4) y jest determinista -> code-notes.md
 - [2026-11-10] orquestador → decisions.md — Despliegue a staging de Convenios de compra (PR #27, merge bf6587f): respaldo, migraciones 002-004 aplicadas limpias, staging.rayhsa.net 200, API protegida 401
+- [2026-11-10] orquestador → decisions.md — Carga del histórico de Convenios en staging: 170 convenios / 196 líneas, creado_por=jamejia@rayhsa.com.mx, verificado directo en la BD

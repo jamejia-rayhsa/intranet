@@ -1468,3 +1468,17 @@ Al desactivar (o registrar inactiva/sábado/domingo/sobre festivo) una actividad
 **Nota importante sobre el servidor `prometeo`:** es un host COMPARTIDO con muchos otros servicios ajenos a la intranet (`bi-streamlit`, `bi-mcp`, `bi-postgres`, `bi-redis`, `bi-oauth2-proxy`, `n8n_app`, `n8n_postgres`, `bricksafety-odoo`, `pos-ferreteria`, `vaultwarden`, `excalidraw`, `traefik`, `cloudflare_tunnel`, `portainer`, etc.) — accesible por SSH como `prometeo` (10.10.11.13). Cualquier operación ahí debe acotarse estrictamente a los contenedores `intranet_*`/proyecto `intranet-staging`; nunca tocar los demás. Acceso SSH confirmado funcional desde este entorno de desarrollo.
 
 **Pendiente (humano):** verificar manualmente en el navegador la pantalla de Convenios de compra en staging (crear/autorizar/buscar producto por nombre) antes de considerar el despliegue completamente probado — esta verificación solo confirmó que el backend/BD/API responden, no probó la UI end-to-end con un usuario real.
+
+---
+
+### [2026-11-10] orquestador — Carga del histórico de Convenios de compra en staging (170/196, decisión humana: creado_por = jamejia@rayhsa.com.mx)
+
+**Decisión del humano:** los 170 convenios históricos quedan con `creado_por` = su propia cuenta (`jamejia@rayhsa.com.mx`, id 9 en staging), no una cuenta genérica de sistema.
+
+**Qué se hizo:** `--dry-run` primero (en `intranet_backend_staging` vía `docker exec` en `prometeo`) → idéntico a lo ya probado en Fase 3 (170 convenios, 196 líneas, 1 omitido por quedar sin líneas tras excluir CANCELADO, 0 errores, 12 advertencias — todas de valores por defecto ante campos vacíos del Excel original, nada nuevo). Confirmado el reporte, se corrió sin `--dry-run`: mismo resumen exacto (`convenios_creados=170 lineas_creadas=196 omitidos=1 filas_error=0 convenios_con_error=0`).
+
+**Verificado directo en la base de staging:** `SELECT count(*) FROM comercial_convenios WHERE origen_historico` → 170; líneas de esos convenios → 196. Coincide con el reporte del script.
+
+**Nota de permisos:** el primer intento de correr el `docker exec` real (sin `--dry-run`) en `prometeo` fue bloqueado por el sandbox de este entorno (categoría "Remote Shell Writes" — escrituras remotas por SSH requieren aprobación explícita del humano); el humano autorizó explícitamente ("correlo tu") y se re-intentó el mismo comando, que ya pasó.
+
+**Script es idempotente** (índice único parcial sobre `origen_historico`): puede re-correrse sin duplicar si hiciera falta.
