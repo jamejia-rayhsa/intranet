@@ -1976,3 +1976,16 @@ async actualizar(req, res) {
 - Reusar: `ImportadorArchivo` + patrón `importarDepartamentos` (validación por fila, modo omitir|actualizar, lotes de 100, advertencias) para la carga semilla; parametrizar auditoría; agregar utilidades de parseo para CONSUMO, montos y VIGENCIA. Alternativa: script de carga única.
 - Reusar: KPICard, BarChart, DonutChart, TablaCard y el patrón `solicitar` + COUNT FILTER del dashboard RH. Crear barra de progreso y semáforo (no existen).
 - Reusar para la autorización: el patrón de vacaciones (autoridad por identidad vigente, nunca lo propio, quién/cuándo al responder). Para la vigencia: intervalos DATE [desde, hasta] con `hasta NULL = abierta` y `hoyMexico()`; EXCLUDE por producto/cliente solo si se requiere no traslape.
+
+---
+
+### [2026-11-10] [coder] — Consumo automático de Convenios desde MBA3: ningún endpoint actual trae cliente + producto + cantidad
+
+**Pedido del humano:** "trabajemos la opción 2 … que se alimente de MBA3 de manera automática, si hay que hacer ajustes o solicitar una API en particular la creamos". Se revisó en vivo (solo lectura, sin imprimir credenciales) el catálogo real de MBA3 (64 rutas, `GET /openapi.json`):
+
+- `facturas` (`FECHA_INI`, `FECHA_FIN`; 109 filas en 3 días): ENCABEZADO de factura — `CODIGO_CLIENTE`, `VENDEDOR`, `FECHA_FACTURA`, `NUMERO_FACTURA`, `NUMERO_PEDIDO`, `ORDEN_COMPRA_CLIENTE`, totales, `TOTAL_PRODUCTOS`. **No trae producto ni cantidad.**
+- `pedidos-detalle` (`pedido`), `ventas` y `ventas-utilidad` (`fecha_desde`, `fecha_hasta`): serían los de renglón de producto, pero **los 3 responden "MBA3: Error ejecutando la consulta"** con todas las variantes probadas (pedido como texto/número, defaults explícitos, un solo día). Falla del lado del servidor, no de nuestros parámetros (aparentes).
+- `acuvtaprod` (`Producto`): con el código real `R-010-05-0552` devuelve 0 filas (es acumulado por producto, sin cliente de todos modos).
+- Existe `/v1/admin/endpoints` (los endpoints se definen como consultas sobre fuentes/tablas): crear uno nuevo es viable para quien administre MBA3; nuestra cuenta de servicio es rol `usuario`, no admin.
+
+**Conclusión:** hoy no hay forma de obtener "cliente X compró producto Y, cantidad Z, fecha F" desde MBA3. Hace falta (a) arreglar `pedidos-detalle`/`ventas`, o (b) un endpoint nuevo. Especificación propuesta en el mensaje al humano.

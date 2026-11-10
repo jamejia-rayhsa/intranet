@@ -318,3 +318,4 @@
 - [2026-11-10] orquestador → decisions.md — GO del humano para desplegar Fase 4 y empezar Fase 5: push + PR #29 abierta; conflictos resueltos (memory/INDEX.md, memory/decisions.md, append-only)
 - [2026-11-10] [coder] → decisions.md — Convenios de compra Fase 5 CERRADA (código): dashboard global (KPIs activos/por vencer 30d/vencidos/sin movimiento 60d), ConveniosDashboard.jsx, BarraProgreso.jsx (componente reutilizable nuevo); verificado contra Postgres real (datos sembrados y limpiados); pendiente PR/merge/despliegue
 - [2026-11-10] orquestador → decisions.md — Despliegue a staging de Convenios Fases 4 y 5 (PR #29, merge 64dc6fd): migración 005 aplicada, front 200, dashboard 401 sin sesión; falta confirmación visual del humano
+- [2026-11-10] [coder] → research.md — Consumo automático desde MBA3: ningún endpoint actual trae cliente+producto+cantidad (facturas solo encabezado; pedidos-detalle/ventas fallan en servidor); se propone endpoint nuevo
