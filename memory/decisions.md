@@ -1536,3 +1536,13 @@ Al desactivar (o registrar inactiva/sábado/domingo/sobre festivo) una actividad
 - No se corrió revisor ni tester como agentes separados en esta ronda.
 
 **Puerta:** GO del humano para desplegar (commit/push/PR/staging) — todavía no se ha pedido explícitamente para la Fase 5 en sí (sí para la Fase 4, ya en curso en PR #29).
+
+---
+
+### [2026-11-10] orquestador — Despliegue a staging de Convenios de compra Fases 4 y 5 (PR #29, merge 64dc6fd)
+
+**Autorización (humano):** "realiza el Push/PR/Despliegue dela fase y empieza la fase 5"; al preguntar si mergear solo Fase 4 o ambas, eligió "Mergear y desplegar ambas ahora".
+
+**Qué se hizo:** PR #29 salió `CONFLICTING` (main avanzó con PR #27/#28; solo `memory/INDEX.md` y `decisions.md`, append-only, resueltos conservando ambos lados) — GitHub no dispara CI sobre PRs con conflicto. Tras resolver: CI verde (3660/3660, 0 errores de eslint), merge, CI de `main` construyó las imágenes `64dc6fd`. Staging (`prometeo`, `/home/jamejia/intranet-stagging`): respaldo previo (`backup.sh`, sin cifrar), checkout `64dc6fd`, `IMAGE_TAG` actualizado, `pull` + `up -d`.
+
+**Verificado:** migración `comercial-005-convenio-movimientos.sql` aplicada sin error (tabla vacía, 0 filas); contenedores `intranet_*` arriba; backend en producción sin errores; `https://staging.rayhsa.net/` → 200; `/api/comercial/convenios/dashboard` sin sesión → 401. NO verificado: UI en navegador con usuario real (pendiente del humano).
