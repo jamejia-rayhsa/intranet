@@ -89,6 +89,7 @@ services:
       - ./modules/comercial/backend/migrations/002-convenios-compra.sql:/sql/comercial-002-convenios-compra.sql:ro
       - ./modules/comercial/backend/migrations/003-mba3-cache.sql:/sql/comercial-003-mba3-cache.sql:ro
       - ./modules/comercial/backend/migrations/004-convenios-origen-historico.sql:/sql/comercial-004-convenios-origen-historico.sql:ro
+      - ./modules/comercial/backend/migrations/005-convenio-movimientos.sql:/sql/comercial-005-convenio-movimientos.sql:ro
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
@@ -129,6 +130,8 @@ services:
         psql -v ON_ERROR_STOP=1 -f /sql/comercial-003-mba3-cache.sql
         echo "[db-init] aplicando comercial-004-convenios-origen-historico.sql"
         psql -v ON_ERROR_STOP=1 -f /sql/comercial-004-convenios-origen-historico.sql
+        echo "[db-init] aplicando comercial-005-convenio-movimientos.sql"
+        psql -v ON_ERROR_STOP=1 -f /sql/comercial-005-convenio-movimientos.sql
         # La 004 (RLS) va OTRA VEZ al final (idempotente): las tablas que crean las migraciones posteriores
         # a su primera ejecución (009 en adelante) nacen con RLS y sin privilegios para anon/authenticated
         # en este mismo arranque, sin esperar al siguiente db-init.

@@ -68,9 +68,14 @@ export default function ConveniosListado() {
         title="Convenios de compra"
         subtitle="Compra de productos sin stock a mínimos de paquete, facturados periódicamente a un cliente"
         actions={
-          <button className="btn-primario" onClick={() => navigate('/comercial/convenios/nuevo')}>
-            + Nuevo convenio
-          </button>
+          <>
+            <button className="btn-secundario" onClick={() => navigate('/comercial/convenios/dashboard')}>
+              Dashboard
+            </button>
+            <button className="btn-primario" onClick={() => navigate('/comercial/convenios/nuevo')}>
+              + Nuevo convenio
+            </button>
+          </>
         }
       />
 
@@ -119,6 +124,7 @@ export default function ConveniosListado() {
                 <td><span className={badgeClass(c.estatus)}>{c.estatus}</span></td>
                 <td>{c.total_productos}</td>
                 <td style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                  <button className="btn-secundario" onClick={() => navigate(`/comercial/convenios/${c.id}`)}>Ver</button>
                   {c.estatus === 'pendiente_autorizacion' && (
                     <>
                       {(esCreador(c) || esSuperAdmin) && (

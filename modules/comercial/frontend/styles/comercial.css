@@ -352,3 +352,26 @@
   color: var(--color-texto-claro);
   margin: 0.2rem 0 0.4rem;
 }
+
+/* Fase 4 — análisis de consumo (ConvenioDetalle.jsx) */
+.convenio-linea-detalle {
+  border: 1px solid var(--color-borde);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.convenio-movimiento-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.4rem;
+  align-items: center;
+  margin-bottom: 0.8rem;
+}
+
+.convenio-movimiento-form input {
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--color-borde);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}

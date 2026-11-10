@@ -13,6 +13,11 @@ export async function obtenerConvenio(id) {
   return solicitar(`/comercial/convenios/${id}`);
 }
 
+// Fase 5 — KPIs globales + resumen de consumo por convenio.
+export async function obtenerDashboardConvenios() {
+  return solicitar('/comercial/convenios/dashboard');
+}
+
 export async function crearConvenio(datos) {
   return solicitar('/comercial/convenios', { method: 'POST', body: JSON.stringify(datos) });
 }
@@ -62,4 +67,20 @@ export async function buscarProductoMba3(codigo) {
 // producto en el formulario es por código exacto (de arriba) O por nombre (esta).
 export async function buscarProductoPorNombreMba3(nombre) {
   return solicitar(`/comercial/mba3/productos?nombre=${encodeURIComponent(nombre)}`);
+}
+
+// Fase 4 — registro real de consumo y tiempo estimado para agotar el stock de cada línea.
+export async function obtenerEstadoConsumoConvenio(convenioId) {
+  return solicitar(`/comercial/convenios/${convenioId}/consumo`);
+}
+
+export async function listarMovimientos(convenioId, productoId) {
+  return solicitar(`/comercial/convenios/${convenioId}/productos/${productoId}/movimientos`);
+}
+
+export async function registrarMovimiento(convenioId, productoId, datos) {
+  return solicitar(`/comercial/convenios/${convenioId}/productos/${productoId}/movimientos`, {
+    method: 'POST',
+    body: JSON.stringify(datos),
+  });
 }

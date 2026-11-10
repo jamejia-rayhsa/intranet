@@ -693,6 +693,29 @@ CREATE TABLE IF NOT EXISTS comercial_cache_mba3 (
 CREATE INDEX IF NOT EXISTS idx_comercial_cache_mba3_consultado_en ON comercial_cache_mba3(consultado_en);
 
 -- ============================================
+-- MÓDULO COMERCIAL: movimientos de convenio - Fase 4 (origen: modules/comercial/backend/migrations/005-convenio-movimientos.sql)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS comercial_convenio_movimientos (
+  id SERIAL PRIMARY KEY,
+  convenio_producto_id INT NOT NULL REFERENCES comercial_convenio_productos(id) ON DELETE CASCADE,
+  tipo TEXT NOT NULL CHECK (tipo IN ('compra_inicial', 'consumo')),
+  cantidad NUMERIC NOT NULL CHECK (cantidad > 0),
+  fecha_movimiento DATE NOT NULL,
+  orden_compra TEXT,
+  comentario TEXT,
+  registrado_por_id INT NOT NULL REFERENCES usuarios(id),
+  fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_comercial_convenio_movimientos_producto
+  ON comercial_convenio_movimientos(convenio_producto_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_comercial_convenio_movimientos_compra_inicial
+  ON comercial_convenio_movimientos(convenio_producto_id)
+  WHERE tipo = 'compra_inicial';
+
+-- ============================================
 -- MÓDULO RH: Vacaciones (origen: modules/rh/backend/migrations/002-solicitudes-vacaciones.sql)
 -- ============================================
 CREATE TABLE IF NOT EXISTS tabla_calculo_vacaciones (

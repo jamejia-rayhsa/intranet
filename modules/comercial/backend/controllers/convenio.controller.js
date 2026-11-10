@@ -14,6 +14,13 @@ const MSG_PROPIA = 'No puedes autorizar ni rechazar tu propio convenio';
 const MSG_SIN_AUTORIDAD = 'No tienes autoridad para autorizar o rechazar convenios';
 const MSG_ID_INVALIDO = 'id inválido';
 
+// Fase 5 — umbrales del dashboard decididos por el humano (2026-11-10): 30 días antes del
+// vencimiento cuenta como "por vencer"; 60 días sin ningún movimiento (o nunca tuvo uno) cuenta
+// como "sin movimientos recientes". Ambos solo aplican a convenios autorizados y vigentes (un
+// convenio vencido/rechazado/cancelado ya no es "actividad esperada").
+const DIAS_POR_VENCER = 30;
+const DIAS_SIN_MOVIMIENTO = 60;
+
 function usuarioId(req) {
   return req.user?.usuario_id || req.user?.id;
 }
@@ -178,6 +185,34 @@ const ControladorConvenio = {
     } catch (error) {
       console.error('Error al listar convenios:', error.message);
       return res.status(500).json({ exito: false, mensaje: 'Error al listar convenios' });
+    }
+  },
+
+  // Fase 5 — KPIs globales + resumen de consumo por convenio (para la pantalla de dashboard).
+  async dashboard(req, res) {
+    try {
+      const convenios = await Convenio.listarConResumenConsumo();
+
+      const kpis = { total: convenios.length, activos: 0, por_vencer: 0, vencidos: 0, sin_movimientos_recientes: 0 };
+      for (const c of convenios) {
+        if (c.estatus !== 'autorizado') continue;
+        if (c.vencido) {
+          kpis.vencidos += 1;
+          continue;
+        }
+        kpis.activos += 1;
+        if (c.dias_para_vencer !== null && Number(c.dias_para_vencer) <= DIAS_POR_VENCER) {
+          kpis.por_vencer += 1;
+        }
+        if (c.dias_sin_movimiento === null || Number(c.dias_sin_movimiento) >= DIAS_SIN_MOVIMIENTO) {
+          kpis.sin_movimientos_recientes += 1;
+        }
+      }
+
+      return res.json({ exito: true, datos: { kpis, convenios } });
+    } catch (error) {
+      console.error('Error al generar el dashboard de convenios:', error.message);
+      return res.status(500).json({ exito: false, mensaje: 'Error al generar el dashboard de convenios' });
     }
   },
 

@@ -93,6 +93,7 @@ const SUB_RUTAS = {
     { path: '/comercial', label: 'Dashboard', opcion: null },
     { path: '/comercial/creditos', label: 'Solicitudes de Crédito', opcion: 'Solicitudes de Crédito' },
     { path: '/comercial/convenios', label: 'Convenios', opcion: 'Convenios' },
+    { path: '/comercial/convenios/dashboard', label: 'Convenios · Dashboard', opcion: 'Convenios' },
     { path: '/comercial/autorizadores', label: 'Autorizadores', opcion: 'Convenios' },
   ],
 };

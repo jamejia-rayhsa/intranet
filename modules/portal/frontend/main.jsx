@@ -61,7 +61,9 @@ import ComercialDashboard from '../../comercial/frontend/pages/ComercialDashboar
 import SolicitudesListado from '../../comercial/frontend/pages/SolicitudesListado';
 import SolicitudCreditoForm from '../../comercial/frontend/pages/SolicitudCreditoForm';
 import ConveniosListado from '../../comercial/frontend/pages/ConveniosListado';
+import ConveniosDashboard from '../../comercial/frontend/pages/ConveniosDashboard';
 import ConvenioForm from '../../comercial/frontend/pages/ConvenioForm';
+import ConvenioDetalle from '../../comercial/frontend/pages/ConvenioDetalle';
 import AutorizadoresPage from '../../comercial/frontend/pages/AutorizadoresPage';
 
 import MenuDinamico from './components/MenuDinamico';
@@ -95,6 +97,7 @@ const BREADCRUMBS = {
   '/comercial':             ['Comercial', 'Dashboard'],
   '/comercial/creditos':    ['Comercial', 'Solicitudes'],
   '/comercial/convenios':   ['Comercial', 'Convenios'],
+  '/comercial/convenios/dashboard': ['Comercial', 'Convenios · Dashboard'],
   '/comercial/autorizadores': ['Comercial', 'Autorizadores'],
   '/admin/usuarios':     ['Admin', 'Usuarios'],
   '/admin/roles':        ['Admin', 'Roles'],
@@ -235,8 +238,10 @@ function AppRutas() {
         <Route path="/comercial/creditos/nueva" element={<RutaProtegida><SolicitudCreditoForm /></RutaProtegida>} />
         <Route path="/comercial/creditos/:id/editar" element={<RutaProtegida><SolicitudCreditoForm /></RutaProtegida>} />
         <Route path="/comercial/convenios" element={<RutaProtegida><ConveniosListado /></RutaProtegida>} />
+        <Route path="/comercial/convenios/dashboard" element={<RutaProtegida><ConveniosDashboard /></RutaProtegida>} />
         <Route path="/comercial/convenios/nuevo" element={<RutaProtegida><ConvenioForm /></RutaProtegida>} />
         <Route path="/comercial/convenios/:id/editar" element={<RutaProtegida><ConvenioForm /></RutaProtegida>} />
+        <Route path="/comercial/convenios/:id" element={<RutaProtegida><ConvenioDetalle /></RutaProtegida>} />
         <Route path="/comercial/autorizadores" element={<RutaProtegida><AutorizadoresPage /></RutaProtegida>} />
         <Route path="*" element={<Navigate to="/inicio-sesion" />} />
       </Routes>

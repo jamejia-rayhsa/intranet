@@ -113,3 +113,20 @@ describe("Convenio.listar — R-8: ILIKE escapado", () => {
     expect(params).toEqual(["%Juan%"]);
   });
 });
+
+describe("Convenio.listarConResumenConsumo — Fase 5 (dashboard): agregado sin N+1", () => {
+  it("una sola consulta, sin parámetros, con el agregado por convenio y 'hoy en México' para los días", async () => {
+    grupo.query.mockResolvedValue({ rows: [{ id: 1 }] });
+    const filas = await Convenio.listarConResumenConsumo();
+    expect(grupo.query).toHaveBeenCalledTimes(1);
+    const [sql, params] = grupo.query.mock.calls[0];
+    expect(params).toBeUndefined();
+    expect(sql).toMatch(/America\/Mexico_City/);
+    expect(sql).toMatch(/SUM\(m\.cantidad\) FILTER \(WHERE m\.tipo = 'compra_inicial'\)\s+AS stock_comprado/);
+    expect(sql).toMatch(/SUM\(m\.cantidad\) FILTER \(WHERE m\.tipo = 'consumo'\)\s+AS stock_consumido/);
+    expect(sql).toMatch(/AS dias_para_vencer/);
+    expect(sql).toMatch(/AS dias_sin_movimiento/);
+    expect(sql).toMatch(/GROUP BY p\.convenio_id/);
+    expect(filas).toEqual([{ id: 1 }]);
+  });
+});

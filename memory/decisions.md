@@ -1448,7 +1448,6 @@ Al desactivar (o registrar inactiva/sábado/domingo/sobre festivo) una actividad
 **Tester (HEAD 1b9d863, Chromium y Firefox, supabase 17.6 y pg16, db-init real ×2, oráculo propio):** PASS en lo funcional: motor = oráculo en 3,476 días, el detalle en lenguaje claro de los 3,476 días, Mi asistencia por rol 607/607 por navegador (1,336 detalles cada uno), Mi equipo 253/253 por navegador (Hoy con descanso/vacaciones/permiso/festivo/aún no checa/sin marcas), alcance/IDOR por API 219/219 y 6/6 mutantes, campos ocultos a no-RH y cambio de jefe en caliente OK, menú 324/324 por navegador con otros módulos idénticos al base 4e888c5, rendimiento (jefe con 50 directos, empleado con 5 meses), jest 18/18 (74 suites, 2,985 tests). FALLOS bajos: F-MA-1 (si `analisis_desde` sube dentro de una quincena abierta, cuadrícula/tarjetas cuentan días que el detalle dice no calificar), F-MA-2 (subordinado con nómina compartida sin aviso), F-MA-3 (foco en `<body>` al cerrar la cuadrícula), F-MA-4 (texto de falta por >30 min tarde). Reprodujo R2B-1 (CRÍTICO: jefe dado de baja ve a su equipo) y R2B-2 (ALTO: tipo de permiso al jefe).
 **Hallazgo del orquestador:** el caso 'dos recalculos simultáneos: el segundo reintenta el candado hasta esperaMs' de `asistenciaOrquestacion.test.js` (ya en `main`) falla ~1 de 8 corridas aisladas por tiempos reales: se corrige en esta tanda.
 **Vinculación de cuentas (`feat/cuentas-empleados`, HEAD 919f4db):** revisor CON OBSERVACIONES (0 críticos, 1 alto de redacción del alcance, 9 medios) y correcciones aplicadas; API 117/117, Chromium 67/67, jest 77 suites / 3,033 tests, mutación 30/31 (el sobreviviente es equivalente). Staging: existe la UNIQUE de `usuario_id`, 0 duplicados, 9 cuentas sin empleado (4 sin rol con acceso a Asistencia), empleados 70 activos y 1 de baja.
-
 ---
 
 ### [2026-11-10] orquestador — Despliegue a staging de Convenios de compra (PR #27, merge bf6587f)
@@ -1467,7 +1466,7 @@ Al desactivar (o registrar inactiva/sábado/domingo/sobre festivo) una actividad
 
 **Nota importante sobre el servidor `prometeo`:** es un host COMPARTIDO con muchos otros servicios ajenos a la intranet (`bi-streamlit`, `bi-mcp`, `bi-postgres`, `bi-redis`, `bi-oauth2-proxy`, `n8n_app`, `n8n_postgres`, `bricksafety-odoo`, `pos-ferreteria`, `vaultwarden`, `excalidraw`, `traefik`, `cloudflare_tunnel`, `portainer`, etc.) — accesible por SSH como `prometeo` (10.10.11.13). Cualquier operación ahí debe acotarse estrictamente a los contenedores `intranet_*`/proyecto `intranet-staging`; nunca tocar los demás. Acceso SSH confirmado funcional desde este entorno de desarrollo.
 
-**Pendiente (humano):** verificar manualmente en el navegador la pantalla de Convenios de compra en staging (crear/autorizar/buscar producto por nombre) antes de considerar el despliegue completamente probado — esta verificación solo confirmó que el backend/BD/API responden, no probó la UI end-to-end con un usuario real.
+**Pendiente (humano):** ~~verificar manualmente en el navegador la pantalla de Convenios de compra en staging (crear/autorizar/buscar producto por nombre) antes de considerar el despliegue completamente probado — esta verificación solo confirmó que el backend/BD/API responden, no probó la UI end-to-end con un usuario real.~~ **CONFIRMADO (humano, 2026-11-10): "si ya se ven los convenios"** — la UI en staging muestra los convenios (incluido el histórico) correctamente. Despliegue completamente probado, sin pendientes.
 
 ---
 
@@ -1482,3 +1481,58 @@ Al desactivar (o registrar inactiva/sábado/domingo/sobre festivo) una actividad
 **Nota de permisos:** el primer intento de correr el `docker exec` real (sin `--dry-run`) en `prometeo` fue bloqueado por el sandbox de este entorno (categoría "Remote Shell Writes" — escrituras remotas por SSH requieren aprobación explícita del humano); el humano autorizó explícitamente ("correlo tu") y se re-intentó el mismo comando, que ya pasó.
 
 **Script es idempotente** (índice único parcial sobre `origen_historico`): puede re-correrse sin duplicar si hiciera falta.
+
+---
+
+### [2026-11-10] [coder] — Convenios de compra Fase 4: registro real de consumo y tiempo estimado — CERRADA
+
+**GO del humano:** "vamos por la fase 4". Antes de construir, 3 decisiones de negocio que el roadmap dejaba abiertas (ver puerta de la Fase 4 en roadmap.md):
+
+1. **Stock total comprado:** no hay columna aparte en `comercial_convenio_productos` — se registra como el PRIMER movimiento (`tipo='compra_inicial'`) de la nueva tabla de movimientos, no como un campo fijo.
+2. **Sin reabastecimiento:** un convenio compra una sola vez y se factura hasta agotar ese stock; si se necesita más, es un convenio nuevo. Por eso solo puede existir UNA `compra_inicial` por línea (índice único parcial).
+3. **Fórmula del tiempo estimado:** ritmo = promedio REAL de los movimientos de consumo ya registrados; si todavía no hay ninguno, usa `cantidad_periodica` (el plan original) como respaldo. `periodos_restantes = stock_restante / ritmo`; se proyecta una fecha estimada solo si el periodo tiene duración conocida (mensual=30 días, bimestral=60, trimestral=90; "unico" no proyecta fecha).
+
+**Pedido adicional del humano durante la construcción:** campo `orden_compra` (texto libre, referencia al proveedor) en cada movimiento — aplica sobre todo a la compra inicial, pero no se restringió por tipo.
+
+**Implementado:**
+- Migración `005-convenio-movimientos.sql` (+ réplica en `init.sql` y `docker-compose.supabase.yml`): tabla `comercial_convenio_movimientos` (`convenio_producto_id`, `tipo` CHECK IN ('compra_inicial','consumo'), `cantidad` CHECK > 0, `fecha_movimiento`, `orden_compra`, `comentario`, `registrado_por_id`), índice único parcial para forzar una sola `compra_inicial` por línea.
+- `movimiento.model.js`: `registrar`, `existeCompraInicial`, `listar`, `calcularEstado` (stock comprado/consumido/restante, ritmo promedio real) y `proyectarEstimado` (combina el estado con el plan de la línea para el ritmo final y, si aplica, la fecha estimada).
+- `movimiento.controller.js` + rutas nuevas: `GET /convenios/:id/consumo` (estado de todas las líneas de un convenio en una sola llamada, para la pantalla de detalle), `GET`/`POST /convenios/:id/productos/:productoId/movimientos`. Reglas: solo se registran movimientos sobre un convenio `autorizado` (409 si no); `consumo` exige que ya exista `compra_inicial` (409 si no); una segunda `compra_inicial` la rechaza la BD (23505 → 409), no el código de la app. Misma defensa contra IDOR que el resto del módulo: la línea de producto debe pertenecer al convenio del parámetro.
+- Frontend: nueva página `ConvenioDetalle.jsx` (ruta `/comercial/convenios/:id`, enlazada desde "Ver" en el listado) — KPIs por línea (comprado/consumido/restante/ritmo usado/tiempo estimado) con `TarjetaKPI`/`.grid-kpis` ya existentes (no se inventó un componente nuevo), formulario para registrar compra inicial o consumo según corresponda, tabla de movimientos históricos.
+- 31 pruebas nuevas (lógica del modelo con movimientos fabricados, controlador con mocks, migración por lectura de archivo) + 0 regresiones: 3654/3654 del repo completo, 0 errores de eslint.
+
+**Bug real encontrado probando contra Postgres real (no mocks):** `fecha_movimiento` llega del driver `pg` como objeto `Date` (columna `DATE`), no como texto — `proyectarEstimado` reconstruía `` `${fecha}T00:00:00Z` `` asumiendo texto y tronaba con "RangeError: Invalid time value". Corregido con `aFechaTexto()` (normaliza Date u texto a "AAAA-MM-DD" en `calcularEstado`, antes de que `proyectarEstimado` lo use) + prueba de regresión con un objeto `Date` real en el mock. Las 12 pruebas unitarias originales (con fechas ya como string) NO detectaron este bug — solo la prueba en vivo contra la BD real lo hizo.
+
+**Deuda documentada (no pedida, decisiones de diseño a revisar si hace falta):**
+- Un movimiento no se puede editar ni borrar una vez creado (tabla append-only); si alguien se equivoca de cantidad, hoy no hay forma de corregirlo salvo entrar a la BD directo.
+- Registrar un movimiento solo exige el permiso general "Convenios:edicion" (igual que editar un convenio pendiente) — no se restringió a una autoridad específica (ej. solo el vendedor o el creador), porque no se pidió.
+- Si un consumo deja el stock restante en negativo, se permite igual (sin bloquear ni advertir aparte): la UI lo muestra en rojo (`color-error`) en el KPI de "Restante", pero el backend no manda una advertencia explícita en la respuesta.
+- No se probó aún con un usuario real por HTTP (sesión + permisos reales) ni en el navegador — solo con pruebas unitarias con mocks y, para la lógica central, directo contra Postgres real en el stack aislado `convenios-test` (sin pasar por HTTP/auth).
+- No se corrió revisor ni tester como agentes separados en esta ronda (se hizo todo en esta misma sesión); el autocontrol fue: pruebas + lint + verificación manual contra Postgres real, que sí encontró y corrigió 1 bug real.
+
+**Puerta:** ~~GO del humano para desplegar (commit/push/PR/staging) — todavía no se ha pedido.~~ **GO dado (2026-11-10): "realiza el Push/PR/Despliegue dela fase y empieza la fase 5"** — push hecho, PR #29 abierta hacia `main`.
+
+---
+
+### [2026-11-10] [coder] — Convenios de compra Fase 5: dashboard de estado — CERRADA (código); pendiente PR/merge/despliegue
+
+**GO del humano:** mismo mensaje que abrió la Fase 5: "realiza el Push/PR/Despliegue dela fase y empieza la fase 5". Antes de construir, 3 decisiones de UI/umbral que el roadmap dejaba abiertas:
+
+1. **"Por vencer":** 30 días antes de `vigente_hasta` (recomendado por el orquestador, aceptado).
+2. **"Sin movimientos recientes":** 60 días sin ningún movimiento registrado (o nunca tuvo uno) en ninguna línea del convenio (recomendado, aceptado).
+3. **Ubicación:** pantalla nueva separada (`/comercial/convenios/dashboard`), no integrada al listado existente (recomendado, aceptado) — así `ConveniosListado.jsx` (autorizar/editar/cancelar) no se toca.
+
+**Implementado:**
+- `Convenio.listarConResumenConsumo()` (nuevo, en `convenio.model.js`): una sola consulta SQL (sin N+1) que agrega `comercial_convenio_movimientos` por convenio (`SUM(...) FILTER (WHERE tipo=...)`) para `stock_comprado`/`stock_consumido`/`fecha_ultimo_movimiento`, más `dias_para_vencer` y `dias_sin_movimiento` calculados en SQL con la misma fecha "hoy en México" que ya usaba `SQL_VENCIDO` (evita desfases de zona horaria entre el cálculo de vencido y el de los días).
+- `ControladorConvenio.dashboard` (nuevo) + `GET /comercial/convenios/dashboard` (declarada ANTES de `/convenios/:id` en las rutas — si no, Express la capturaría como `id="dashboard"`; hay una prueba dedicada para esto). KPIs (`activos`, `por_vencer`, `vencidos`, `sin_movimientos_recientes`, `total`) calculados solo sobre convenios `autorizado`; un convenio vencido cuenta en `vencidos` y nunca en los demás (ni aunque también calificara para "por vencer" o "sin movimiento").
+- Frontend: nueva página `ConveniosDashboard.jsx` (ruta `/comercial/convenios/dashboard`, enlazada desde "Dashboard" en el listado y desde el menú lateral) — KPIs con `TarjetaKPI`/`.grid-kpis` ya existentes, tabla con un semáforo de **consumo** (verde/ámbar/rojo según % consumido y stock restante) y uno de **vigencia** (verde/ámbar/rojo según `vencido`/`dias_para_vencer`) por convenio, usando un componente nuevo y reutilizable `BarraProgreso.jsx` (`modules/portal/frontend/components/`, estilos en `globales.css` junto a `.grid-kpis`/`.tarjeta-kpi` — no en `comercial.css`, porque es reutilizable fuera de este módulo, igual que `TarjetaKPI`).
+- 6 pruebas nuevas (KPIs con filas fabricadas cubriendo cada caso límite, SQL del modelo, orden de las rutas) + 0 regresiones: 3660/3660 del repo completo, 0 errores de eslint.
+
+**Verificado contra Postgres real (no solo mocks):** en el stack aislado `convenios-test`, se sembraron 3 convenios de prueba (uno por vencer con consumo parcial, uno vencido sin movimientos, uno abierto con último movimiento hace 90 días) y se corrió `Convenio.listarConResumenConsumo()` y `ControladorConvenio.dashboard` directo (sin HTTP): `stock_comprado`/`stock_consumido`/`dias_para_vencer`/`dias_sin_movimiento` salieron exactos, y los KPIs resultantes (`activos:2, por_vencer:1, vencidos:1, sin_movimientos_recientes:1`) coincidieron con el cálculo manual esperado. Datos de prueba limpiados después (`DELETE ... CASCADE`, nada quedó en la BD aislada).
+
+**Deuda documentada:**
+- No se probó en navegador real (Chromium no disponible en este entorno: `npx playwright install chrome` pendiente) — solo contra Postgres real sin pasar por HTTP/auth, igual que parte de la Fase 4. El código de la pantalla sigue el mismo patrón ya usado y probado en `ConvenioDetalle.jsx` (mismo `TarjetaKPI`, mismo `PageHeader`, mismo `solicitar()`).
+- El semáforo de consumo no distingue entre "sin compra inicial todavía" (normal, apenas se autorizó) y "con compra inicial pero sin consumo" (podría ser una alerta de inactividad distinta); ambos casos hoy se ven distinto solo si ya pasaron 60 días (entran a `sin_movimientos_recientes`), pero visualmente la barra gris de "Sin compra inicial registrada" es igual para un convenio de ayer que para uno de hace 6 meses sin arrancar.
+- No se corrió revisor ni tester como agentes separados en esta ronda.
+
+**Puerta:** GO del humano para desplegar (commit/push/PR/staging) — todavía no se ha pedido explícitamente para la Fase 5 en sí (sí para la Fase 4, ya en curso en PR #29).

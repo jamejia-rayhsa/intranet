@@ -16,7 +16,7 @@ describe("convenios.routes: autorización por ruta", () => {
     }));
     jest.doMock("../controllers/convenio.controller", () => ({
       listar: jest.fn(), obtener: jest.fn(), crear: jest.fn(), actualizar: jest.fn(),
-      autorizar: jest.fn(), rechazar: jest.fn(), cancelar: jest.fn(),
+      autorizar: jest.fn(), rechazar: jest.fn(), cancelar: jest.fn(), dashboard: jest.fn(),
     }));
     jest.doMock("../controllers/autorizador.controller", () => ({
       listar: jest.fn(), agregar: jest.fn(), quitar: jest.fn(),
@@ -34,8 +34,21 @@ describe("convenios.routes: autorización por ruta", () => {
     expect(router.stack[0].handle.name).toBe("authenticateJWT");
   });
 
+  it("Fase 5: /convenios/dashboard está declarada antes de /convenios/:id (si no, Express la capturaría como id='dashboard')", () => {
+    const { router } = montarRouter();
+    const rutasGet = router.stack
+      .filter((l) => l.route && l.route.methods.get)
+      .map((l) => l.route.path);
+    const idxDashboard = rutasGet.indexOf("/convenios/dashboard");
+    const idxPorId = rutasGet.indexOf("/convenios/:id");
+    expect(idxDashboard).toBeGreaterThanOrEqual(0);
+    expect(idxPorId).toBeGreaterThanOrEqual(0);
+    expect(idxDashboard).toBeLessThan(idxPorId);
+  });
+
   it.each([
     ["/convenios", "get", "consulta"],
+    ["/convenios/dashboard", "get", "consulta"],
     ["/convenios/:id", "get", "consulta"],
     ["/convenios", "post", "edicion"],
     ["/convenios/:id", "put", "edicion"],

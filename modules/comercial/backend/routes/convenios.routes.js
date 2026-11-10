@@ -2,6 +2,7 @@ const { Router } = require('express');
 const ControladorConvenio = require('../controllers/convenio.controller');
 const ControladorAutorizador = require('../controllers/autorizador.controller');
 const ControladorMba3 = require('../controllers/mba3.controller');
+const ControladorMovimiento = require('../controllers/movimiento.controller');
 const { authenticateJWT } = require('../../../portal/backend/middleware/auth.middleware');
 const { verificarPermiso } = require('../../../portal/backend/middleware/permisos.middleware');
 
@@ -19,12 +20,27 @@ function soloSuperAdmin(req, res, next) {
 }
 
 router.get('/convenios', verificarPermiso(MODULO, OPCION, 'consulta'), ControladorConvenio.listar);
+// Fase 5 — antes de '/convenios/:id': de otro modo Express la capturaría como id="dashboard".
+router.get('/convenios/dashboard', verificarPermiso(MODULO, OPCION, 'consulta'), ControladorConvenio.dashboard);
 router.get('/convenios/:id', verificarPermiso(MODULO, OPCION, 'consulta'), ControladorConvenio.obtener);
 router.post('/convenios', verificarPermiso(MODULO, OPCION, 'edicion'), ControladorConvenio.crear);
 router.put('/convenios/:id', verificarPermiso(MODULO, OPCION, 'edicion'), ControladorConvenio.actualizar);
 router.put('/convenios/:id/autorizar', verificarPermiso(MODULO, OPCION, 'edicion'), ControladorConvenio.autorizar);
 router.put('/convenios/:id/rechazar', verificarPermiso(MODULO, OPCION, 'edicion'), ControladorConvenio.rechazar);
 router.put('/convenios/:id/cancelar', verificarPermiso(MODULO, OPCION, 'edicion'), ControladorConvenio.cancelar);
+
+// Fase 4 — registro real de consumo y tiempo estimado para agotar el stock de cada línea.
+router.get('/convenios/:id/consumo', verificarPermiso(MODULO, OPCION, 'consulta'), ControladorMovimiento.estadoConvenio);
+router.get(
+  '/convenios/:id/productos/:productoId/movimientos',
+  verificarPermiso(MODULO, OPCION, 'consulta'),
+  ControladorMovimiento.listar,
+);
+router.post(
+  '/convenios/:id/productos/:productoId/movimientos',
+  verificarPermiso(MODULO, OPCION, 'edicion'),
+  ControladorMovimiento.registrar,
+);
 
 router.get('/autorizadores', soloSuperAdmin, ControladorAutorizador.listar);
 router.post('/autorizadores', soloSuperAdmin, ControladorAutorizador.agregar);
