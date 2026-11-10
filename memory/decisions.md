@@ -1511,3 +1511,28 @@ Al desactivar (o registrar inactiva/sábado/domingo/sobre festivo) una actividad
 - No se corrió revisor ni tester como agentes separados en esta ronda (se hizo todo en esta misma sesión); el autocontrol fue: pruebas + lint + verificación manual contra Postgres real, que sí encontró y corrigió 1 bug real.
 
 **Puerta:** ~~GO del humano para desplegar (commit/push/PR/staging) — todavía no se ha pedido.~~ **GO dado (2026-11-10): "realiza el Push/PR/Despliegue dela fase y empieza la fase 5"** — push hecho, PR #29 abierta hacia `main`.
+
+---
+
+### [2026-11-10] [coder] — Convenios de compra Fase 5: dashboard de estado — CERRADA (código); pendiente PR/merge/despliegue
+
+**GO del humano:** mismo mensaje que abrió la Fase 5: "realiza el Push/PR/Despliegue dela fase y empieza la fase 5". Antes de construir, 3 decisiones de UI/umbral que el roadmap dejaba abiertas:
+
+1. **"Por vencer":** 30 días antes de `vigente_hasta` (recomendado por el orquestador, aceptado).
+2. **"Sin movimientos recientes":** 60 días sin ningún movimiento registrado (o nunca tuvo uno) en ninguna línea del convenio (recomendado, aceptado).
+3. **Ubicación:** pantalla nueva separada (`/comercial/convenios/dashboard`), no integrada al listado existente (recomendado, aceptado) — así `ConveniosListado.jsx` (autorizar/editar/cancelar) no se toca.
+
+**Implementado:**
+- `Convenio.listarConResumenConsumo()` (nuevo, en `convenio.model.js`): una sola consulta SQL (sin N+1) que agrega `comercial_convenio_movimientos` por convenio (`SUM(...) FILTER (WHERE tipo=...)`) para `stock_comprado`/`stock_consumido`/`fecha_ultimo_movimiento`, más `dias_para_vencer` y `dias_sin_movimiento` calculados en SQL con la misma fecha "hoy en México" que ya usaba `SQL_VENCIDO` (evita desfases de zona horaria entre el cálculo de vencido y el de los días).
+- `ControladorConvenio.dashboard` (nuevo) + `GET /comercial/convenios/dashboard` (declarada ANTES de `/convenios/:id` en las rutas — si no, Express la capturaría como `id="dashboard"`; hay una prueba dedicada para esto). KPIs (`activos`, `por_vencer`, `vencidos`, `sin_movimientos_recientes`, `total`) calculados solo sobre convenios `autorizado`; un convenio vencido cuenta en `vencidos` y nunca en los demás (ni aunque también calificara para "por vencer" o "sin movimiento").
+- Frontend: nueva página `ConveniosDashboard.jsx` (ruta `/comercial/convenios/dashboard`, enlazada desde "Dashboard" en el listado y desde el menú lateral) — KPIs con `TarjetaKPI`/`.grid-kpis` ya existentes, tabla con un semáforo de **consumo** (verde/ámbar/rojo según % consumido y stock restante) y uno de **vigencia** (verde/ámbar/rojo según `vencido`/`dias_para_vencer`) por convenio, usando un componente nuevo y reutilizable `BarraProgreso.jsx` (`modules/portal/frontend/components/`, estilos en `globales.css` junto a `.grid-kpis`/`.tarjeta-kpi` — no en `comercial.css`, porque es reutilizable fuera de este módulo, igual que `TarjetaKPI`).
+- 6 pruebas nuevas (KPIs con filas fabricadas cubriendo cada caso límite, SQL del modelo, orden de las rutas) + 0 regresiones: 3660/3660 del repo completo, 0 errores de eslint.
+
+**Verificado contra Postgres real (no solo mocks):** en el stack aislado `convenios-test`, se sembraron 3 convenios de prueba (uno por vencer con consumo parcial, uno vencido sin movimientos, uno abierto con último movimiento hace 90 días) y se corrió `Convenio.listarConResumenConsumo()` y `ControladorConvenio.dashboard` directo (sin HTTP): `stock_comprado`/`stock_consumido`/`dias_para_vencer`/`dias_sin_movimiento` salieron exactos, y los KPIs resultantes (`activos:2, por_vencer:1, vencidos:1, sin_movimientos_recientes:1`) coincidieron con el cálculo manual esperado. Datos de prueba limpiados después (`DELETE ... CASCADE`, nada quedó en la BD aislada).
+
+**Deuda documentada:**
+- No se probó en navegador real (Chromium no disponible en este entorno: `npx playwright install chrome` pendiente) — solo contra Postgres real sin pasar por HTTP/auth, igual que parte de la Fase 4. El código de la pantalla sigue el mismo patrón ya usado y probado en `ConvenioDetalle.jsx` (mismo `TarjetaKPI`, mismo `PageHeader`, mismo `solicitar()`).
+- El semáforo de consumo no distingue entre "sin compra inicial todavía" (normal, apenas se autorizó) y "con compra inicial pero sin consumo" (podría ser una alerta de inactividad distinta); ambos casos hoy se ven distinto solo si ya pasaron 60 días (entran a `sin_movimientos_recientes`), pero visualmente la barra gris de "Sin compra inicial registrada" es igual para un convenio de ayer que para uno de hace 6 meses sin arrancar.
+- No se corrió revisor ni tester como agentes separados en esta ronda.
+
+**Puerta:** GO del humano para desplegar (commit/push/PR/staging) — todavía no se ha pedido explícitamente para la Fase 5 en sí (sí para la Fase 4, ya en curso en PR #29).

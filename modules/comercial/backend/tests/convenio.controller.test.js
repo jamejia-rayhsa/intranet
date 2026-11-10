@@ -184,6 +184,60 @@ describe("ControladorConvenio.listar", () => {
   });
 });
 
+describe("ControladorConvenio.dashboard — Fase 5: KPIs (umbrales humanos: 30 días por vencer, 60 sin movimiento)", () => {
+  it("cuenta activos/por_vencer/vencidos/sin_movimientos_recientes según cada caso, sin tocar lo no autorizado", async () => {
+    const filas = [
+      // No autorizado: no cuenta en ningún KPI (solo en total).
+      { id: 1, estatus: "pendiente_autorizacion", vencido: false, dias_para_vencer: 5, dias_sin_movimiento: null },
+      // Autorizado + vencido: cuenta vencidos, nunca activos/por_vencer/sin_movimiento (aunque calificaría).
+      { id: 2, estatus: "autorizado", vencido: true, dias_para_vencer: -3, dias_sin_movimiento: 100 },
+      // Autorizado, no vencido, dentro de la ventana de 30 días -> activos + por_vencer.
+      { id: 3, estatus: "autorizado", vencido: false, dias_para_vencer: 10, dias_sin_movimiento: 5 },
+      // Autorizado, no vencido, fuera de la ventana -> activos, no por_vencer.
+      { id: 4, estatus: "autorizado", vencido: false, dias_para_vencer: 40, dias_sin_movimiento: 5 },
+      // Autorizado, abierta (sin vigente_hasta) -> activos, no por_vencer (dias_para_vencer null).
+      { id: 5, estatus: "autorizado", vencido: false, dias_para_vencer: null, dias_sin_movimiento: 5 },
+      // Autorizado, nunca tuvo movimiento (dias_sin_movimiento null) -> cuenta sin_movimientos_recientes.
+      { id: 6, estatus: "autorizado", vencido: false, dias_para_vencer: null, dias_sin_movimiento: null },
+      // Autorizado, último movimiento hace exactamente 60 días -> sí cuenta (>=).
+      { id: 7, estatus: "autorizado", vencido: false, dias_para_vencer: null, dias_sin_movimiento: 60 },
+      // Autorizado, movimiento reciente -> no cuenta.
+      { id: 8, estatus: "autorizado", vencido: false, dias_para_vencer: null, dias_sin_movimiento: 10 },
+    ];
+    Convenio.listarConResumenConsumo.mockResolvedValue(filas);
+    const req = {};
+    const res = crearRes();
+    await Controlador.dashboard(req, res);
+
+    expect(res.json).toHaveBeenCalledWith({
+      exito: true,
+      datos: {
+        kpis: { total: 8, activos: 6, por_vencer: 1, vencidos: 1, sin_movimientos_recientes: 2 },
+        convenios: filas,
+      },
+    });
+  });
+
+  it("sin convenios, KPIs en cero (no 500)", async () => {
+    Convenio.listarConResumenConsumo.mockResolvedValue([]);
+    const req = {};
+    const res = crearRes();
+    await Controlador.dashboard(req, res);
+    expect(res.json).toHaveBeenCalledWith({
+      exito: true,
+      datos: { kpis: { total: 0, activos: 0, por_vencer: 0, vencidos: 0, sin_movimientos_recientes: 0 }, convenios: [] },
+    });
+  });
+
+  it("error del modelo -> 500, no se cae el proceso", async () => {
+    Convenio.listarConResumenConsumo.mockRejectedValue(new Error("boom"));
+    const req = {};
+    const res = crearRes();
+    await Controlador.dashboard(req, res);
+    expect(res.status).toHaveBeenCalledWith(500);
+  });
+});
+
 describe("ControladorConvenio.obtener", () => {
   it("R-2: id no numérico -> 400, no 500 de Postgres", async () => {
     const req = { params: { id: "abc" }, user: { usuario_id: 1 } };

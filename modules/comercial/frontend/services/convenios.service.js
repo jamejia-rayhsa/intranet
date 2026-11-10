@@ -13,6 +13,11 @@ export async function obtenerConvenio(id) {
   return solicitar(`/comercial/convenios/${id}`);
 }
 
+// Fase 5 — KPIs globales + resumen de consumo por convenio.
+export async function obtenerDashboardConvenios() {
+  return solicitar('/comercial/convenios/dashboard');
+}
+
 export async function crearConvenio(datos) {
   return solicitar('/comercial/convenios', { method: 'POST', body: JSON.stringify(datos) });
 }

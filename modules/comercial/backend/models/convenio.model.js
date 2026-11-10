@@ -3,7 +3,8 @@ const { grupo } = require('../../../portal/backend/config/database');
 // Vigencia vencida: NO se guarda como estatus (serían 5 estados a mantener sincronizados); se
 // calcula comparando vigente_hasta con "hoy" en México, igual que departamento.model.js /
 // turno.model.js (`(now() AT TIME ZONE 'America/Mexico_City')::date`). Null = abierta = nunca vencida.
-const SQL_VENCIDO = `(vigente_hasta IS NOT NULL AND vigente_hasta < (now() AT TIME ZONE 'America/Mexico_City')::date)`;
+const SQL_HOY_MX = `(now() AT TIME ZONE 'America/Mexico_City')::date`;
+const SQL_VENCIDO = `(vigente_hasta IS NOT NULL AND vigente_hasta < ${SQL_HOY_MX})`;
 
 // ILIKE sin esto trata %, _ y \ del usuario como comodines/escape propios (R-8 de la revisión).
 // El carácter de escape por defecto de LIKE/ILIKE en Postgres ya es la barra invertida, así que
@@ -73,6 +74,39 @@ const Convenio = {
     `,
       params,
     );
+    return res.rows;
+  },
+
+  // Fase 5 — dashboard: un convenio puede tener varias líneas de producto, cada una con su propia
+  // compra_inicial/consumo (tabla comercial_convenio_movimientos); esto agrega esas líneas por
+  // convenio en una sola consulta (sin N+1) para los KPIs globales y el semáforo por fila.
+  // dias_para_vencer/dias_sin_movimiento se calculan en SQL (no en JS) para usar la misma fecha
+  // "hoy en México" que SQL_VENCIDO, evitando que un desfase de zona horaria los contradiga.
+  async listarConResumenConsumo() {
+    const res = await grupo.query(`
+      SELECT c.*, ${SQL_VENCIDO} AS vencido,
+             (vigente_hasta - ${SQL_HOY_MX}) AS dias_para_vencer,
+             uc.nombre AS creado_por_nombre, uc.apellido AS creado_por_apellido,
+             (SELECT COUNT(*) FROM comercial_convenio_productos p WHERE p.convenio_id = c.id) AS total_productos,
+             COALESCE(rc.stock_comprado, 0) AS stock_comprado,
+             COALESCE(rc.stock_consumido, 0) AS stock_consumido,
+             rc.fecha_ultimo_movimiento,
+             CASE WHEN rc.fecha_ultimo_movimiento IS NOT NULL
+                  THEN (${SQL_HOY_MX} - rc.fecha_ultimo_movimiento)
+                  ELSE NULL END AS dias_sin_movimiento
+      FROM comercial_convenios c
+      LEFT JOIN usuarios uc ON uc.id = c.creado_por_id
+      LEFT JOIN (
+        SELECT p.convenio_id,
+               SUM(m.cantidad) FILTER (WHERE m.tipo = 'compra_inicial') AS stock_comprado,
+               SUM(m.cantidad) FILTER (WHERE m.tipo = 'consumo')        AS stock_consumido,
+               MAX(m.fecha_movimiento) AS fecha_ultimo_movimiento
+        FROM comercial_convenio_productos p
+        JOIN comercial_convenio_movimientos m ON m.convenio_producto_id = p.id
+        GROUP BY p.convenio_id
+      ) rc ON rc.convenio_id = c.id
+      ORDER BY c.fecha_creacion DESC
+    `);
     return res.rows;
   },
 

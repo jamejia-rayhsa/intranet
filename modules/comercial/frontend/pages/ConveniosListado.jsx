@@ -68,9 +68,14 @@ export default function ConveniosListado() {
         title="Convenios de compra"
         subtitle="Compra de productos sin stock a mínimos de paquete, facturados periódicamente a un cliente"
         actions={
-          <button className="btn-primario" onClick={() => navigate('/comercial/convenios/nuevo')}>
-            + Nuevo convenio
-          </button>
+          <>
+            <button className="btn-secundario" onClick={() => navigate('/comercial/convenios/dashboard')}>
+              Dashboard
+            </button>
+            <button className="btn-primario" onClick={() => navigate('/comercial/convenios/nuevo')}>
+              + Nuevo convenio
+            </button>
+          </>
         }
       />
 
