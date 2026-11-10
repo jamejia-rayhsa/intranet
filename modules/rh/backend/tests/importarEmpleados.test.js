@@ -942,7 +942,7 @@ describe("auditoría de la importación", () => {
     const [rq, modulo, tabla, id, accion, previos, nuevos] = registrarAccion.mock.calls[0];
     expect([modulo, tabla, accion, previos, id]).toEqual(["rh", "empleados", "IMPORTAR_EMPLEADOS", null, "importacion"]);
     expect(accion.length).toBeLessThanOrEqual(20);
-    expect(nuevos).toEqual({ filas_recibidas: 3, modo: "omitir", insertados: 1, actualizados: 0, sin_cambios: 0, duplicados: 0, errores: 2, advertencias: 0 });
+    expect(nuevos).toEqual({ filas_recibidas: 3, modo: "omitir", insertados: 1, actualizados: 0, sin_cambios: 0, cuentas_vinculadas: 0, duplicados: 0, errores: 2, advertencias: 0 });
     expect(JSON.stringify(nuevos)).not.toMatch(/Ana|XXXX/);
     expect(rq.headers["x-forwarded-for"].length).toBe(45);
     expect(res.json.mock.calls[0][0].exito).toBe(true);

@@ -30,6 +30,7 @@ export async function solicitar(ruta, opciones = {}) {
   if (!respuesta.ok) {
     const error = new Error(datos.mensaje || "Error en la solicitud");
     error.status = respuesta.status;
+    error.datos = datos; // cuerpo de la respuesta (p. ej. `conflictos` de un 409)
     throw error;
   }
 

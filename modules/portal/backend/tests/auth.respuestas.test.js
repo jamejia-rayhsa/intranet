@@ -12,7 +12,7 @@ const { grupo } = require('../config/database');
 const controlador = require('../controllers/auth.controller');
 
 const res = () => ({ status: jest.fn().mockReturnThis(), json: jest.fn() });
-const sucio = { id: 1, correo: 'a@x.com', hash_password: 'HASH', auth_uid: 'UID' };
+const sucio = { auth_tipo: 'local', id: 1, correo: 'a@x.com', hash_password: 'HASH', auth_uid: 'UID' };
 
 describe('obtenerPerfil', () => {
   it('no filtra campos internos', async () => {
@@ -42,6 +42,17 @@ describe('cambiarPassword (validación contra GoTrue)', () => {
     expect(supabaseAdmin.actualizarPassword).toHaveBeenCalledWith('UID', 'Nueva12345');
     expect(Usuario.actualizar).toHaveBeenCalledWith(1, { requiere_cambio_password: false });
     expect(r.json.mock.calls[0][0].exito).toBe(true);
+  });
+
+  it('una cuenta ms365 no puede ponerse contraseña local: 400 sin llamar a GoTrue', async () => {
+    Usuario.buscarPorId.mockResolvedValue({ ...sucio, auth_tipo: 'ms365' });
+    const r = res();
+    await controlador.cambiarPassword(req(cuerpo), r);
+    expect(r.status).toHaveBeenCalledWith(400);
+    expect(r.json.mock.calls[0][0].mensaje).toMatch(/Microsoft/);
+    expect(supabaseAdmin.iniciarSesion).not.toHaveBeenCalled();
+    expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
+    expect(Usuario.actualizar).not.toHaveBeenCalled();
   });
 
   it('con la actual incorrecta responde 400 y no escribe nada', async () => {

@@ -56,6 +56,11 @@ services:
       MBA3_LECTURA_CF_ACCESS_CLIENT_SECRET: ${MBA3_LECTURA_CF_ACCESS_CLIENT_SECRET:-}
       # Proxies de confianza para req.ip (lista de IP de las llaves de ingesta): vacío = ninguno
       TRUST_PROXY: ${TRUST_PROXY:-}
+      # Motor de análisis de asistencia (planificador en proceso, una vuelta cada ASISTENCIA_MOTOR_INTERVALO_MIN min; el candado de PostgreSQL evita que corra en dos réplicas). Apágalo con ASISTENCIA_MOTOR_ACTIVO=false
+      ASISTENCIA_MOTOR_ACTIVO: ${ASISTENCIA_MOTOR_ACTIVO:-true}
+      ASISTENCIA_MOTOR_INTERVALO_MIN: ${ASISTENCIA_MOTOR_INTERVALO_MIN:-15}
+      ASISTENCIA_MOTOR_TIEMPO_MAX_MIN: ${ASISTENCIA_MOTOR_TIEMPO_MAX_MIN:-10}
+      ASISTENCIA_MOTOR_TIMEOUT_MIN: ${ASISTENCIA_MOTOR_TIMEOUT_MIN:-10}
       # Puerta de ingesta dedicada (segundo puerto, solo rutas de ingesta, sin trust proxy). Ver docs/asistencia/operacion-ingesta.md
       INGESTA_PORT: ${INGESTA_PORT:-4010}
       INGESTA_SOLO_PUERTO_DEDICADO: ${INGESTA_SOLO_PUERTO_DEDICADO:-true}
@@ -103,6 +108,7 @@ services:
       - '443:443'
     volumes:
       - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./config/nginx/auth-v1-allowlist.conf:/etc/nginx/auth-v1-allowlist.conf:ro
       - ./config/nginx/ssl:/etc/nginx/ssl
     depends_on:
       - frontend

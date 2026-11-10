@@ -1,6 +1,6 @@
 // BD en memoria para las pruebas del importador de empleados: interpreta solo las consultas que hace
 // Empleado.importarLote / asignarJefes y el controlador (catálogos, búsqueda por claves, INSERT, UPDATE, jefes, transacciones).
-function crearBd({ empleados = [], puestos = [], departamentos = [], ubicaciones = [], fallaEn } = {}) {
+function crearBd({ empleados = [], puestos = [], departamentos = [], ubicaciones = [], usuarios = [], sinUnique = false, fallaEn } = {}) {
   const estado = {
     empleados: empleados.map((e) => ({ ...e })),
     sigId: Math.max(0, ...empleados.map((e) => e.id || 0)) + 1,
@@ -41,6 +41,26 @@ function crearBd({ empleados = [], puestos = [], departamentos = [], ubicaciones
           .sort((a, b) => a.id - b.id)
           .map((e) => ({ ...e, curp_l: e.curp ? e.curp.toLowerCase() : null, nomina_l: e.numero_nomina ? e.numero_nomina.toLowerCase() : null })),
       };
+    }
+    // Cuentas de usuario por correo (columna "Correo de la cuenta") y vínculo guardado
+    if (/WHERE LOWER\(u\.correo\) = ANY\(\$1::text\[\]\)/.test(q)) {
+      return {
+        rows: usuarios
+          .filter((u) => params[0].includes(u.correo.toLowerCase()))
+          .map((u) => ({ id: u.id, correo: u.correo, nombre: u.nombre || "X", apellido: u.apellido || "", activo: u.activo !== false, roles: u.roles || [], con_acceso_asistencia: u.con_acceso_asistencia !== false, con_permisos_admin: Boolean(u.con_permisos_admin), correo_duplicado: Boolean(u.correo_duplicado) })),
+      };
+    }
+    if (/^SELECT usuario_id, id FROM empleados WHERE usuario_id = ANY\(\$1::int\[\]\)/.test(q)) {
+      return { rows: estado.empleados.filter((e) => e.usuario_id && params[0].includes(e.usuario_id)).map((e) => ({ usuario_id: e.usuario_id, id: e.id })) };
+    }
+    if (/^UPDATE empleados SET usuario_id = \$1, fecha_actualizacion = NOW\(\) WHERE id = \$2 AND usuario_id IS NULL$/.test(q)) {
+      const e = estado.empleados.find((x) => x.id === params[1]);
+      if (!e || e.usuario_id) return { rows: [], rowCount: 0 };
+      if (!sinUnique && estado.empleados.some((x) => x.usuario_id === params[0])) {
+        throw Object.assign(new Error("duplicate key value violates unique constraint (detalle interno)"), { code: "23505", constraint: "empleados_usuario_id_unique" });
+      }
+      e.usuario_id = params[0];
+      return { rows: [], rowCount: 1 };
     }
     m = /^INSERT INTO empleados \(([^)]*)\) VALUES/.exec(q);
     if (m) {

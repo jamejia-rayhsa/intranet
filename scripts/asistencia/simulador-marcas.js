@@ -20,6 +20,9 @@ Modos
   historico     carga histórica: --total marcas en lotes de --lote, en orden ascendente de id
   incremental   ciclos como los de la interfaz: GET /estado -> lee el cursor -> envía las marcas nuevas
                 (retrocede --retroceso ids para demostrar que los duplicados no hacen daño)
+  jornadas      jornadas REALISTAS de lunes a viernes (puntuales, retardos, faltas, salidas anticipadas, marcas
+                duplicadas, de comida, incompletas y casos en el borde de los límites de minutos) para --codigos
+                entre --desde y --hasta; sirve para validar el motor de análisis (docs/asistencia/motor-analisis.md)
   estado        solo consulta GET /estado
 
 Variables de entorno
@@ -40,6 +43,11 @@ historico
   --total N          marcas a generar (por omisión 20000)
   --paralelo N       N trabajadores envían EXACTAMENTE los mismos lotes a la vez (prueba de concurrencia)
   --repetir N        repite cada lote N veces seguidas (prueba de reintento idempotente)
+
+jornadas
+  --codigos A-B      rango de códigos de empleado (numero_nomina) ficticios, p. ej. 9001-9071 (obligatorio)
+  --hasta AAAA-MM-DD último día (obligatorio); --desde es el primero
+  --fines-semana     añade trabajo ocasional en sábado (para probar el descanso trabajado)
 
 incremental
   --ciclos N         número de ciclos (por omisión 3)
@@ -73,7 +81,7 @@ function leerArgumentos(argv) {
     const arg = resto[i];
     if (!arg.startsWith("--")) throw new Error(`Argumento no reconocido: ${arg}`);
     const nombre = arg.slice(2);
-    if (["sin-anomalias", "silencioso", "ayuda"].includes(nombre)) {
+    if (["sin-anomalias", "silencioso", "ayuda", "fines-semana"].includes(nombre)) {
       opciones[nombre] = true;
     } else {
       const valor = resto[i + 1];
@@ -294,6 +302,98 @@ async function modoHistorico(cliente, o) {
   return 0;
 }
 
+
+// --- jornadas realistas (turno de oficina 08:00-18:00, hora de México = UTC-6) ---
+// Devuelve las marcas ya ordenadas por instante, con id_externo ascendente (con huecos). Determinista por semilla.
+const SEG_DIA = 86_400_000;
+function diasEntre(desde, hasta) {
+  const dias = [];
+  for (let t = Date.parse(`${desde}T00:00:00Z`); t <= Date.parse(`${hasta}T00:00:00Z`); t += SEG_DIA) dias.push(new Date(t).toISOString().slice(0, 10));
+  return dias;
+}
+
+function generarJornadas({ semilla = 1, codigos, desde, hasta, idInicial = 5_000_000, finesDeSemana = false, sinMarcasEn = [] }) {
+  const marcas = [];
+  const sinMarcas = new Set(sinMarcasEn);
+  // hora local (min, seg) de una fecha -> instante UTC (México = UTC-6 todo 2026)
+  const instante = (fecha, minutos, segundos) => Date.parse(`${fecha}T00:00:00Z`) + (minutos + 360) * 60_000 + segundos * 1000;
+  for (const codigo of codigos) {
+    for (const fecha of diasEntre(desde, hasta)) {
+      const azar = crearAzar((semilla * 2654435761 + Number(codigo) * 7919 + Date.parse(fecha) / SEG_DIA) >>> 0);
+      const dow = new Date(`${fecha}T12:00:00Z`).getUTCDay();
+      const ent = (min, seg = azar.entero(0, 59)) => marcas.push({ ms: instante(fecha, min, seg), codigo });
+      if (dow === 0 || dow === 6) {
+        if (finesDeSemana && dow === 6 && azar.siguiente() < 0.04) {
+          ent(azar.entero(540, 560));
+          ent(azar.entero(780, 800));
+        }
+        continue;
+      }
+      if (sinMarcas.has(fecha) && azar.siguiente() < 0.9) continue;
+      const r = azar.siguiente();
+      const salidaNormal = () => ent(azar.entero(1077, 1100)); // 17:57 a 18:20
+      if (r < 0.64) { ent(azar.entero(465, 489)); salidaNormal(); } // puntual (07:45 a 08:09)
+      else if (r < 0.73) { ent(azar.entero(491, 510)); salidaNormal(); } // retardo (08:11 a 08:30)
+      else if (r < 0.75) { ent(azar.entero(491, 510)); ent(azar.entero(1075, 1076)); } // retardo + salida anticipada (17:55-17:56)
+      else if (r < 0.79) { /* falta: sin marcas */ }
+      else if (r < 0.82) { ent(azar.entero(512, 600)); salidaNormal(); } // llegó más de 30 min tarde
+      else if (r < 0.86) { ent(azar.entero(465, 489)); ent(azar.entero(1075, 1076)); } // salida anticipada
+      else if (r < 0.89) { ent(azar.entero(465, 489)); } // incompleta: solo entrada
+      else if (r < 0.90) { salidaNormal(); } // solo salida
+      else if (r < 0.93) { const m = azar.entero(470, 485); ent(m, 10); ent(m, azar.entero(20, 55)); salidaNormal(); } // entrada duplicada a segundos
+      else if (r < 0.95) { ent(azar.entero(465, 489)); ent(780); ent(azar.entero(845, 850)); salidaNormal(); } // marcas de comida
+      else if (r < 0.96) { ent(azar.entero(380, 410)); salidaNormal(); } // entrada fuera de ventana (antes de las 07:00)
+      else if (r < 0.97) { ent(480, azar.entero(0, 59)); ent(1080, azar.entero(0, 59)); } // exacto 08:00 y 18:00
+      else if (r < 0.98) { ent(490, azar.entero(0, 59)); salidaNormal(); } // 08:10: borde de la tolerancia
+      else if (r < 0.99) { ent(491, 0); salidaNormal(); } // 08:11:00: primer minuto de retardo
+      else { ent(510, azar.entero(0, 59)); salidaNormal(); } // 08:30: borde del umbral de falta
+    }
+  }
+  marcas.sort((a, b) => a.ms - b.ms || String(a.codigo).localeCompare(String(b.codigo)));
+  return marcas.map((m, k) => {
+    const id = idInicial + k * 2 + Math.floor(k / 11) * 3;
+    return {
+      id_externo: String(id),
+      codigo_empleado: String(m.codigo),
+      marca_ts: new Date(m.ms).toISOString(),
+      subida_ts: new Date(m.ms + 600_000).toISOString(),
+      estado_marca: "0",
+      tipo_verificacion: 15,
+      terminal_sn: "SN-FICTICIO-001",
+      terminal_alias: "SEDE-A",
+      area_externa: "SEDE-A",
+      crudo: { work_code: "0", source: 1, is_attendance: null },
+    };
+  });
+}
+
+function rangoDeCodigos(texto) {
+  const m = /^(\d+)-(\d+)$/.exec(texto || "");
+  if (!m || Number(m[2]) < Number(m[1]) || Number(m[2]) - Number(m[1]) > 5000) throw new Error("--codigos debe ser un rango A-B (p. ej. 9001-9071)");
+  return Array.from({ length: Number(m[2]) - Number(m[1]) + 1 }, (_, i) => Number(m[1]) + i);
+}
+
+async function modoJornadas(cliente, o) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(o.desde || "") || !/^\d{4}-\d{2}-\d{2}$/.test(o.hasta || "")) throw new Error("--desde y --hasta son obligatorios (AAAA-MM-DD)");
+  const lote = numero(o.lote, MAX_POR_ENVIO, { min: 1, max: MAX_POR_ENVIO, nombre: "lote" });
+  const marcas = generarJornadas({
+    semilla: numero(o.semilla, 1, { nombre: "semilla" }),
+    codigos: rangoDeCodigos(o.codigos),
+    desde: o.desde,
+    hasta: o.hasta,
+    idInicial: numero(o["id-inicial"], 5_000_000, { nombre: "id-inicial" }),
+    finesDeSemana: Boolean(o["fines-semana"]),
+  });
+  console.log(`Jornadas: ${marcas.length} marcas en ${Math.ceil(marcas.length / lote)} envíos`);
+  const totales = totalVacio();
+  for (let i = 0; i < marcas.length; i += lote) {
+    const { datos } = await enviarLote(cliente, marcas.slice(i, i + lote), `[${Math.floor(i / lote) + 1}]`, o.silencioso);
+    sumar(totales, datos);
+  }
+  console.log(`\nResumen: ${JSON.stringify(totales)}`);
+  return 0;
+}
+
 async function modoIncremental(cliente, o) {
   const ciclos = numero(o.ciclos, 3, { min: 1, max: 1000, nombre: "ciclos" });
   const porCiclo = numero(o["por-ciclo"], 120, { min: 1, max: 100000, nombre: "por-ciclo" });
@@ -344,8 +444,12 @@ async function main() {
     console.log(estado, JSON.stringify(json, null, 2));
     return estado === 200 ? 0 : 1;
   }
-  if (!["historico", "incremental"].includes(modo)) throw new Error(`Modo desconocido: ${modo} (usa historico, incremental o estado)`);
+  if (!["historico", "incremental", "jornadas"].includes(modo)) throw new Error(`Modo desconocido: ${modo} (usa historico, incremental, jornadas o estado)`);
 
+  if (modo === "jornadas") {
+    console.log(`Destino: ${url} (llave ${llave.slice(0, 12)}…)`);
+    return modoJornadas(cliente, opciones);
+  }
   opciones.generador = crearGenerador({
     semilla: numero(opciones.semilla, 1, { nombre: "semilla" }),
     empleados: numero(opciones.empleados, 30, { min: 1, max: 100000, nombre: "empleados" }),
@@ -368,4 +472,4 @@ if (require.main === module) {
   );
 }
 
-module.exports = { crearAzar, crearGenerador, armarEnvios, leerArgumentos };
+module.exports = { crearAzar, crearGenerador, armarEnvios, leerArgumentos, generarJornadas, rangoDeCodigos };

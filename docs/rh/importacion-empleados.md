@@ -59,6 +59,7 @@ importación si faltan Nombre o Apellido Paterno). Los 17 encabezados del layout
 | | Infonavit, Fonacot | texto, 20 |
 | | Puesto, Departamento, Ubicación | nombre del catálogo (sin acentos ni mayúsculas) |
 | | Jefe (número de nómina), Jefe (CURP) | ver "Jefe inmediato" |
+| | Correo de la cuenta (alias: Correo corporativo, Correo Microsoft, Correo institucional, Cuenta, Usuario) | ver "Cuenta de usuario" |
 | Financieros | Banco | uno de la hoja Catálogos |
 | | CLABE | 18 dígitos |
 | | CP fiscal | 5 dígitos |
@@ -86,7 +87,7 @@ reparan solos; la CLABE no).
 
 * **Omitirlos** (por omisión): una fila cuya CURP o número de nómina ya existe se cuenta como duplicada y no se toca.
 * **Actualizarlos con los datos del archivo:** se busca por **CURP** y, si la fila no trae CURP, por **número de nómina**.
-  * Solo las celdas **con valor** sobrescriben; una celda vacía **nunca borra** datos. Nunca se cambia la cuenta de usuario.
+  * Solo las celdas **con valor** sobrescriben; una celda vacía **nunca borra** datos. La cuenta de usuario solo se vincula con la columna `Correo de la cuenta` (ver "Cuenta de usuario"); nunca se pisa ni se quita un vínculo existente.
   * La CURP y el número de nómina se **rellenan** si el empleado no los tiene (los empleados sin nómina se completan así).
     Si ya tiene un valor distinto, o si la CURP es de un empleado y la nómina de otro, la fila es un **error** (no se pisa).
   * Una fila sin CURP ni nómina es un **error** ("Sin identificador") y nunca se inserta. En modo **omitir/crear** sí se crea,
@@ -116,11 +117,24 @@ detección de ciclos entre peticiones distintas protege igual (la segunda arista
 la primera petición ya quedaron asignadas. Si un lote falla, los jefes de los lotes ya guardados SÍ se asignan; un 401/403 detiene
 todo con el mensaje de permisos (no se marca "resultado no confirmado").
 
+## Cuenta de usuario (columna `Correo de la cuenta`)
+
+Relaciona al empleado con su cuenta de la intranet (`empleados.usuario_id`). La cuenta (con su correo corporativo y su rol) la crea
+antes el administrador de usuarios: esta columna solo la **vincula**; no crea cuentas, no cambia roles ni contraseñas. El correo se
+busca en `usuarios.correo` sin distinguir mayúsculas y el empleado se identifica por CURP/nómina como siempre (en modo "omitir" solo
+se vincula al crear al empleado; en "actualizar", también a los existentes). Es un error de la fila (no se guarda nada de ella):
+no existe una cuenta con ese correo, la cuenta ya está vinculada a OTRO empleado, el empleado ya tiene otra cuenta (no se pisa; se
+desvincula desde su perfil), el empleado está dado de baja o la cuenta tiene un rol privilegiado (esas se vinculan desde la acción
+"Vincular cuentas" con su confirmación aparte). Un formato de correo inválido es advertencia por campo. Una cuenta inactiva o sin
+un rol con acceso a Asistencia se vincula con una advertencia. Una celda vacía nunca desvincula, y reimportar el mismo vínculo no
+cambia nada. El resultado muestra "Cuentas vinculadas" y la auditoría `IMPORTAR_EMPLEADOS` lleva el conteo `cuentas_vinculadas`.
+"Descargar empleados actuales" incluye la columna con el correo de la cuenta vinculada. Flujo completo: `docs/rh/cuentas-microsoft.md`.
+
 ## Límites y qué NO cubre
 
 * El archivo se envía en lotes de hasta 100 filas y 80 kb de JSON (las celdas vacías no se envían); el servidor rechaza más de
   200 filas por petición (400).
-* No cubre hijos, documentos del expediente, cuentas de usuario ni la baja con todos sus efectos (solo copia estatus/fecha/motivo).
+* No cubre hijos, documentos del expediente, la creación de cuentas de usuario ni la baja con todos sus efectos (solo copia estatus/fecha/motivo).
 * No hay `UNIQUE` en CURP ni nómina (pendiente del humano): dos importaciones simultáneas del mismo archivo pueden duplicar.
 * CSV: se detecta UTF-8 (con o sin BOM) y, si no es válido, Windows-1252; separador coma, punto y coma o tabulador.
 * Auditoría: `IMPORTAR_EMPLEADOS` (por lote) e `IMPORTAR_EMP_JEFES` solo con conteos, sin datos personales.

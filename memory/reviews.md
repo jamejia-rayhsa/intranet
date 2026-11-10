@@ -3552,3 +3552,617 @@ Hallazgos abiertos:
 **Fix sugerido:** contar las filas saltadas con datos en el reporte.
 
 **Notas de alcance:** sin conexión a MBA3 (Fase 2 intacta); no se tocan tablas de Fase 4/5; `package.json` solo agrega el script. No se revisó la corrida contra Postgres real (los conteos del coder no se repitieron aquí, solo el dry-run lógico). Antes de la carga real, la Puerta del roadmap exige decidir R-P3-1, R-P3-5 y R-P3-6. No se modificó código, no hubo commit, y `memory/INDEX.md` no se tocó por instrucción del encargo.
+
+---
+
+### [2026-10-23] [revisor] — Pantallas de administración de Asistencia (Fase 5, parte 1)
+**Alcance:** commit a76e37c (rama feat/asistencia-pantallas, árbol de trabajo). 5 pantallas RH, 7 endpoints GET nuevos, MenuDinamico (modo estricto), CSS, pruebas. Lectura de memory/decisions.md, code-notes.md, docs/asistencia/*, .claude/rules/*.
+**Veredicto:** CON OBSERVACIONES. Crítico: 0. Alto: 0. Medio: 8. Bajo: 10.
+**Verificación ejecutada:** jest de las dos suites nuevas 153/153 (`asistenciaPantallas.util.test.js`, `asistenciaAdmin.api.test.js`); jest completo 64 suites / 2235 tests en verde; eslint 0 errores (1 aviso previo en MenuDinamico.jsx:5); merge de prueba con `git merge-tree` contra feat/asistencia-motor (solo lectura).
+
+**Verificado sin hallazgos:**
+- Permisos: Turnos (consulta/edición) e Ingesta solo para rh_admin y super_admin (migración 012 y 013); `/empleados` y `/turnos/uso` exigen Turnos:consulta; los 5 de Ingesta exigen Ingesta:consulta; test por rol: portal_admin, rh_empleado, jefe y empleado = 403 sin tocar la BD.
+- Datos personales: `buscarEmpleados` y `marcas` no seleccionan CURP, RFC, NSS, CLABE ni correo; `crudo`, `area_externa`, IP y hash de lotes no salen en ninguna consulta nueva.
+- SQL: todos los valores del usuario van por `$n`; las interpolaciones son constantes (zona, HOY). LIKE escapado. Errores 500 genéricos (el texto de la BD solo va al log).
+- Topes: marcas ≤93 días (front y back, `diasEntre+1`), ≤500 filas, buscador ≤50, códigos ≤200, sin nómina ≤200, lotes ≤100.
+- Llave: alta, rotación y revocación por POST; `Cache-Control: no-store`; la llave solo vive en la prop del diálogo y `setSecreto(null)` al cerrar; no va a URL, log de red (`app.js` loguea método y ruta) ni a almacenamiento; cerrar exige casilla y Escape no cierra sin confirmar; copiar con aviso de fallback; alta sin IP exige casilla; URL con `<ip-interna-del-servidor>:4010` (el puerto coincide con los compose); no hay IP real en el commit.
+- Marcas: hora México con Intl y `hourCycle h23`; UTC en `title` y en texto sr; fechas como texto (`new Date` solo sobre instantes con zona); CSV con BOM, CRLF, neutraliza `= + - @ \t \r`, tope 5 000 con aviso.
+- Re-vinculación: `ConfirmarDialogo` bloquea doble envío y muestra el error del servidor dentro del diálogo; resultado en role=status.
+- Refresco 60 s: un solo `setInterval` con dependencias estables y `clearInterval` al desmontar.
+- Turnos: validaciones del front replican `turnoValidacion.js` (límites 0-720, umbral ≥ tolerancia, descanso dentro de la jornada con cruce de medianoche, días 1-7 ISO, día no laborable sin horas).
+- Asignaciones: solo turnos activos en el selector; terminar solo acorta (front y back); traslape como 409 visible.
+- Menú: `estricto` solo se activa con `grupo: 'Asistencia'` (MenuDinamico.jsx:143, 151-155, 207); otros módulos sin cambio.
+- Contraste (calculado): badges y avisos texto `--color-texto` sobre suaves ≥ 13:1; error sobre blanco 4,83:1; botón peligro 4,83:1; etiqueta de grupo del menú 5,0-7,4:1. Sin hex ni rgba nuevos; todas las variables usadas están definidas en rayhsa-system.css y globales.css. Diálogos con foco atrapado y retorno (useFocoModal). Tablas dentro de `.asi__tabla-caja` con scroll propio.
+
+**Hallazgos**
+
+**P5-1. MEDIO — Editar IP deja la llave sin restricción sin confirmación**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/LlavesDialogos.jsx:143 y 168-170; modules/rh/backend/utils/ipPermitida.js:39-51; modules/rh/backend/controllers/llaveIngesta.controller.js:207-223.
+**Problema:** al alta se exige una casilla de riesgo si no hay IP, pero en la edición guardar una lista vacía solo muestra un aviso y el servidor la acepta; la llave pasa a servir desde cualquier IP sin confirmación.
+**Severidad:** medio.
+**Fix sugerido:** misma casilla de confirmación cuando la lista queda vacía (en la UI) y, en el servidor, rechazar `[]` salvo `confirmar_sin_ips: true`; la auditoría ya registra el cambio.
+
+**P5-2. MEDIO — Llave creada o rotada que nunca se muestra tras un error de red**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/LlavesDialogos.jsx:35-38 y 105-108; modules/rh/frontend/pages/AsistenciaLlavesPage.jsx:58-80.
+**Problema:** si la respuesta se pierde después de que el servidor haya hecho el COMMIT, la UI muestra error y reactiva el botón. La llave en claro no se vuelve a mostrar, queda una llave válida sin dueño y el operador puede crear otra.
+**Severidad:** medio.
+**Fix sugerido:** al error mostrar "Revisa la lista de llaves antes de reintentar: puede haberse creado una"; no reactivar el envío sin recargar la lista; valorar una clave de idempotencia por intento.
+
+**P5-3. MEDIO — Exportación CSV de marcas sin auditoría**
+**Archivo/línea:** modules/rh/frontend/pages/AsistenciaMarcasPage.jsx:123-158; modules/rh/backend/controllers/asistenciaAdmin.controller.js:94 (handler `marcas`, sin auditar).
+**Problema:** se descargan hasta 5 000 marcas con nombre de empleado y código a un archivo, sin rastro en el servidor. La exportación del importador y la plantilla de carga sí se auditan (decisión de 2026-10-22); aquí no hay coherencia.
+**Severidad:** medio.
+**Fix sugerido:** `POST /api/asistencia/marcas/exportaciones` que registre usuario, rango, filtros y número de filas (sin volcar datos) con Auditoria.crear, llamado desde `exportar()` antes de generar el archivo.
+
+**P5-4. MEDIO — La exportación pagina con OFFSET mientras entran marcas nuevas**
+**Archivo/línea:** modules/rh/frontend/pages/AsistenciaMarcasPage.jsx:129-137; modules/rh/backend/models/asistenciaAdmin.model.js:146-155 (`ORDER BY marca_ts DESC, id DESC` con LIMIT/OFFSET).
+**Problema:** la sincronización inserta cada 15 min al inicio del orden. Durante las ~11 peticiones de una exportación que incluya hoy, las filas se desplazan y el CSV repite marcas (y puede omitir otras). No hay instantánea.
+**Severidad:** medio.
+**Fix sugerido:** paginación por cursor (`marca_ts`, `id`) en la exportación, o fijar `hasta` al día anterior cuando el rango incluye hoy; prueba que inserte filas entre páginas.
+
+**P5-5. MEDIO — El aviso de retraso no aplica días hábiles ni festivos**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaFechas.js:141-158 (la comprobación de la línea 148 solo mira la hora).
+**Problema:** sábados y domingos de 07:00 a 20:00, y festivos, el último envío del viernes produce "Posible retraso" si la interfaz no envía esos días. Ni decisions.md ni docs/asistencia dicen si la interfaz opera en fin de semana; el encargo pide días hábiles.
+**Severidad:** medio (falso positivo, pendiente de confirmar el horario de envío).
+**Fix sugerido:** confirmar con el humano el calendario de envíos; si es lunes a viernes, excluir sábado, domingo y festivos (calendario_laboral) en `evaluarRetraso`, con pruebas de sábado 10:00 y lunes 07:10.
+
+**P5-6. MEDIO — Terminar una asignación con fecha pasada cambia días ya ocurridos sin aviso**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaAsignaciones.js:67-74; modules/rh/frontend/components/asistencia/TerminarDialogo.jsx:9 y 18; modules/rh/backend/controllers/turnoAsignacion.controller.js:85-102 (no compara con hoy).
+**Problema:** se puede terminar "ayer" y el turno efectivo de días pasados cambia en silencio, justo antes del cierre de quincenas del motor. La decisión de 2026-10-21 admite reclasificar la quincena abierta, pero exige avisarlo.
+**Severidad:** medio.
+**Fix sugerido:** avisar en el diálogo cuando `hasta < hoy` ("cambia días ya transcurridos"); decidir con el humano si el servidor limita `vigente_hasta >= hoy`.
+
+**P5-7. MEDIO — Ninguna pantalla tiene prueba de componente en el repo**
+**Archivo/línea:** modules/rh/tests/asistenciaPantallas.util.test.js (76 casos de lógica pura); modules/rh/tests/cargarUtilEsm.js.
+**Problema:** no se monta ninguna pantalla ni diálogo (no hay Testing Library en los package.json). Lo que protege la UI (llave una sola vez, Escape sin confirmar, 403 a "sin permiso", menú estricto, foco) solo está en el harness del coder fuera del repo (87/87), que no se puede reproducir desde aquí.
+**Severidad:** medio.
+**Fix sugerido:** pruebas de componente o E2E en el repo para LlaveSecretoDialogo, ConfirmarDialogo, el menú con grupo Asistencia y las 5 pantallas en 403, vacío y error.
+
+**P5-8. BAJO — El cargador cargarUtilEsm.js es frágil**
+**Archivo/línea:** modules/rh/tests/cargarUtilEsm.js:12-15.
+**Problema:** quita `export` con una regex sobre líneas que empiezan por "export"; una cadena multilínea o un comentario que empiece así se altera sin error, y la prueba valida el texto del archivo, no el módulo.
+**Severidad:** bajo.
+**Fix sugerido:** transpilar con babel-jest o esbuild, o mover la lógica a un módulo CJS compartido; dejar la regex solo como comprobación.
+
+**P5-9. BAJO — empleados_individuales cuenta también empleados inactivos**
+**Archivo/línea:** modules/rh/backend/models/asistenciaAdmin.model.js:34-38 (sin filtro de estatus) frente a :49 (solo activos).
+**Problema:** dos conteos del mismo turno con bases distintas. La UI solo muestra los efectivos, pero el dato sale en GET /turnos/uso con un nombre que induce a error.
+**Severidad:** bajo.
+**Fix sugerido:** filtrar por `estatus = 'activo'` o renombrar el campo.
+
+**P5-10. BAJO — Página fuera de rango en el buscador de empleados devuelve total 0**
+**Archivo/línea:** modules/rh/backend/models/asistenciaAdmin.model.js:84 y :103; modules/rh/frontend/pages/AsistenciaAsignacionesPage.jsx:265-268.
+**Problema:** el COUNT OVER se calcula sobre filas paginadas; si la página ya no existe total llega 0, la pantalla dice "Ningún empleado coincide" y no ofrece paginación para volver atrás.
+**Severidad:** bajo.
+**Fix sugerido:** COUNT en subconsulta aparte, o devolver la última página cuando la pedida está fuera de rango.
+
+**P5-11. BAJO — La estimación de marcas es de toda la tabla y el porcentaje no lleva "≈"**
+**Archivo/línea:** modules/rh/backend/models/asistenciaAdmin.model.js:228-240 (reltuples de la tabla, no del origen); modules/rh/frontend/pages/AsistenciaSincronizacionPage.jsx:145.
+**Problema:** la cifra se presenta como del origen aunque es de toda la tabla; el porcentaje sobre ese total se muestra exacto. Hoy solo existe `biotime`, pero al crecer o tras cargas masivas sin ANALYZE el dato engaña.
+**Severidad:** bajo.
+**Fix sugerido:** marcar también el porcentaje con "≈" cuando el total es estimado; filtrar la estimación por origen cuando haya más de uno.
+
+**P5-12. BAJO — Página sin tope práctico en las consultas de lectura**
+**Archivo/línea:** modules/rh/backend/controllers/asistenciaAdmin.controller.js:16 (PAGINA_MAXIMA = 100000, con OFFSET de hasta 5·10⁷).
+**Problema:** un rh_admin puede forzar escaneos profundos; no es fuga de datos.
+**Severidad:** bajo.
+**Fix sugerido:** bajar el tope de página (p. ej. 1 000) o usar cursor.
+
+**P5-13. BAJO — Escape en el formulario de turnos descarta cambios sin aviso**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/DialogoAsistencia.jsx:12-21 con TurnoFormulario.jsx:26 (Escape llama a onCerrar sin comprobar cambios).
+**Problema:** un formulario de turno con horarios capturados se pierde al pulsar Escape.
+**Severidad:** bajo.
+**Fix sugerido:** comparar con el valor inicial y pedir confirmación si hay cambios.
+
+**P5-14. BAJO — Accesibilidad menor**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/TurnoFormulario.jsx:201-208 (el error del día solo se asocia a la entrada, :195; la salida tiene aria-invalid sin describedby); modules/rh/frontend/pages/AsistenciaSincronizacionPage.jsx:121 (el carácter ⚠ del aviso sin aria-hidden).
+**Problema:** el lector de pantalla no anuncia el error de la salida y el símbolo se lee como texto.
+**Severidad:** bajo.
+**Fix sugerido:** `aria-describedby` en la salida apuntando al mismo error; `aria-hidden="true"` en el símbolo.
+
+**P5-15. BAJO — N+1 al cargar el catálogo de turnos**
+**Archivo/línea:** modules/rh/frontend/pages/AsistenciaTurnosPage.jsx:40-49 (una petición de detalle por turno en cada carga).
+**Problema:** con un catálogo pequeño es aceptable, pero crece linealmente.
+**Severidad:** bajo.
+**Fix sugerido:** incluir `dias` en el listado o un endpoint por lote.
+
+**P5-16. BAJO — El portapapeles conserva la llave tras copiarla**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/LlaveSecretoDialogo.jsx:31-38.
+**Problema:** la llave queda en el portapapeles del sistema hasta que se copie otra cosa. Es el comportamiento esperado de copiar; se deja registrado para la documentación de operación.
+**Severidad:** bajo.
+**Fix sugerido:** documentarlo en docs/asistencia/operacion-ingesta.md; no limpiar el portapapeles automáticamente (borraría lo que el usuario tenga copiado).
+
+**P5-17. BAJO — Preexistente fuera de este commit: GET /api/asistencia/lotes expone la IP de cada lote**
+**Archivo/línea:** modules/rh/backend/controllers/llaveIngesta.controller.js:226-239; modules/rh/backend/models/ingesta.model.js:150-160 (`l.ip`).
+**Problema:** lo consulta Ingesta:consulta. La pantalla nueva usa /sincronizacion/lotes, que no trae la IP (correcto), pero el endpoint antiguo sigue exponiéndola.
+**Severidad:** bajo.
+**Fix sugerido:** quitar `l.ip` de ese SELECT o restringir la ruta a Ingesta:edicion.
+
+**P5-18. MEDIO — Trazabilidad: no consta el GO del humano a la parte 1 de la Fase 5**
+**Archivo/línea:** memory/decisions.md (árbol de trabajo): no existe la entrada 'GO del humano a la primera parte de la Fase 5' ni ninguna entrada de asistencia del 2026-10-22/23. Sí existen 'Contrato de integración con BioTime' (l.1011) y 'Contrato de la ingesta de marcas' (l.1035).
+**Problema:** la fase se entrega sin el registro del GO que exige el protocolo; no puedo verificar que el humano lo haya dado.
+**Severidad:** medio (proceso, no de código).
+**Fix sugerido:** el orquestador confirma el GO con el humano y lo registra en decisions.md antes de fusionar; el coder no debe escribir ese registro.
+
+**Conflictos previsibles al fusionar con feat/asistencia-motor (merge-tree, solo lectura, 2 conflictos):**
+1. modules/rh/backend/routes/asistencia.routes.js — conflicto de imports (líneas 5-9 del resultado: `ControladorAdmin` frente a `ControladorMotor`). Resolver: conservar las dos líneas.
+2. modules/rh/backend/routes/asistencia.routes.js — conflicto de rutas (líneas 84-123 del resultado; en HEAD son 81-85). Resolver: conservar el bloque de lectura de pantallas Y el bloque del motor (`RH_LECTURA`, /resultados, /resumen, /periodos, /recalcular, /incidencias, /parametros). No hay colisión de rutas: /turnos/uso va antes de /turnos/:id y ninguna de las 7 de lectura coincide con las del motor. Comprobar que el import `tienePermiso` queda (el auto-merge lo deja en la línea 8).
+3. memory/code-notes.md — ambos añaden al final. Resolver: conservar las dos entradas.
+- Sin conflicto (auto-merge o no tocados por el motor): memory/INDEX.md, main.jsx, MenuDinamico.jsx, rayhsa-system.css, decisions.md. Atención: si el motor o la Fase 5 parte 2 añaden pantallas al menú o rutas en esos archivos, habrá choque en esas zonas.
+
+**Notas:** el commit tiene 37 archivos y ~4 600 líneas; se revisó completo, no se pide split. No se modificó código; no se hizo commit. Se añadió esta entrada a memory/reviews.md y una línea en memory/INDEX.md del árbol de trabajo.
+### [2026-10-23] [revisor] — Motor de análisis de asistencia (Fase 4)
+**Alcance:** commit `47d49f8` (38 archivos). Leídos: INDEX, decisions (2026-10-21/22/23), research (reglas de borde), code-notes Fase 4, docs/asistencia/motor-analisis.md; código de motor.js, tiempo.js, motorAsistencia.js, candado.js, planificador.js, controlador, modelo de resultados, rutas, migración 014. Jest `asistenciaMotor` + `asistenciaPlanificador`: 108/108 OK. Probe de casos de borde con el motor puro (script en scratchpad, no versionado).
+**Nota:** no encontré en memoria las "8 decisiones" que pide el coder (no están al final de code-notes ni de decisions); las respuestas de abajo son recomendaciones del revisor a partir del código y de la documentación.
+
+**[CRÍTICO] Entrada temprana (antes de 07:00) = falta.** **Archivo/línea:** modules/rh/backend/services/asistencia/motor.js:197-198 (ventana de entrada), :219-220. **Problema:** una marca de entrada a 06:50 o 06:59 queda fuera de [E−60, E+150] y el día sale `falta` con `salida_sin_entrada` aunque la persona sí checó; `minutos_retardo` = 0. Probado: entrada 06:50 + salida 18:00 → `falta`. Los tests lo fijan (asistenciaMotor.test.js:162). Contradice la decisión 2026-10-22 ("falta = más de 30 min tarde o sin marca de entrada"): hay marca de entrada. Riesgo alto para turnos de reparto/almacén que llegan temprano. **Severidad:** crítico (falta falsa sobre personas; escalado al orquestador). **Fix sugerido:** tratar la primera marca anterior a la ventana (y posterior a la salida de la jornada previa) como entrada con `tarde = 0` y bandera `entrada_anticipada`, o al menos clasificar `pendiente_revision` (no `falta`) hasta que RH lo confirme; añadir tests que cambien el oráculo y el test de línea 162. Requiere decisión del humano.
+
+**[ALTO] Salida temprana fuera de ventana = `incompleta` con 0 min.** **Archivo/línea:** motor.js:199-202 (ventana de salida [S−5, S+359]), :229-231 (`!salida` → incompleta), :236-238. **Problema:** salida a 15:00, 17:50 o 12:00 con entrada a tiempo da `incompleta`, `minutos_salida_anticipada = 0`, sin contar como salida anticipada (probado). Una comida sin regreso también cae aquí. **Severidad:** alto (esconde minutos de salida anticipada en el resumen). **Fix sugerido:** si hay una marca posterior a la entrada y anterior a `S−vsa` que no cae en la ventana de descanso, es la última del día y no hay otra posterior, clasificar `salida_anticipada` con minutos = `S − marca`; reservar `incompleta` para marcas que caigan en el descanso (13:00-14:00). Decisión del humano sobre el umbral de salida temprana.
+
+**[MEDIO] Trigger de periodo cerrado incompleto.** **Archivo/línea:** migrations/014-asistencia-motor.sql:105-112. **Problema:** el trigger compara solo estatus, minutos, marcas, turno_id, versión y calculado_en; un UPDATE de `detalle`, `departamento_id`, `origen_turno`, `entrada_programada`, tolerancias o ventanas de un día cerrado pasa. La documentación dice que el trigger "rechaza recalcular un día de periodo cerrado". **Fix sugerido:** comparar todas las columnas salvo las FK de SET NULL (o rechazar cualquier cambio distinto de esas). Añadir prueba de mutación.
+
+**[ALTO] Planificador sin tope duro: vuelta colgada = motor parado sin aviso.** **Archivo/línea:** services/asistencia/planificador.js:93-103 y candado.js:28-31. **Problema:** el tiempo máximo solo hace que el planificador deje de esperar; si la vuelta queda bloqueada (p. ej. un FOR SHARE tras un cierre largo o una consulta colgada), `enCurso` nunca se libera, cada tick responde "se omite" y el candado de sesión sigue tomado. No encontré `statement_timeout` ni `lock_timeout` aplicados a la conexión del motor (no verificado en config/database.js). **Fix sugerido:** `SET LOCAL statement_timeout` / `lock_timeout` en las transacciones del motor, y que una vuelta que supere el tiempo máximo más un margen cancele su conexión (`pg_cancel_backend`/destruir cliente) para liberar el candado; registrar en bitácora.
+
+**[MEDIO] Pool retenido mientras se espera el candado desde la API.** **Archivo/línea:** candado.js:21-33 con `esperaMs` 5000 desde asistenciaMotor.controller.js (recalcular, cerrar, reabrir). **Problema:** cada petición en espera retiene una conexión del pool (PG_POOL_MAX=10) durante hasta 5 s; unas pocas peticiones simultáneas de RH bloquean al resto del portal. **Fix sugerido:** no reservar conexión durante la espera (intentar el candado con conexión corta y reintentar), o limitar a 1 petición manual en curso con 409 inmediato.
+
+**[MEDIO] `GET /periodos` expone motivos de reapertura a todo el que tenga Asistencia:consulta.** **Archivo/línea:** modules/rh/backend/routes/asistencia.routes.js:95; asistenciaResultados.model.js:72-84 (reabierto_motivo, reabierto_por, cerrado_por). **Problema:** rh_empleado (y cualquier rol con consulta) ve motivos de RH y usuarios que reabren. **Fix sugerido:** `RH_LECTURA` en la ruta o quitar `reabierto_motivo`/`*_por` para quien no es RH.
+
+**[MEDIO] Alcance: subordinados dados de baja y sin vigencia.** **Archivo/línea:** asistenciaResultados.model.js:26 (`idsVisibles`). **Problema:** la doc dice "subordinados directos vigentes", pero la consulta solo filtra `jefe_inmediato_id`; un jefe sigue viendo los resultados de ex-subordinados en baja. **Fix sugerido:** añadir `AND (estatus IS DISTINCT FROM 'baja' OR fecha_baja IS NULL)` o decidir explícitamente y documentarlo.
+
+**[MEDIO] Justificaciones duplicadas: anular no revierte.** **Archivo/línea:** asistenciaResultados.model.js:143-181 (justificarDia) y :184-220 (anularIncidencia); migración 012 sin índice único parcial. **Problema:** si un día queda `falta` (recálculo ocupado) se puede justificar dos veces; la lectura usa `DISTINCT ON ... ORDER BY id DESC` sobre activas, así que anular la última deja la primera activa y el día sigue `justificada`. **Fix sugerido:** índice único parcial `(empleado_id, fecha) WHERE activa AND tipo='justificacion'` y, al justificar, rechazar 409 si ya hay una activa.
+
+**[MEDIO] Vacaciones no cubren sábados laborables.** **Archivo/línea:** motor.js:176 (`!esFinDeSemana(fecha)`). **Problema:** un turno que trabaja sábado con vacaciones aprobadas da `falta` si no hay marcas. El turno Rayhsa no trabaja sábado, así que hoy no afecta, pero los turnos son editables. **Fix sugerido:** decidir la regla (días hábiles del calendario de la empresa vs día laborable del turno) y documentarla; el revisor recomienda vacaciones aplican a cualquier día laborable del turno.
+
+**[MEDIO] Cursor incremental vulnerable a marcas confirmadas tarde.** **Archivo/línea:** motorAsistencia.js:523 (`fecha_importacion > cursor`) y :682; migración 012/014 (`fecha_importacion DEFAULT NOW()` = inicio de transacción). **Problema:** una transacción de ingesta que empezó antes del cursor y confirma después deja su marca con `fecha_importacion < cursor` y no se recalcula hasta el barrido completo (≤24 h). Lo mismo para `fecha_creacion`/`fecha_actualizacion` de calendario, incidencias y turnos, que son `TIMESTAMP` sin zona comparadas con `timestamptz`. **Fix sugerido:** usar `clock_timestamp()` o un contador/ID de inserción (`MAX(id)` visto) como cursor; o ampliar el solape a varias horas. Confirmar con una prueba concurrente.
+
+**[MEDIO] Cancelación o cambio de fechas de vacaciones/permisos aprobados no entra al incremental.** **Archivo/línea:** motorAsistencia.js:541-552. **Problema:** solo se mira `fecha_autoriza`/`fecha_respuesta`/`fecha_creacion`; editar fechas de una solicitud aprobada no las toca y se recoge solo en el barrido completo. **Fix sugerido:** marca de `fecha_actualizacion` en esas tablas o barrido de los rangos afectados al editar.
+
+**[BAJO] Resumen de minutos inconsistente.** **Archivo/línea:** asistenciaResultados.model.js:56-57. **Problema:** `minutos_retardo` solo suma `retardo` y `justificada`; `incompleta` con retardo y `falta` (>30 min) no suman; los minutos provisionales de `pendiente` sí. **Fix sugerido:** definir una regla única y documentarla.
+
+**[BAJO] Total de paginación en cero fuera de rango.** **Archivo/línea:** asistenciaResultados.model.js:48, 69, 84, 105, 117. **Problema:** `COUNT(*) OVER()` no trae filas si la página está más allá del final, así que `total` = 0. **Fix sugerido:** `SELECT COUNT(*)` separado o calcular total en una consulta aparte.
+
+**[BAJO] Ajustes duplicados por marca duplicada.** **Archivo/línea:** motorAsistencia.js:452-465. **Problema:** cada marca posterior al cierre genera un ajuste aunque sea duplicado de otra (≤60 s). **Fix sugerido:** deduplicar antes de crear el ajuste.
+
+**[BAJO] Oráculo no independiente de la especificación.** **Archivo/línea:** scripts/asistencia/verificar-motor.js:295-372; asistenciaMotor.test.js:162. **Problema:** el oráculo implementa las mismas ventanas y precedencias que el motor (mismo autor y misma especificación); concuerda por construcción y no detecta los errores de regla de arriba. La verificación con PostgreSQL sí vale para la lógica SQL. **Fix sugerido:** casos de borde escritos a mano con la regla que RH valide (06:50, 15:00, comida sin regreso), no derivados del motor.
+
+**[BAJO] Cierre manual de quincenas con días nocturnos pendientes.** **Archivo/línea:** motorAsistencia.js:800. **Problema:** `fecha_fin < hoy` no garantiza que el último día ya cumpla salida + margen si el turno termina después de 22:00; el periodo se congela con `pendiente`. **Fix sugerido:** exigir que no queden `pendiente` antes de cerrar a mano.
+
+**Respuestas a las decisiones pedidas (recomendación del revisor; el listado no se encontró en memoria):**
+1. Umbral de falta 30 min frente a la ventana de 150 min: mantener 30 min, pero pedir confirmación expresa del humano (la decisión 2026-10-22 la aceptó sin respuesta explícita).
+2. Turno inactivo: el motor lo califica y solo marca `turno_inactivo`; recomiendo que sea `sin_turno` (o caer al turno del departamento) y decidirlo ya, pues F-AS2-2(a) sigue abierto.
+3. Salida temprana fuera de ventana: aplicar el fix de ALTO antes de activar el motor en producción.
+4. Marca única: hoy es falta o incompleta según la ventana; recomiendo `pendiente_revision` en lugar de falta.
+5. Vacaciones en sábado laborable: recomiendo aplicar a cualquier día laborable del turno.
+6. Cierre de quincenas previas y cierre automático desde 16-31 oct: correcto según decisión; mantener.
+7. Margen de 120 min para calificar el día: correcto.
+8. Trigger de periodo cerrado: ampliar a todas las columnas (ver MEDIO).
+
+**Veredicto: NO APROBADO** para uso con personas hasta resolver el CRÍTICO (06:50 = falta) y el ALTO de salida temprana. Lo demás es operación y calidad.
+
+### [2026-10-23] [revisor] — Pantallas de resultados, periodos y parámetros de Asistencia (Fase 5, parte 2a)
+**Alcance:** commit f9f0ac5 (HEAD de `feat/asistencia-resultados-rh`, 26 archivos, ~3 200 líneas). Leídos: memory/INDEX.md, decisions.md (2026-10-21/22/23), code-notes.md («Fase 5 (parte 2a)», Fase 4, Fase 5 parte 1), docs/asistencia/motor-analisis.md, pantallas-resultados.md, reviews.md (Fase 4, Fase 5 parte 1, Fase 2/3), .claude/rules/frontend/react.md. Código: rutas, controlador, modelo y motor (cerrar, reabrir, parámetros, justificar/anular, recálculo) en backend; páginas, diálogos, utils, CSS y MenuDinamico en frontend. No se modificó código.
+**Veredicto:** CON OBSERVACIONES. Crítico: 0. Alto: 0. Medio: 12. Bajo: 12. No hay violación de decisions.md ni bug que altere resultados de personas hoy; el motor no se tocó.
+**Verificación ejecutada:** jest `asistenciaResultados.util.test.js` + `asistenciaResultadosRH.api.test.js` 85/85 OK; suite completa de la raíz 70 suites / 2 718 tests en verde (el coder reportó 72 / 2 803: diferencia no explicada, Bajo). No se ejecutó eslint ni navegador (solo lectura).
+
+**Verificado sin hallazgos (lo pedido en el encargo):**
+- Permisos API: `GET /resultados/dia`, `/resumen`, `/resultados` con alcance propio/jefe vigente/RH (`alcanceDeLectura`); ajeno o inexistente = 403 sin consultar (no hay enumeración). `GET /ejecuciones`, `GET /parametros`, `PUT /parametros`, `/sin-identificador`, `/ajustes-pendientes`, `POST /resultados/exportaciones` = RH (`RH_LECTURA` o `ESCRIBIR_ASISTENCIA`); rh_empleado, portal_admin, jefe y empleado reciben 403 en gestión (con los permisos del test).
+- Nombres de quien justificó, cerró y reabrió, y motivo de reapertura: solo RH (`detalleDia` usa `esRH`; `listarPeriodos` borra motivo y nombres si no es RH; `motivo` de reapertura nunca sale a no-RH).
+- Justificar y anular: el servidor bloquea periodo cerrado (FOR SHARE / FOR UPDATE), la UI decide con `dia.periodo_estado` (no con el rango libre), doble envío bloqueado en UI y con índice único parcial (23505 → 409).
+- Parámetros: validación de rango y tipo en servidor (`validarParametro`), `comida_desde < comida_hasta` en servidor, `previos/nuevos` auditados, confirmación con los cambios exactos capturados al revisar. Cambiar `analisis_desde` no recalcula periodos cerrados.
+- Zona horaria: formateador Intl con `America/Mexico_City` y `hourCycle h23`; fechas como texto; `new Date(texto)` no aparece sobre fechas sin zona.
+- Menú: `requiere` solo se usa en las 3 entradas nuevas; el resto de rutas sigue igual (`tieneAcceso` con `estricto`). Sin regresión visible en Turnos, Asignaciones, Marcas, Sincronización o Llaves.
+- CSS: sin hex nuevos; todas las variables usadas están definidas en rayhsa-system.css o globales.css. Estatus con color + ícono (aria-hidden) + texto.
+- Regla y banderas del detalle: vienen de `detalle.explicaciones/banderas` del motor; el umbral «más de 30 min» coincide con `tarde > cfg.umbral` del motor; el duplicado (≤ 60 s de la última conservada) y la comida (inclusive 16:00:59) coinciden con `depurarMarcas` y `esComida`. `incompletas_comida` y `faltas_con_marcas` del servidor coinciden con las banderas y el estatus del motor.
+- `%` de puntualidad = puntual ÷ (puntual+retardo+falta+salida_anticipada+incompleta+justificada), igual en UI, texto y servidor.
+
+**Hallazgos**
+
+**R2A-1. MEDIO — Cerrar: la confirmación usa contadores de la lista cargada al abrir la página, y el servidor congela lo que recalcula**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/PeriodoDialogos.jsx:60-61 y 66-75 (`periodo` es el objeto de la lista); modules/rh/backend/controllers/asistenciaMotor.controller.js:223-238; modules/rh/backend/services/asistencia/motorAsistencia.js:807-830.
+**Problema:** los días pendientes y los ajustes mostrados vienen de la última carga de la tabla, no de un dato fresco al confirmar; el cierre no recibe lo que se mostró, recalcula la quincena y la congela. Si el número cambió entre la carga y el clic (una vuelta del planificador, otra pestaña), RH confirma sobre datos distintos a los mostrados.
+**Severidad:** medio.
+**Fix sugerido:** refrescar el periodo al abrir el diálogo; enviar en el cuerpo `pendientes_esperados` y `ajustes_esperados` y responder 409 («los datos cambiaron, revisa de nuevo») si el recálculo previo al cierre no coincide; devolver `dias_evaluados` y `pendientes_finales` y mostrarlos tras cerrar.
+
+**R2A-2. MEDIO — Cerrar con días pendientes está permitido y el servidor no lo exige**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/PeriodoDialogos.jsx:76 («Puedes cerrar de todos modos…»); modules/rh/frontend/utils/asistenciaPeriodos.js (`resumenCierre`, `hayRiesgo`); modules/rh/backend/controllers/asistenciaMotor.controller.js:223-238.
+**Problema:** un día `pendiente` que siga así al cerrar queda congelado como pendiente: el cierre no lo recalcula y solo la reapertura lo corrige. docs/asistencia/pantallas-resultados.md dice «cierra cuando el conteo de pendientes es 0», pero ni la UI lo impide ni el servidor lo valida. No hay decisión en decisions.md que lo permita o lo prohíba.
+**Severidad:** medio (escalar la decisión: si la política es «cero pendientes», pasa a alto).
+**Fix sugerido:** decidir con el humano. Si es «cero pendientes», rechazar el cierre en servidor con 409 y dejar la excepción solo con frase de confirmación y registro del conteo en la auditoría.
+
+**R2A-3. MEDIO — Parámetros: el impacto de `cierre_automatico_desde` y `dias_cierre` está mal descrito, y la confirmación reforzada solo existe en la UI**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaParametros.js:77-88 (`textosDeImpacto`) y :74 (`requiereConfirmacionReforzada`, solo `analisis_desde`); modules/rh/frontend/pages/AsistenciaParametrosPage.jsx:151-155; modules/rh/backend/controllers/asistenciaMotor.controller.js:417-436; modules/rh/backend/services/asistencia/motorAsistencia.js:653.
+**Problema:** bajar `dias_cierre` o adelantar `cierre_automatico_desde` cierra en la siguiente vuelta las quincenas abiertas ya terminadas (p. ej. las de sep y oct, que hoy se están validando). El texto dice solo «se aplica a partir de la siguiente vuelta» y no nombra las quincenas afectadas. Además, el PUT acepta `analisis_desde` y `cierre_automatico_desde` sin ningún campo de confirmación: la frase «CAMBIAR» solo la pide la UI.
+**Severidad:** medio.
+**Fix sugerido:** en `textosDeImpacto` listar las quincenas abiertas que quedarían cerradas con los valores nuevos (el cálculo lo puede hacer la pantalla con `periodos`); usar frase reforzada también para `cierre_automatico_desde` y `dias_cierre`; y exigir en el PUT un campo `confirmar` cuando cambie cualquiera de estas claves (rechazo 400 si falta).
+
+**R2A-4. MEDIO — Anular: la UI da por hecho el recálculo aunque el servidor diga `recalculado: false`**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/DetalleDiaDialogo.jsx:89-99 (mensaje «el día volvió a su resultado original»); modules/rh/backend/controllers/asistenciaMotor.controller.js:379-400 (devuelve `datos.recalculado`, y el mensaje es siempre «Justificación anulada»).
+**Problema:** si el motor está ocupado, la justificación queda anulada pero el día sigue `justificada` hasta la próxima vuelta. La UI muestra «volvió a su resultado original» y el detalle recargado dice «Justificada»: dos mensajes contradictorios. Justificar sí lo maneja bien (usa `r.mensaje`).
+**Severidad:** medio.
+**Fix sugerido:** usar `r.datos.recalculado` igual que en justificar: si es false, mostrar «Justificación anulada; el día se recalculará en la siguiente vuelta del motor».
+
+**R2A-5. MEDIO — Exportación: el archivo se descarga antes de registrar la auditoría y el número de filas lo declara el cliente**
+**Archivo/línea:** modules/rh/frontend/pages/AsistenciaResultadosPage.jsx:272-279 (`descargarCsv` y después `registrarExportacionResultados`); modules/rh/backend/controllers/asistenciaMotor.controller.js:182-212 (`filas` del cuerpo).
+**Problema:** si la bitácora falla, el archivo con nombres y nóminas ya está en el equipo; la pantalla solo lo avisa. Además, `filas` es lo que dice el navegador, no lo que se exportó. La bitácora registra el tipo y un número no verificado.
+**Severidad:** medio.
+**Fix sugerido:** registrar primero (y no descargar si falla, fail-closed), o generar el CSV en servidor. Como mínimo, que el servidor compare `filas` con su propio conteo cuando la consulta sea reproducible.
+
+**R2A-6. MEDIO — Exportación de detalle: corte silencioso a 15 000 filas en rangos largos**
+**Archivo/línea:** modules/rh/frontend/pages/AsistenciaResultadosPage.jsx:265-268 (`pedirTodas` con tope `TOPE_FILAS_EXPORTACION * 3`); modules/rh/frontend/utils/asistenciaResultados.js:439-443 (`paginasRestantes` con máximo 30 páginas de 500 = 15 000 filas); modules/rh/frontend/pages/AsistenciaResultadosPage.jsx:280-283 (el aviso de truncado solo mira más de 10 000 filas **después** de filtrar).
+**Problema:** `pedirTodas` deja de pedir páginas al llegar a 30, sin aviso, y no compara `total` con las filas recibidas. Un rango libre de 92 días con más de ~165 empleados corta los datos de los últimos empleados sin decirlo, y el CSV queda incompleto como si fuera completo. Además la exportación pide los días de **todos** los empleados y filtra en el cliente después.
+**Severidad:** medio.
+**Fix sugerido:** comparar `total` con las filas recibidas y bloquear la exportación con aviso si faltan; pedir solo los empleados filtrados (paginar por empleado) o exportar desde el servidor.
+
+**R2A-7. MEDIO — Presentación: el encabezado dice «Resumen del periodo» pero las tarjetas y el % cuentan solo la lista filtrada**
+**Archivo/línea:** modules/rh/frontend/pages/AsistenciaResultadosPage.jsx:233 (`totales` de `filtradas`), :308 (`pct`), :362 (título «Resumen del periodo»).
+**Problema:** con «Faltas con marcas», «Con algún día: Falta» o una búsqueda, las tarjetas y el % cambian y siguen bajo el título de la quincena completa. Un revisor puede leer «el % de la quincena es 40 %» cuando es el de 3 personas.
+**Severidad:** medio.
+**Fix sugerido:** calcular las tarjetas sobre `filas` (sin filtros) y mostrar los filtrados aparte, o rotular «Totales de los N empleados mostrados».
+
+**R2A-8. MEDIO — Los días `sin_turno` no aparecen en tarjetas, tabla ni CSV**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaResultados.js:20-22 (`ORDEN_TARJETAS` sin `sin_turno`), :381-391 (`COLUMNAS_RESUMEN` sin `sin_turno`); el servidor sí lo cuenta (modules/rh/backend/models/asistenciaResultados.model.js:5-8).
+**Problema:** un empleado sin turno tiene días que no se ven en ninguna columna, y la suma de tarjetas no iguala el número de días. Es justo el caso que RH debe revisar.
+**Severidad:** medio.
+**Fix sugerido:** añadir `sin_turno` a `ORDEN_TARJETAS` (y a las columnas del CSV), o mostrar la tarjeta solo cuando su valor sea mayor que 0.
+
+**R2A-9. MEDIO — El rol de cada marca se recalcula en el cliente con reglas copiadas del motor**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaResultados.js:298-323 (`rolesDeMarcas`: duplicado ≤ 60 s, ventana de comida, entrada/salida por `marcas_usadas`); modules/rh/frontend/components/asistencia/DetalleDiaDialogo.jsx:62 y 169-180.
+**Problema:** la pantalla muestra «Entrada (tomada)», «Comida», «Duplicada» con su propia lógica, no con la que usó el motor. Hoy coincide con `depurarMarcas` y `esComida` en los casos que se revisaron, pero son dos fuentes de verdad: si el motor cambia (por ejemplo, la F-M4-4 o la regla de duplicados de 60 s abierta en decisions.md), el detalle mostrará algo distinto de lo calificado. Esto va contra el criterio «el detalle muestra lo mismo que calculó el motor».
+**Severidad:** medio.
+**Fix sugerido:** que el motor guarde el rol de cada marca (p. ej. `detalle.marcas_roles` con id → entrada/salida/comida/duplicada/otra) y la UI lo lea. Mientras tanto, prueba de equivalencia con casos de borde (16:00:59, 16:01, 60 s exactos, salida sin entrada).
+
+**R2A-10. MEDIO — Objetivos táctiles menores de 44 px en campos de fecha, búsqueda y textarea**
+**Archivo/línea:** modules/rh/frontend/styles/asistenciaResultados.css:6 (la regla de 44 px solo cubre `time`, `number` y `select`); modules/rh/frontend/styles/asistencia.css:67-76 (`text`, `search`, `date`, `textarea` con padding 0,45 rem y sin altura mínima).
+**Problema:** los campos Desde/Hasta (`res-desde`, `res-hasta`), el buscador (`res-texto`) y los motivos quedan con la altura natural del campo, por debajo de los 44 px que pide el encargo. El reporte de la Fase 5 (2a) dice «táctiles ≥ 44 px», pero la medición cubrió botones y enlaces.
+**Severidad:** medio.
+**Fix sugerido:** añadir `input[type="date"]`, `input[type="search"]`, `input[type="text"]` y `textarea` a la regla `min-height: 44px` dentro de `.asr`, y medirlos en la prueba de 320/360 px.
+
+**R2A-11. MEDIO — Pruebas: sin pruebas de componente ni de alcance real; la matriz usa permisos simulados**
+**Archivo/línea:** modules/rh/backend/tests/asistenciaResultadosRH.api.test.js:14-50 (`ROLES`, con `portal_admin` sin permisos y un «rh_lectura» que no existe en la BD), :75-135 (casos de `/resultados/dia`).
+**Problema:** (a) la matriz no reproduce los grants reales de la migración 012 (`Asistencia:consulta` para cualquier rol con Vacaciones o Empleados de consulta, así que un portal_admin real sí lee `/periodos`, `/resumen` y `/resultados` dentro de su alcance); (b) no hay caso de IDOR de jefe hacia un empleado que no es suyo, ni de jefe hacia subordinado (200), ni de ex-subordinado con `fecha_baja`; (c) el menú con `requiere` no tiene prueba; (d) no hay prueba de componente ni E2E en el repo (lo señalado como P5-7 sigue abierto y aplica igual). La verificación de la Fase 5 (2a) se hizo con un harness externo que no se puede reproducir desde el repo.
+**Severidad:** medio.
+**Fix sugerido:** añadir a la suite API los casos (b) y una matriz con los grants de la migración 012; probar `requiere` del menú con un test unitario sobre `tieneAcceso`; y añadir al menos un E2E de Playwright sobre `/rh/asistencia/periodos` (cerrar con confirmación y reabrir con motivo) que corra en CI.
+
+**R2A-12. MEDIO — Decisión pendiente: el CSV de resultados lleva nombre y nómina, y el equipo tiene escrito el criterio contrario**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaResultados.js:381-391 (`COLUMNAS_RESUMEN` con `nomina` y `nombre`), :403-416 (detalle); modules/rh/backend/controllers/asistenciaMotor.controller.js:182-212; memory/decisions.md:1160 (el tester de la Fase 5 (1) lista «exportación sin nombres y con bitácora» como criterio verificado).
+**Problema:** no es una violación probada: decisions.md no tiene una decisión explícita sobre los CSV de asistencia. La exportación con nombre es razonable para RH porque es lo que ya ve en pantalla y tiene bitácora. Pero el criterio que el propio equipo usa dice «sin nombres», y la pantalla ni siquiera distingue el nivel de detalle.
+**Severidad:** medio (decisión).
+**Fix sugerido:** escalar al orquestador para que el humano confirme la regla. Si se mantiene con nombres, registrar la decisión en decisions.md; si no, exportar solo nómina y quitar el nombre del CSV de resumen.
+
+**R2A-13. BAJO — `terminal_sn` (serie del dispositivo) sale en `GET /resultados/dia` a todo el alcance**
+**Archivo/línea:** modules/rh/backend/models/asistenciaResultados.model.js:303 (`m.terminal_sn`); la pantalla solo usa `terminal_alias`.
+**Problema:** un empleado o un jefe recibe la serie del lector. No es un dato personal, pero no lo necesitan y no lo muestra la pantalla.
+**Severidad:** bajo.
+**Fix sugerido:** no seleccionar `terminal_sn` cuando `esRH` sea false, o quitarlo del SELECT.
+
+**R2A-14. BAJO — `GET /periodos` expone `cerrado_por` (id de usuario) a todo con Asistencia:consulta, y la doc dice «403 en gestión»**
+**Archivo/línea:** modules/rh/backend/models/asistenciaResultados.model.js:86-108 (`listarPeriodos`, `cerrado_por` no se borra para no-RH); modules/rh/backend/routes/asistencia.routes.js:111 (`LEER`); docs/asistencia/pantallas-resultados.md («rh_empleado… no ven…»).
+**Problema:** los nombres y el motivo sí se ocultan, pero el id numérico de quien cerró sí llega a no-RH. Además, la lectura de quincenas es pública dentro de Asistencia:consulta (lo que aplica a rh_empleado y a cualquier rol con Vacaciones o Empleados de consulta). La doc describe 403 en gestión, pero solo es cierto para la pantalla, no para la API.
+**Severidad:** bajo.
+**Fix sugerido:** quitar `cerrado_por` para no-RH y corregir la frase de la doc (el 403 aplica a la gestión, no al listado).
+
+**R2A-15. BAJO — El motivo de la justificación y «Justificación de RH» se muestran a empleado y jefe, sin decisión documentada**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/DetalleDiaDialogo.jsx:208-211; modules/rh/backend/models/asistenciaResultados.model.js:329 (`i.motivo` sin filtro de rol).
+**Problema:** el motivo es texto libre de RH; el encargo pide ocultar a no-RH quién lo registró, y lo hace, pero el texto del motivo sí sale. Puede contener datos personales de terceros (salud, duelo).
+**Severidad:** bajo (decisión).
+**Fix sugerido:** preguntar al humano si jefes y empleados ven el motivo. Si no, devolver solo «Justificada por RH» para no-RH.
+
+**R2A-16. BAJO — `useAccesoAsistencia`: si falla la carga de permisos, rh_admin ve «No tienes permiso»**
+**Archivo/línea:** modules/rh/frontend/hooks/useAccesoAsistencia.js:19 (`catch` → `nivelDePermiso(usuario, [], opcion) || "consulta"`).
+**Problema:** con `consulta` en ambas opciones, `accesoGestionAsistencia` no da lectura y la pantalla dice «sin permiso», cuando el comentario del hook dice que se deja pasar. Un fallo de red esconde la gestión a RH (fail-closed, no inseguro, pero engañoso).
+**Severidad:** bajo.
+**Fix sugerido:** en el error mostrar «No se pudieron cargar tus permisos» con botón Reintentar; no decir «sin permiso».
+
+**R2A-17. BAJO — CSV del detalle: la columna «Quincena» contiene el estado (abierto/cerrado), no el periodo**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaResultados.js:429 (`periodo: d.periodo_estado`) y :403-416 (`COLUMNAS_DETALLE`, título «Quincena»).
+**Problema:** el encabezado no coincide con el dato. Un archivo abierto en otro momento confunde.
+**Severidad:** bajo.
+**Fix sugerido:** columna «Estado de la quincena» o incluir `periodo_inicio`/`periodo_fin`.
+
+**R2A-18. BAJO — CSV: neutralización de fórmulas incompleta y altera nombres legítimos**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaResultados.js:364-366 (`INICIO_FORMULA = /^[=+\-@\t\r]/`).
+**Problema:** no cubre espacios o tabuladores antes del signo (`" =HYPERLINK…"`), que algunas hojas de cálculo sí evalúan. Y antepone `'` a cualquier valor que empiece por `-` o `+`, por ejemplo un apellido legítimo.
+**Severidad:** bajo.
+**Fix sugerido:** usar `/^\s*[=+\-@]/` (sin tabulador en la lista, con `\s` antes) y documentar el efecto en nombres.
+
+**R2A-19. BAJO — Motivo de reapertura: el servidor acepta 5 caracteres y la UI exige 10**
+**Archivo/línea:** modules/rh/backend/controllers/asistenciaMotor.controller.js:241-246 (`motivo.length < 5`); modules/rh/frontend/utils/asistenciaPeriodos.js:6 (`MOTIVO_REAPERTURA_MIN = 10`).
+**Problema:** la regla de negocio tiene dos valores. La API acepta motivos que la pantalla no permite.
+**Severidad:** bajo.
+**Fix sugerido:** subir a 10 en el servidor (el mensaje de la doc ya dice 10).
+
+**R2A-20. BAJO — `validarVentanaComida` se evalúa fuera de la transacción del PUT**
+**Archivo/línea:** modules/rh/backend/controllers/asistenciaMotor.controller.js:427 (`await Motor.leerParametros()`) y motorAsistencia.js:46-70 (`guardarParametros`).
+**Problema:** dos PUT concurrentes pueden validar contra valores viejos y dejar `comida_desde ≥ comida_hasta`. Requiere dos peticiones simultáneas de rh_admin.
+**Severidad:** bajo.
+**Fix sugerido:** validar dentro de `guardarParametros` después del `FOR UPDATE` que ya existe.
+
+**R2A-21. BAJO — Límites silenciosos: marcas del detalle (100) y empleados sin identificador (100)**
+**Archivo/línea:** modules/rh/backend/models/asistenciaResultados.model.js:308 (`LIMIT 100` en marcas); modules/rh/frontend/pages/AsistenciaResultadosPage.jsx:159 (`sinIdentificador({ limite: 100 })`).
+**Problema:** un día con más de 100 marcas, o más de 100 empleados sin identificador, se corta sin avisar. La cifra total sí aparece en el segundo caso, pero la lista no.
+**Severidad:** bajo.
+**Fix sugerido:** devolver `marcas_truncadas: true` y avisar; en la lista de sin identificador, paginar o avisar «mostrando 100 de N».
+
+**R2A-22. BAJO — Cuadrícula: Inicio/Fin no hacen nada en una columna; celdas «Sin cálculo» son enfocables sin acción**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaResultados.js:217-234 (`celdaSiguiente` con `columnas = 1`); modules/rh/frontend/components/asistencia/CuadriculaAsistencia.jsx:80 (`c.dia && onAbrirDia(...)`).
+**Problema:** en móvil Inicio y Fin no se mueven (la fila es una sola celda). Y las celdas sin resultado reciben foco y anuncian «Sin cálculo» pero no hacen nada al pulsar Intro.
+**Severidad:** bajo.
+**Fix sugerido:** en una columna, Inicio/Fin llevan al primer/último día de la quincena; las celdas sin `dia` pasan a `tabIndex=-1` o `aria-disabled` con texto que lo explique.
+
+**R2A-23. BAJO — Atajo «Faltas con marcas»: la ayuda no cubre todos los casos que cuenta el servidor**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaResultados.js:96-101 (ayuda del atajo) frente a modules/rh/backend/models/asistenciaResultados.model.js:66 (`estatus='falta' AND primera_marca IS NOT NULL`).
+**Problema:** el conteo incluye también la marca única fuera de ventana y la salida sin entrada, que la ayuda no menciona («llegó más de 30 min tarde u otra marca fuera de lo esperado» lo cubre solo en parte).
+**Severidad:** bajo.
+**Fix sugerido:** ampliar la ayuda: «Faltas en las que hubo alguna marca (tarde de más de 30 min, marca suelta o salida sin entrada)».
+
+**R2A-24. BAJO — Trazabilidad de pruebas: el coder reporta 72 suites / 2 803 tests; la raíz da 70 / 2 718**
+**Archivo/línea:** code-notes.md («Fase 5 (parte 2a)», Verificación); ejecución de jest en la raíz del repo.
+**Problema:** la cifra del informe no se reproduce desde la raíz (puede venir de otro árbol o de un filtro). No cambia el veredicto.
+**Severidad:** bajo.
+**Fix sugerido:** que el coder indique el comando exacto y el número de suites al cerrar la fase.
+
+**Notas para el orquestador:**
+- No hay hallazgos críticos; no se pide split (el diff es grande pero revisable y se revisó completo).
+- Para decidir con el humano: R2A-2 (cierre con pendientes), R2A-3 (cierre automático al bajar `dias_cierre`), R2A-12 (CSV con nombres) y R2A-15 (motivo visible a no-RH).
+- Los hallazgos de Fase 4 que siguen abiertos (F-M4-4, trigger de periodo cerrado, cursor incremental, vacaciones en sábado) no se repiten aquí y no se ven afectados por este commit.
+
+### [2026-10-28] [revisor] — Vinculación de cuentas de usuario con empleados
+**Alcance:** commit `788832f` (rama `feat/cuentas-empleados`), 30 archivos, ~2 000 líneas. Lectura del diff completo, modelo, controlador, utilidades, importador, UI, docs y pruebas. Pruebas ejecutadas: 7 suites (276 pruebas) en verde.
+**Veredicto:** CON OBSERVACIONES. 0 críticos, 1 alto, 9 medios, 8 bajos.
+**Condición previa a usar en staging:** comprobar la UNIQUE sobre `empleados.usuario_id` y que no haya duplicados (consultas al final). No se pudo verificar desde el árbol.
+
+**Verificado sin hallazgos (conforme):**
+- Solo escribe `empleados.usuario_id` (grep de líneas añadidas: `UPDATE empleados SET usuario_id` y `... = NULL`; `usuarios`, `usuario_rol` y `roles` solo aparecen como lectura en subconsultas; sin GoTrue ni contraseñas).
+- Nunca pisa un `usuario_id` no nulo: vincularLote (conflictos con 409 y rollback), importador (error de fila), `UPDATE ... AND usuario_id IS NULL`. Desvincular solo pone NULL.
+- Privilegiadas: la confirmación la exige `vincularLote`, que usan `POST /cuentas/vincular` y `POST /:id/cuenta`; no hay bypass por la plantilla (es error de fila) ni por el endpoint individual.
+- 1 cuenta ↔ 1 empleado: comprobación dentro de la transacción (`duenos`) + UNIQUE (001 inline `usuario_id INT UNIQUE`, 004, 010, init.sql:831). Idempotencia: par ya aplicado = `omitida`.
+- Candado 4601/1: no colisiona (grep de `pg_advisory` en todo el repo: 4217, 4301/4302, 4410, 4501). `lock_timeout` 3 s, tope 2 por proceso.
+- Permisos: `rh_admin`/`super_admin` en las cuatro rutas; `rh_empleado` no tiene `Empleados` en la seed (init.sql:441-455), así que 403. Los roles `jefe`/`empleado` de la prueba no tienen permisos, lo cual es equivalente.
+- Auditoría: acciones `VINCULAR_CUENTAS` (15), `VINCULAR_CUENTA` (15), `DESVINCULAR_CUENTA` (18), con ids y conteos. 500 genérico. SQL parametrizado.
+- Desvincular quita el acceso en la siguiente petición: `acceso-empleado.middleware.js:87,98,140` consulta `obtenerPorUsuarioId` en cada una (no hay caché ni JWT que invalidar).
+- CSV de errores neutraliza fórmulas (`importarFilas.js:326-329`). La exportación de empleados actuales usa xlsx de SheetJS con cadenas (sin fórmulas).
+- `importarEmpleados.test.js` e `importarFechas.util.test.js` solo añaden la clave `cuentas_vinculadas` a expectativas `toEqual`: no se debilitaron.
+
+**Hallazgos:**
+
+**V-1. Impacto de un vínculo equivocado subestimado (UI, confirmación y docs)**
+**Archivo/línea:** modules/rh/frontend/components/VincularCuentasDialogo.jsx:16, :124-126; modules/rh/frontend/components/CuentaEmpleado.jsx:116; modules/rh/frontend/utils/cuentasEmpleado.js:40; docs/rh/cuentas-microsoft.md:5, :24, :32
+**Problema:** los textos dicen que la persona ve "la asistencia" (y "vacaciones" en el perfil), pero `empleados.usuario_id` determina también el expediente y los recibos (`acceso-empleado.middleware.js`), los permisos y, si el empleado es el jefe vigente, la aprobación de vacaciones de su equipo (`solicitudVacaciones.model.js:255`, decisión 2026-10-15). Es el riesgo que el orquestador pidió destacar y la UI no lo transmite.
+**Severidad:** alto
+**Fix sugerido:** el texto de confirmación debe decir: "verá el expediente, recibos, vacaciones y asistencia de este empleado y, si es su jefe, podrá aprobar las vacaciones de su equipo". Mostrar en la vista previa y en el selector si el empleado es jefe de N personas (`EXISTS empleados.jefe_inmediato_id`) y el aviso de privilegiada con esa misma amplitud.
+
+**V-2. Un 409 en el primer lote no recarga la vista previa**
+**Archivo/línea:** modules/rh/frontend/components/VincularCuentasDialogo.jsx:96-103
+**Problema:** si el primer lote devuelve 409, `aplicados.size` es 0, así que no se llama a `cargar()`. La vista queda obsoleta y el mensaje pide "actualiza la vista previa" sin ningún botón para hacerlo (el de "Reintentar" solo aparece si falla la carga).
+**Severidad:** medio
+**Fix sugerido:** llamar a `cargar()` ante cualquier error del lote y mostrar un botón "Actualizar vista previa" dentro del aviso; quitar de la selección los pares que el servidor reporte en `conflictos`.
+
+**V-3. El importador no toma el candado 4601 y la integridad depende solo de la UNIQUE**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js:422-423 (lectura de cuentas) y :586-592 (UPDATE del vínculo); modules/rh/backend/models/empleadoCuenta.model.js:186-187; modules/rh/backend/utils/candadosImportacion.js:10
+**Problema:** el importador (4410) y `vincularLote` (4601) no se coordinan. Con una carrera, el UPDATE del importador choca con la UNIQUE y se convierte en error de fila (correcto). Si la UNIQUE no existe (ver docs/supabase.md:53), la misma cuenta quedaría vinculada a dos empleados sin aviso. El comentario de candadosImportacion.js:10 dice que 4601 "no se anida", lo que no describe la solución.
+**Severidad:** medio
+**Fix sugerido:** tomar `pg_advisory_xact_lock(4601,1)` en el importador cuando alguna fila trae `correo_cuenta` (orden 4410 → 4601; `vincularLote` no toma 4410, así que no hay inversión) y actualizar los comentarios.
+
+**V-4. Dos cuentas que difieren solo en mayúsculas: se elige una sin avisar**
+**Archivo/línea:** modules/rh/backend/models/empleadoCuenta.model.js:98 (y :89-99); modules/rh/backend/models/empleado.model.js:422, :504
+**Problema:** `usuarios.correo` es UNIQUE pero sensible a mayúsculas (modules/portal/backend/migrations/001-crear-tablas-portal.sql:8). El Map por `LOWER(correo)` deja la última fila, sin error, así que la fila del archivo se vincula a una cuenta indeterminada.
+**Severidad:** medio
+**Fix sugerido:** si un correo en minúsculas corresponde a más de una cuenta, error de fila ("correo ambiguo") y no vincular.
+
+**V-5. Empleados suspendidos tratados como activos (código y docs no coinciden)**
+**Archivo/línea:** modules/rh/backend/models/empleadoCuenta.model.js:113 (vista previa), :220 (vincularLote), empleado.model.js:~500 (importador); docs/rh/cuentas-microsoft.md:24 y :32 ("activos"); etiqueta "Empleados activos sin cuenta" en VincularCuentasDialogo.jsx:147
+**Problema:** solo se excluye `baja`. Un empleado `suspendido` aparece como sugerencia y se puede vincular. La decisión del 2026-10-28 solo dice "nunca dados de baja", así que la política sobre suspendidos no está decidida.
+**Severidad:** medio
+**Fix sugerido:** que el humano decida. Si no se vinculan suspendidos, excluirlos en los tres puntos y en la etiqueta. Si sí, cambiar la doc a "no dados de baja" y la etiqueta a "empleados sin cuenta (no baja)".
+
+**V-6. Duplicados históricos de `usuario_id` invisibles para RH**
+**Archivo/línea:** docs/supabase.md:53; modules/rh/backend/migrations/010-empleados-usuario-unico.sql (rama con WARNING); docs/rh/cuentas-microsoft.md:67
+**Problema:** si la 010 no pudo crear la UNIQUE, el único aviso es un WARNING en el log. La vista previa solo lista cuentas sin empleado, y ninguna pantalla muestra cuentas vinculadas a dos empleados. La doc pide "corregir los duplicados", pero no hay herramienta para hacerlo.
+**Severidad:** medio
+**Fix sugerido:** un contador "cuentas vinculadas a más de un empleado" en la vista previa con sus ids, y una acción para desvincular (con confirmación) uno de los dos.
+
+**V-7. El atajo "Marcar las coincidencias exactas" incluye privilegiadas e inactivas**
+**Archivo/línea:** modules/rh/frontend/components/VincularCuentasDialogo.jsx:74-82
+**Problema:** un homónimo administrador con sugerencia "exacta única" se marca en bloque junto con el resto de la página. La casilla aparte mitiga en la confirmación, pero el atajo no separa ni advierte.
+**Severidad:** medio
+**Fix sugerido:** excluir privilegiadas (y, si se prefiere, inactivas) del atajo, con un texto que indique cuántas se dejaron fuera.
+
+**V-8. Sugerencias por nombre: candidatos recortados sin aviso y "ñ" normalizada a "n"**
+**Archivo/línea:** modules/rh/backend/models/empleadoCuenta.model.js:144 (`slice(0, 10)`); modules/rh/backend/utils/vincularCuentas.js:17-21 (NFD quita la tilde de la ñ, así que la clase `ñ` nunca se conserva)
+**Problema:** con más de 10 homónimos, el empleado correcto puede no aparecer en el selector y RH no lo sabe. Además "Peña" y "Pena" se consideran la misma persona: si solo existe un empleado, la sugerencia "exacta" puede ser la persona equivocada.
+**Severidad:** medio
+**Fix sugerido:** indicar "y N más" cuando se recorte, y ofrecer búsqueda en la lista de candidatos. Decidir si la ñ debe distinguirse y, en ese caso, normalizar sin NFD para la ñ.
+
+**V-9. Cobertura de pruebas: vista previa y componentes sin pruebas en el repo**
+**Archivo/línea:** modules/rh/backend/tests/empleadoCuenta.model.test.js (sin `describe` de `vistaPrevia`); modules/rh/backend/tests/empleadoCuentas.api.test.js:33-37 (modelo mockeado); modules/rh/tests/cuentasEmpleado.util.test.js (solo lógica pura); code-notes.md menciona `verif.js`, `ui.js`, `mut.py`, `prep.js`, que están en el scratchpad y no en el repo
+**Problema:** la vista previa (contadores, filtro por estado, exclusión de bajas, tope de 5 000) no tiene pruebas unitarias. `VincularCuentasDialogo.jsx` y `CuentaEmpleado.jsx` no tienen pruebas de componente (409, privilegiadas, reintento). La verificación de Postgres, Chromium y mutación no se puede reproducir desde el repo.
+**Severidad:** medio
+**Fix sugerido:** añadir pruebas de `vistaPrevia` (contadores y exclusión de baja) y de componente para el 409, la casilla de privilegiadas y el bloqueo de empleados repetidos. Llevar los scripts de verificación a `scripts/` o documentar cómo reproducirlos.
+
+**V-18. Las dos decisiones del 2026-10-28 no están en la rama**
+**Archivo/línea:** memory/decisions.md del worktree (no contiene las entradas "Cuentas de usuario de los empleados…" ni "Aclaración del humano…"); están solo en /home/jamejia/intranet/memory/decisions.md (líneas 1236-1248, leídas en modo lectura)
+**Problema:** la revisión se hizo contra un diseño que la rama no registra. Un revisor o coder que trabaje solo desde el worktree vería un ADR desactualizado.
+**Severidad:** medio
+**Fix sugerido:** que el orquestador copie esas dos entradas a decisions.md de la rama (sin borrar nada) antes del merge.
+
+**V-10. Mutación 16/20 no reproducible desde el repo**
+**Archivo/línea:** code-notes.md (entrada "Correo corporativo…", punto 8)
+**Problema:** el argumento de que los 4 sobrevivientes son equivalentes es plausible (defensa en profundidad), pero el de quitar la comprobación en JS de `cuenta_ya_vinculada` solo es equivalente si la UNIQUE existe (ver V-3 y V-6).
+**Severidad:** bajo
+**Fix sugerido:** documentar los 4 sobrevivientes con su razón concreta, y añadir una prueba que asuma UNIQUE ausente.
+
+**V-11. "Privilegiado" solo por nombre de rol**
+**Archivo/línea:** modules/portal/backend/services/delegacionPermisos.js:23
+**Problema:** un rol personalizado con `rh/Asistencia` o `rh/Empleados:edicion` no pide confirmación aparte. Es conforme con la decisión de roles del 2026-10-15, pero el objetivo de la confirmación es proteger de dar la asistencia a administradores.
+**Severidad:** bajo
+**Fix sugerido:** que el humano decida si la privilegiada incluye roles con permisos de administración de RH o de usuarios.
+
+**V-12. Dos trampas de foco activas mientras se confirma**
+**Archivo/línea:** modules/rh/frontend/components/VincularCuentasDialogo.jsx:122 y :245 (ConfirmarDialogo dentro de DialogoAsistencia); modules/portal/frontend/hooks/useFocoModal.js:20-35
+**Problema:** ambos diálogos registran `keydown` en `document`. El resultado depende del orden de registro. Por lectura de código parece funcionar, pero no hay prueba de teclado en el repo.
+**Severidad:** bajo
+**Fix sugerido:** comprobar Tab, Shift+Tab y Escape dentro de la confirmación (en el repo o con una prueba manual anotada); si falla, que solo el diálogo activo registre la trampa.
+
+**V-13. Mensaje engañoso cuando la fila está bloqueada por una importación**
+**Archivo/línea:** modules/rh/backend/models/empleadoCuenta.model.js:189, :276
+**Problema:** cualquier 55P03 (también un `FOR UPDATE` bloqueado por una importación en curso) responde "Hay otra vinculación en curso".
+**Severidad:** bajo
+**Fix sugerido:** mensaje distinto para bloqueo de fila o reintentar sin cambiar el texto del candado.
+
+**V-14. Conexión devuelta al pool tras un ROLLBACK fallido**
+**Archivo/línea:** modules/rh/backend/models/empleadoCuenta.model.js:274, :279, :324
+**Problema:** si el ROLLBACK falla, `cliente.release()` sin argumento devuelve al pool una conexión posiblemente en transacción abortada.
+**Severidad:** bajo
+**Fix sugerido:** `cliente.release(e2)` (o `release(true)`) cuando el ROLLBACK haya fallado.
+
+**V-15. Los rechazos no quedan auditados**
+**Archivo/línea:** modules/rh/backend/controllers/empleadoCuenta.controller.js:42-64
+**Problema:** los 409 por cambios y los 400 por privilegiada sin confirmar no se registran. Son intentos útiles para detectar mal uso.
+**Severidad:** bajo
+**Fix sugerido:** registrar `VINCULAR_CUENTAS_RECHAZADO` con conteos (sin correos), si el humano lo quiere.
+
+**V-16. Contadores de la vista previa sobre la lista truncada**
+**Archivo/línea:** modules/rh/backend/models/empleadoCuenta.model.js:123, :163
+**Problema:** con más de 5 000 cuentas, los contadores se calculan sobre las 5 000 primeras; hay un aviso, pero las cifras parecen completas.
+**Severidad:** bajo
+**Fix sugerido:** mostrar "contadores parciales" junto a los números cuando `truncado` sea verdadero.
+
+**V-17. El selector expone correo, roles y marca privilegiada de todas las cuentas**
+**Archivo/línea:** modules/rh/backend/models/empleadoCuenta.model.js:70-85; modules/rh/backend/routes/empleados.routes.js (GET /cuentas/disponibles)
+**Problema:** a `rh_admin`/`super_admin` se le entregan correos y roles de todas las cuentas sin empleado. Es aceptable con la matriz actual (solo edición), pero queda sin límite de búsqueda por correo.
+**Severidad:** bajo
+**Fix sugerido:** sin cambio obligatorio. Si se quiere reducir, devolver solo nombre y correo en el selector y no los roles.
+
+**Consultas recomendadas para staging (no ejecutadas desde este árbol):**
+- `SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'empleados'::regclass AND contype = 'u';`
+- `SELECT usuario_id, COUNT(*) FROM empleados WHERE usuario_id IS NOT NULL GROUP BY 1 HAVING COUNT(*) > 1;`
+- `SELECT LOWER(correo), COUNT(*) FROM usuarios GROUP BY 1 HAVING COUNT(*) > 1;`
+
+**Notas para el orquestador:**
+- No hay hallazgos críticos, así que no se escala como bloqueo. Se pide decisión humana sobre V-1 (texto de riesgo y jefe vigente), V-5 (suspendidos) y V-18 (decisiones fuera de la rama).
+- El diff no pide split: se revisó completo en una pasada.
+### [2026-10-28] [revisor] — Mi asistencia y Mi equipo (Fase 5, parte 2b)
+**Alcance:** HEAD `1b9d863` (24 archivos, +2485/-41). Leídos: INDEX, decisions (2026-10-21/23/28), code-notes (Fase 5 partes 2a y 2b, motor), docs/asistencia/mi-asistencia.md, reviews (2a: no repetido), react.md. Jest: 72 suites, 2893 pruebas en verde (las dos suites nuevas incluidas). Solo lectura; no se modificó código.
+
+**Veredicto: NO APROBADO** (por R2B-1, crítico). Pendiente de decisión del humano sobre R2B-1, R2B-2, R2B-4 y R2B-5.
+
+**R2B-1. CRÍTICO — El jefe dado de baja conserva el alcance sobre sus subordinados y su propia asistencia**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js:281-285 (`obtenerPorUsuarioId` sin filtro de estatus) y :271-278 (`marcarBaja` no desvincula `usuario_id` ni toca la cuenta); modules/rh/backend/controllers/asistenciaMiAsistencia.controller.js:44-72 (`vinculado`/`es_jefe` sin comprobar el estatus del propio); modules/rh/backend/controllers/asistenciaMotor.controller.js:92-96 y :106 (alcance); modules/rh/backend/models/asistenciaResultados.model.js:39-48 (`idsVisibles`); modules/rh/backend/models/asistenciaMiAsistencia.model.js:55-81 (`equipoHoy`).
+**Problema:** un empleado con `estatus = 'baja'` y `usuario_id` vinculado sigue siendo jefe (`es_jefe`) mientras tenga subordinados con su `jefe_inmediato_id`. `/resultados`, `/resumen`, `/resultados/dia` y `/mi-equipo/hoy` le siguen devolviendo los días y el estado de hoy de su ex-equipo mientras la cuenta exista. La app no lo corta: `marcarBaja` no desvincula ni desactiva el usuario.
+**Severidad:** crítico. Contradice decisions.md (2026-10-21 y 2026-10-28: "el jefe inmediato vigente ve a sus subordinados directos; nadie más"). Escalado al orquestador.
+**Fix sugerido:** (a) un propio con `estatus = 'baja'` no es jefe ni ve equipo, y su acceso a lo propio se decide con el humano (ver R2B-5); (b) al dar de baja, desvincular `empleados.usuario_id` o desactivar la cuenta (decisión del humano); (c) pruebas: jefe dado de baja → 403 con `equipo=1` y `/mi-equipo/hoy` vacío, con el SQL real o con Postgres.
+
+**R2B-2. ALTO — El tipo de permiso (p. ej. "incapacidad", dato de salud) se muestra al jefe**
+**Archivo/línea:** modules/rh/backend/models/asistenciaResultados.model.js:360 (SELECT `tipo`) y :403 (`sinId` lo conserva); modules/rh/frontend/utils/asistenciaMiAsistencia.js:245 (texto «un permiso aprobado (tipo)»).
+**Problema:** el tipo de permiso sale a empleado y jefe. Los tipos válidos incluyen `incapacidad` (permisos.controller.js:8; PermisosForm.jsx:8), que revela una condición de salud. Ninguna decisión autoriza al jefe a verlo. El fixture de la prueba usa `tipo: "salud"`, lo que confirma que el dato llega.
+**Severidad:** alto (dato sensible sin decisión documentada).
+**Fix sugerido:** para no-RH omitir `tipo` en `cruces.permiso` y en el texto («Tienes un permiso aprobado del X al Y»). Preguntar al humano si el propio empleado debe verlo.
+
+**R2B-3. MEDIO — El jefe ve horas exactas de comida y el "exceso de comida" de sus subordinados**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaMiAsistencia.js:297-304 (duración, de la primera a la última marca, «Son N minutos más de los 60 que marca su turno»); modules/rh/frontend/components/asistencia/DetalleDiaPersonaDialogo.jsx:89-98 (marcas «Comida» con hora exacta, con `persona="equipo"`).
+**Problema:** la decisión pide que el jefe vea la asistencia de su equipo, pero no la duración de la comida ni su exceso. Eso es sobreexposición y puede sentirse acusatorio. Hoy 'equipo' y 'yo' usan la misma redacción.
+**Severidad:** medio.
+**Fix sugerido:** con `persona === 'equipo'`, omitir las marcas de comida con hora y el exceso (dejar «Comida: sí/no»). Mantener el detalle completo en 'yo'. Confirmar con el humano.
+
+**R2B-4. MEDIO — Ex-subordinados dados de baja siguen en el equipo de su ex-jefe durante todo el análisis**
+**Archivo/línea:** modules/rh/backend/models/asistenciaResultados.model.js:43 (`fecha_baja >= $2`, con `$2` = inicio de la quincena o del análisis); modules/rh/backend/models/asistenciaMiAsistencia.model.js:75; modules/rh/frontend/utils/asistenciaMiAsistencia.js (`combinarEquipo`, filas `de_baja` tomadas del resumen).
+**Problema:** quien dejó la empresa después del 1-sep sigue apareciendo en `resumen?equipo=1` y en Mi equipo (marcado «baja») con su quincena completa, aunque ya no reporte al jefe. La decisión habla de subordinados directos, no dice si cuentan los que ya salieron. Como `jefe_inmediato_id` no se limpia al dar de baja, la relación se conserva.
+**Severidad:** medio (regla no decidida).
+**Fix sugerido:** decidir con el humano. Si la regla es «vigente», filtrar por `estatus = 'activo'` (o `fecha_baja` > hoy) para el equipo; si se quiere histórico, documentarlo en mi-asistencia.md.
+
+**R2B-5. MEDIO — Un empleado dado de baja conserva "Mi asistencia" sin límite**
+**Archivo/línea:** modules/rh/backend/models/empleado.model.js:281-285; modules/rh/backend/models/asistenciaMiAsistencia.model.js:14-29 (`fichaPropia` no comprueba el estatus); asistenciaMiAsistencia.controller.js:50-56.
+**Problema:** un ex-empleado con cuenta activa en GoTrue ve su quincena indefinidamente. La decisión dice «el empleado ve lo suyo» pero no cubre el después de la baja.
+**Severidad:** medio (regla no decidida).
+**Fix sugerido:** decidir el plazo de acceso tras la baja. Aplicar el mismo criterio que R2B-1 y desvincular `usuario_id` al dar de baja.
+
+**R2B-6. MEDIO — El texto del retardo es ambiguo («por eso cuenta como retardo de 14»)**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaMiAsistencia.js:205.
+**Problema:** «La tolerancia es de 10 minutos, por eso cuenta como retardo de 14» atribuye a la tolerancia los 14 minutos. En realidad la tolerancia decide que es retardo y el motor cuenta la llegada tarde completa. Se entiende a medias y puede parecer un cálculo erróneo. Los minutos sí coinciden con el motor (`minutos_tarde` = `minutos_retardo`).
+**Severidad:** medio (comprensión; no es error de cálculo).
+**Fix sugerido:** «Llegaste 14 minutos tarde. Como pasaste de la tolerancia de 10 minutos, cuenta como retardo; se registran los 14 minutos completos.»
+
+**R2B-7. MEDIO — La justificada dice "no cuenta en contra" pero baja el % de puntualidad**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaMiAsistencia.js:271; modules/rh/frontend/utils/asistenciaResultados.js:26-27 (`FORMULA_PUNTUALIDAD`) y :49-55 (`diasEvaluados` incluye `justificada`).
+**Problema:** la justificada entra en el denominador y no en el numerador, así que baja el % igual que un retardo. El texto dice lo contrario y el empleado puede pensar que la justificación no afecta.
+**Severidad:** medio.
+**Fix sugerido:** decisión del humano: (a) excluir justificadas del denominador (cambia también la pantalla de RH) o (b) redactar «No es falta ni retardo, pero cuenta en el % de puntualidad». Mientras tanto, aplicar (b).
+
+**R2B-8. MEDIO — Turnos nocturnos: el panel Hoy dice "Sin marcas" antes de tiempo**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaMiAsistencia.js:393-395 (compara con la salida del mismo día); modules/rh/backend/models/asistenciaMiAsistencia.model.js:59-61 (no devuelve `cruza_medianoche`).
+**Problema:** con turno 22:00-06:00 y sin marcas a las 23:30, el panel dice «No registró ninguna marca hoy. El día se califica en unos minutos», porque 06:00 < 23:30. Es una alarma falsa que además suena acusatoria. Los turnos nocturnos son parte del diseño (decisions 2026-10-21).
+**Severidad:** medio (verificar con un caso real: no hay prueba de turno nocturno en el panel).
+**Fix sugerido:** devolver `cruza_medianoche` y tratar la salida como del día siguiente, o derivar «sin marcas» solo de lo que el motor marcó como pendiente. Añadir prueba con turno nocturno.
+
+**R2B-9. MEDIO — El resumen del panel Hoy cuenta las justificadas como "no trabaja hoy"**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaMiAsistencia.js:433 (`resumenHoy`, `fuera` incluye `justificada`).
+**Problema:** una justificada es un día laborable con incidencia justificada. El resumen dice «1 no trabaja hoy», dato falso para el jefe.
+**Severidad:** medio.
+**Fix sugerido:** quitar `justificada` de `fuera` y tratarla como las demás incidencias.
+
+**R2B-10. MEDIO — Pruebas: matriz simulada y sin los casos que importan**
+**Archivo/línea:** modules/rh/backend/tests/asistenciaMiAsistencia.api.test.js:1-60 (`Empleado.obtenerPorUsuarioId` mockeado, permisos por fake, BD por regex: se verifica el SQL emitido, no el resultado).
+**Problema:** no hay casos de jefe o empleado dado de baja, subordinado `suspendido`, cambio de `jefe_inmediato_id` entre dos peticiones, turno nocturno, tipo de permiso visible al jefe, ni `calculo_original`. El `portal_admin` se simula con `Asistencia:consulta`, no con los grants reales de la migración 012 (la revisión 2a ya lo señaló). Los casos IDOR (A/B, jefe/par, jefe de jefes, ex-subordinado por fecha) sí están cubiertos, pero solo en simulado.
+**Severidad:** medio.
+**Fix sugerido:** pruebas de integración contra Postgres con los grants reales y los casos de R2B-1, R2B-2, R2B-4 y R2B-8.
+
+**R2B-11. BAJO — Criterio de subordinado distinto entre la cuenta de jefes y el alcance**
+**Archivo/línea:** modules/rh/backend/models/asistenciaMiAsistencia.model.js:34 (`estatus = 'activo'`) frente a :75 y modules/rh/backend/models/asistenciaResultados.model.js:43 (`IS DISTINCT FROM 'baja'`, que incluye `suspendido`).
+**Problema:** un jefe con solo subordinados suspendidos no ve «Mi equipo» en el menú, pero `/resultados?equipo=1` sí le da sus datos.
+**Severidad:** bajo.
+**Fix sugerido:** un único predicado SQL de «subordinado vigente» usado en las tres consultas.
+
+**R2B-12. BAJO — `/resultados/dia` devuelve el `detalle` JSON completo a no-RH**
+**Archivo/línea:** modules/rh/backend/models/asistenciaResultados.model.js:380-404 (`sinInternos` no toca `detalle`); modules/rh/backend/services/asistencia/motorAsistencia.js:282 (guarda `calculo_original`, `marcas_duplicadas`, `explicaciones`).
+**Problema:** hoy no hay nada sensible fuera de lo ya tratado, pero cualquier campo nuevo del motor sale a empleado y jefe.
+**Severidad:** bajo.
+**Fix sugerido:** lista blanca de campos de `detalle` para no-RH.
+
+**R2B-13. BAJO — IDs internos a no-RH**
+**Archivo/línea:** modules/rh/backend/models/asistenciaMiAsistencia.model.js:57 (`empleado_id` de subordinados en `/mi-equipo/hoy`); modules/rh/backend/models/asistenciaResultados.model.js:128 (`id` del periodo en `/periodos` para no-RH, no se quita).
+**Problema:** la lista de «ids internos» que pide el encargo no se cumple del todo: `empleado_id` (necesario para abrir el detalle) y el `id` del periodo siguen saliendo. Son enumerables, pero el IDOR está cerrado en servidor.
+**Severidad:** bajo.
+**Fix sugerido:** aceptar `empleado_id` y documentarlo, o usar un identificador opaco; quitar `id` del periodo para no-RH.
+
+**R2B-14. BAJO — Tono: frases que suenan a acusación**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaMiAsistencia.js:395 («No registró ninguna marca hoy»), :217 y :220 («No hay marca de entrada…», falta), :404 («Falta: no hay marca de entrada»).
+**Problema:** el panel de un jefe ve «Falta» y «No registró» como juicio, no como dato.
+**Severidad:** bajo.
+**Fix sugerido:** «Sin marcas registradas hoy todavía; se califica al terminar la jornada» y «Sin marca de entrada registrada».
+
+**R2B-15. BAJO — Periodo actual añadido aunque sea anterior al inicio del análisis**
+**Archivo/línea:** modules/rh/frontend/utils/asistenciaMiAsistencia.js (`quincenasVisibles`, rama que agrega `periodoActual` sin filtrar por `analisisDesde`).
+**Problema:** si `analisis_desde` es posterior a la quincena actual, el selector muestra una quincena vacía en lugar del aviso de análisis.
+**Severidad:** bajo.
+**Fix sugerido:** aplicar el mismo filtro `fecha_fin >= analisisDesde` al periodo agregado.
+
+**R2B-16. BAJO — Caché de contexto y cambio de jefe**
+**Archivo/línea:** modules/rh/frontend/hooks/useContextoAsistencia.js:10 (`invalidarContextoAsistencia` nunca se llama); :7 (TTL 60 s).
+**Problema:** tras un cambio de jefe, el menú puede mostrar «Mi equipo» hasta 60 s y luego devolver 403. La caché se indexa por usuario, así que no hay fuga entre cuentas.
+**Severidad:** bajo.
+**Fix sugerido:** llamar a `invalidarContextoAsistencia` al cerrar sesión; tratar el 403 de `/mi-equipo/hoy` como «ya no eres jefe».
+
+**R2B-17. BAJO — Sin validación de ciclos en `jefe_inmediato_id`**
+**Archivo/línea:** modules/rh/backend/controllers/empleado.controller.js:71 y :211 (se guarda el valor sin comprobar ciclos).
+**Problema:** si A es jefe de B y B es jefe de A, cada uno ve al otro. Es anterior a este commit, pero el alcance nuevo lo hace visible.
+**Severidad:** bajo.
+**Fix sugerido:** rechazar al guardar un jefe que cree un ciclo.
+
+**R2B-18. BAJO — Accesibilidad menor**
+**Archivo/línea:** modules/rh/frontend/components/asistencia/DetalleDiaPersonaDialogo.jsx:92 (`title` con UTC en `<time>`); MiEquipoPage.jsx:206-213 (ítems del panel Hoy sin enlace al detalle).
+**Problema:** el UTC solo aparece con el cursor (no accesible por teclado ni táctil). El panel Hoy no permite abrir al subordinado desde ahí.
+**Severidad:** bajo.
+**Fix sugerido:** mostrar el UTC como texto o quitarlo; hacer el nombre del panel Hoy un botón que abra la cuadrícula.
+
+**Verificado sin hallazgos**
+- Cambio de `jefe_inmediato_id` en caliente: el servidor lee el jefe en cada petición (`idsVisibles`, `obtenerPorUsuarioId`), así que el jefe anterior pierde el acceso al instante.
+- IDOR en `/resultados`, `/resultados/dia` y `/resumen`: 403 uniforme para empleado ajeno, par, jefe de jefes y nietos; `equipo=1` acota a directos también para RH; `equipo` con otro valor da 400; `ids = []` no equivale a «todos».
+- `terminal_sn`, nombre de quien justificó, quién cerró o reabrió y motivo de reapertura: solo RH (modelo y controlador).
+- Usuario sin empleado vinculado: 200 con `vinculado:false` en `/mi-contexto`, 403 en lectura de datos.
+- Zona horaria: `hoyMexico` en America/Mexico_City; `Intl` con `hourCycle: 'h23'` (sin «24:00» a medianoche); fechas como texto con `to_char`.
+- CSS: sin hex nuevos; `--color-acento`, `--color-exito-suave`, `--color-advertencia-suave` están definidas globalmente; `prefers-reduced-motion`; objetivos táctiles de 44 px.
+- Menú: `tieneAccesoMenu` + `visibleSegunContexto`; `super_admin` pasa la regla de permiso pero el contexto del servidor decide; sin contexto no se muestra nada.
+
+**Notas para el orquestador:**
+- Escalado por R2B-1 (crítico). Decisiones que necesito del humano: (1) ¿el empleado o jefe dado de baja conserva acceso y por cuánto tiempo?; (2) ¿el jefe puede ver el tipo de permiso (incapacidad)?; (3) ¿el ex-subordinado sigue en el equipo de su ex-jefe?; (4) ¿la justificada cuenta en el % de puntualidad?
+- No se modificó código. Las pruebas se ejecutaron tal como están (72 suites, 2893 en verde).

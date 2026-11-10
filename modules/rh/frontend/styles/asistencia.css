@@ -1,0 +1,214 @@
+/* Pantallas de administración de Asistencia (turnos, asignaciones, marcas, sincronización, llaves).
+   Solo variables CSS globales del proyecto; el texto va en --color-texto / --color-texto-medio (contraste >= 4,5:1). */
+.asi {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  box-sizing: border-box;
+  min-width: 0;
+  color: var(--color-texto);
+}
+.asi h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 0.25rem; }
+.asi h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; color: var(--color-primario); }
+.asi h3 { font-size: 1rem; margin: 1rem 0 0.4rem; }
+.asi__sub { color: var(--color-texto-medio); margin: 0 0 1rem; font-size: 0.9rem; }
+.asi__barra { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; margin-bottom: 1rem; }
+.asi__barra-espacio { flex: 1 1 auto; }
+
+.asi__btn {
+  min-height: 2.25rem;
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--color-borde);
+  border-radius: 0.4rem;
+  background: var(--color-superficie);
+  color: var(--color-texto);
+  font: inherit;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.asi__btn--primario { background: var(--color-primario); border-color: var(--color-primario); color: var(--color-superficie); font-weight: 600; }
+.asi__btn--peligro { background: var(--color-error); border-color: var(--color-error); color: var(--color-superficie); font-weight: 600; }
+.asi__btn--chico { min-height: 1.9rem; padding: 0.2rem 0.55rem; font-size: 0.82rem; }
+.asi__btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.asi__btn:focus-visible,
+.asi__campo input:focus-visible,
+.asi__campo select:focus-visible,
+.asi__campo textarea:focus-visible,
+.asi__tabla-caja:focus-visible,
+.asi__pestana:focus-visible {
+  outline: 3px solid var(--color-acento);
+  outline-offset: 1px;
+}
+
+.asi__aviso {
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 0.4rem;
+  font-size: 0.88rem;
+  color: var(--color-texto);
+  border-left: 4px solid var(--color-borde);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  overflow-wrap: anywhere;
+}
+.asi__aviso--info { background: var(--color-info-suave); border-left-color: var(--color-info); }
+.asi__aviso--ok { background: var(--color-exito-suave); border-left-color: var(--color-exito); }
+.asi__aviso--error { background: var(--color-error-suave); border-left-color: var(--color-error); }
+.asi__aviso--advertencia { background: var(--color-advertencia-suave); border-left-color: var(--color-advertencia); font-weight: 600; }
+.asi__aviso p { margin: 0; }
+.asi__estado { color: var(--color-texto-medio); padding: 0.75rem 0; }
+
+/* Campos */
+.asi__campo { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 0.8rem; min-width: 0; }
+.asi__barra .asi__campo { margin-bottom: 0; }
+.asi__campo label, .asi__campo legend { font-size: 0.85rem; font-weight: 600; }
+.asi__campo input[type="text"],
+.asi__campo input[type="search"],
+.asi__campo input[type="date"],
+.asi__campo input[type="time"],
+.asi__campo input[type="number"],
+.asi__campo select,
+.asi__campo textarea {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--color-secundario);
+  border-radius: 0.4rem;
+  font: inherit;
+  font-size: 0.9rem;
+  background: var(--color-superficie);
+  color: var(--color-texto);
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.asi__campo--casilla { flex-direction: row; align-items: center; gap: 0.5rem; }
+.asi__campo--casilla input { width: 1.1rem; height: 1.1rem; }
+.asi__ayuda { color: var(--color-texto-medio); font-size: 0.82rem; margin: 0.15rem 0 0; }
+.asi__error-campo { color: var(--color-error); font-size: 0.82rem; margin: 0.15rem 0 0; font-weight: 600; }
+.asi__grupo { border: 1px solid var(--color-borde); border-radius: 0.5rem; padding: 0.75rem; margin: 0 0 1rem; min-width: 0; }
+.asi__grupo > legend { font-weight: 700; padding: 0 0.3rem; }
+.asi__rejilla { display: grid; grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr)); gap: 0.6rem; }
+
+/* Días de la semana del turno */
+.asi__dias { display: flex; flex-direction: column; gap: 0.4rem; }
+.asi__dia { display: grid; grid-template-columns: 7.5rem 1fr 1fr; gap: 0.5rem; align-items: center; }
+.asi__dia label.asi__dia-nombre { display: flex; align-items: center; gap: 0.4rem; font-weight: 600; font-size: 0.88rem; }
+.asi__dia input[type="checkbox"] { width: 1.1rem; height: 1.1rem; }
+.asi__dia input[type="time"] { padding: 0.35rem 0.4rem; border: 1px solid var(--color-secundario); border-radius: 0.4rem; font: inherit; color: var(--color-texto); background: var(--color-superficie); min-width: 0; }
+.asi__dia-nolab { color: var(--color-texto-medio); font-size: 0.85rem; grid-column: span 2; }
+
+/* Tablas */
+.asi__tabla-caja {
+  overflow-x: auto;
+  max-width: 100%;
+  border: 1px solid var(--color-borde);
+  border-radius: 0.6rem;
+  background: var(--color-superficie);
+  margin-bottom: 1rem;
+}
+.asi__tabla { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+.asi__tabla caption { text-align: left; padding: 0.6rem 0.75rem; font-weight: 700; color: var(--color-primario); }
+.asi__tabla th, .asi__tabla td { text-align: left; padding: 0.5rem 0.75rem; border-top: 1px solid var(--color-borde); vertical-align: top; }
+.asi__tabla thead th { background: var(--color-superficie-alt); border-top: 0; white-space: nowrap; font-weight: 700; }
+.asi__tabla td.asi__num, .asi__tabla th.asi__num { text-align: right; white-space: nowrap; }
+.asi__nowrap { white-space: nowrap; }
+.asi__acciones-celda { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.asi__mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; }
+.asi__sec { color: var(--color-texto-medio); font-size: 0.8rem; font-weight: 400; display: block; }
+.asi__rotulo-hora { border-bottom: 1px dotted var(--color-texto-medio); cursor: help; }
+
+.asi__badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--color-texto);
+  border: 1px solid var(--color-borde);
+  white-space: nowrap;
+}
+.asi__badge--ok { background: var(--color-exito-suave); border-color: var(--color-exito); }
+.asi__badge--aviso { background: var(--color-advertencia-suave); border-color: var(--color-advertencia); }
+.asi__badge--error { background: var(--color-error-suave); border-color: var(--color-error); }
+.asi__badge--neutro { background: var(--color-superficie-alt); border-color: var(--color-secundario); }
+
+/* Pestañas */
+.asi__pestanas { display: flex; flex-wrap: wrap; gap: 0.25rem; border-bottom: 2px solid var(--color-borde); margin-bottom: 1rem; }
+.asi__pestana {
+  min-height: 2.5rem;
+  padding: 0.4rem 1rem;
+  background: transparent;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-texto-medio);
+  cursor: pointer;
+}
+.asi__pestana[aria-selected="true"] { color: var(--color-primario); border-bottom-color: var(--color-primario); }
+
+/* Paginación */
+.asi__pag { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0 1rem; }
+.asi__pag-texto { color: var(--color-texto-medio); font-size: 0.86rem; }
+
+/* Tarjetas de sincronización */
+.asi__tarjetas { display: grid; grid-template-columns: repeat(auto-fit, minmax(12.5rem, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+.asi__tarjeta {
+  background: var(--color-superficie);
+  border: 1px solid var(--color-borde);
+  border-radius: 0.6rem;
+  padding: 0.8rem 0.9rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.asi__tarjeta dt { color: var(--color-texto-medio); font-size: 0.8rem; font-weight: 600; margin: 0; }
+.asi__tarjeta dd { margin: 0.2rem 0 0; font-size: 1.05rem; font-weight: 700; }
+.asi__tarjeta dd small { display: block; font-size: 0.78rem; font-weight: 400; color: var(--color-texto-medio); }
+.asi__tarjetas dl { margin: 0; }
+
+/* Llave mostrada una vez */
+.asi__llave-caja {
+  display: block;
+  padding: 0.75rem;
+  border: 2px solid var(--color-primario);
+  border-radius: 0.5rem;
+  background: var(--color-superficie-alt);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92rem;
+  word-break: break-all;
+  user-select: all;
+  margin: 0.5rem 0;
+}
+
+/* Diálogos */
+.asi__overlay { padding: 2rem 1rem; box-sizing: border-box; align-items: flex-start; }
+/* El diálogo nunca pasa del viewport (el padding del overlay se descuenta) y su contenido se desplaza por dentro */
+.asi__modal { padding: 1.25rem; overflow-y: auto; height: auto; box-sizing: border-box; max-height: calc(100vh - 4rem); }
+@supports (height: 100svh) { .asi__modal { max-height: calc(100svh - 4rem); } }
+@supports (height: 100dvh) { .asi__modal { max-height: calc(100dvh - 4rem); } }
+.asi__modal-titulo { margin: 0 0 0.75rem; font-size: 1.15rem; color: var(--color-primario); }
+.asi__modal-cuerpo { min-width: 0; }
+.asi__acciones { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; }
+.asi__lista { margin: 0.4rem 0 0.8rem 1.2rem; padding: 0; }
+.asi__bloque { background: var(--color-superficie); border: 1px solid var(--color-borde); border-radius: 0.6rem; padding: 0.9rem 1rem; margin-bottom: 1rem; }
+.asi__bloque p { margin: 0.3rem 0; }
+
+.asi__sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+@media (max-width: 600px) {
+  .asi { padding: 0.9rem 0.75rem; }
+  .asi__dia { grid-template-columns: 1fr 1fr; }
+  .asi__dia label.asi__dia-nombre { grid-column: span 2; }
+  .asi__dia-nolab { grid-column: span 2; }
+  .asi__overlay { padding: 0.5rem; }
+  .asi__modal { max-height: calc(100vh - 1rem); }
+  @supports (height: 100svh) { .asi__modal { max-height: calc(100svh - 1rem); } }
+  @supports (height: 100dvh) { .asi__modal { max-height: calc(100dvh - 1rem); } }
+  .asi__acciones .asi__btn { flex: 1 1 auto; }
+}
+.asi__lista--plana { list-style: none; margin: 0 0 0.4rem; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.asi details summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; color: var(--color-primario); font-weight: 600; font-size: 0.84rem; }
+.asi details summary:focus-visible { outline: 3px solid var(--color-acento); outline-offset: 1px; }
+.asi__bloque, .asi__lista, .asi__mono { overflow-wrap: anywhere; }

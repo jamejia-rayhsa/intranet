@@ -432,11 +432,12 @@ async function operarSobreUsuario(pool, actor, usuarioId, { rolId, tomaCuenta = 
     try {
       await externo(valor);
     } catch (errorExterno) {
-      // Solo un error HTTP explícito de GoTrue (`definitivo`) garantiza que NO aplicó el cambio. Un timeout,
-      // un error de red o una respuesta perdida (sin respuesta HTTP) es INCIERTO: GoTrue pudo haberlo aplicado,
+      // Un error HTTP explícito de GoTrue (cualquier respuesta: `conRespuestaHttp`, o `definitivo`) se trata como "no aplicó" y se
+      // compensa (comportamiento de siempre de estos flujos; el criterio 4xx-definitivo/5xx-incierto es solo del importador de usuarios).
+      // Un timeout, un error de red o una respuesta perdida (sin respuesta HTTP) es INCIERTO: GoTrue pudo haberlo aplicado,
       // y revertir la BD dejaría p. ej. una contraseña nueva en GoTrue con la cuenta activa/sin flag en BD.
       // Ante la duda por defecto: NO compensar.
-      if (!(errorExterno && errorExterno.definitivo === true)) {
+      if (!(errorExterno && (errorExterno.definitivo === true || errorExterno.conRespuestaHttp === true))) {
         console.error(
           `Resultado incierto de la llamada externa sobre el usuario ${usuarioId}; NO se compensa (BD y GoTrue pueden diferir): ${errorExterno && errorExterno.message}`,
         );

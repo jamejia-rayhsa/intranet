@@ -144,7 +144,7 @@ describe('usuario.controller', () => {
     });
 
     it('sin auth_uid no llama a GoTrue', async () => {
-      Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_uid: null });
+      Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_tipo: 'local', auth_uid: null });
       Usuario.eliminar.mockResolvedValue({ id: 14 });
       const res = mockRes();
       await controlador.eliminar({ user: SUPER, params: { id: 14 } }, res);
@@ -177,7 +177,7 @@ describe('usuario.controller', () => {
 
   describe('actualizar', () => {
     it('con contraseña: solo GoTrue, sin hash local', async () => {
-      Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_uid: 'uid-2' });
+      Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_tipo: 'local', auth_uid: 'uid-2' });
       Usuario.actualizar.mockResolvedValue({ id: 14, hash_password: 'h', auth_uid: 'uid-2' });
       const res = mockRes();
       await controlador.actualizar({ user: SUPER, params: { id: 14 }, body: { contraseña: 'Nueva12345' } }, res);
@@ -192,12 +192,31 @@ describe('usuario.controller', () => {
     });
 
     it('con contraseña y sin auth_uid: 409 sin escribir', async () => {
-      Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_uid: null });
+      Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_tipo: 'local', auth_uid: null });
       const res = mockRes();
       await controlador.actualizar({ user: SUPER, params: { id: 14 }, body: { contraseña: 'Nueva12345' } }, res);
       expect(res.status).toHaveBeenCalledWith(409);
       expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
       expect(Usuario.actualizar).not.toHaveBeenCalled();
+    });
+
+    it('con contraseña a una cuenta ms365: 400 sin escribir ni tocar GoTrue (no hay segunda puerta de entrada)', async () => {
+      Usuario.buscarPorId.mockResolvedValue({ id: 14, auth_tipo: 'ms365', auth_uid: 'uid-2' });
+      const res = mockRes();
+      await controlador.actualizar({ user: SUPER, params: { id: 14 }, body: { nombre: 'X', contraseña: 'Nueva12345' } }, res);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json.mock.calls[0][0].mensaje).toMatch(/Microsoft/);
+      expect(supabaseAdmin.actualizarPassword).not.toHaveBeenCalled();
+      expect(Usuario.actualizar).not.toHaveBeenCalled();
+      expect(mockPool.consultas).toContain('ROLLBACK');
+    });
+
+    it('sin contraseña una cuenta ms365 se sigue editando', async () => {
+      Usuario.actualizar.mockResolvedValue({ id: 14, auth_tipo: 'ms365' });
+      const res = mockRes();
+      await controlador.actualizar({ user: SUPER, params: { id: 14 }, body: { nombre: 'X' } }, res);
+      expect(res.status).not.toHaveBeenCalled();
+      expect(Usuario.actualizar).toHaveBeenCalled();
     });
 
     it('sin contraseña no consulta ni toca GoTrue', async () => {

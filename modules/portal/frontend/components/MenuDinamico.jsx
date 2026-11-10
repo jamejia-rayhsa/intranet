@@ -1,8 +1,53 @@
-import { useEffect, useState, useRef } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { usarAuth } from '../context/AuthContext';
+import { tieneAccesoMenu, visibleSegunContexto } from '../utils/menuAcceso';
+import useContextoAsistencia from '../../../rh/frontend/hooks/useContextoAsistencia';
 
 const NOMBRE_EMPRESA = import.meta.env.VITE_NOMBRE_EMPRESA || 'Intranet';
+
+// Lectura de la gestión de asistencia (resultados, periodos, parámetros): RH = Asistencia:edicion o Empleados:edicion
+const REQUIERE_GESTION_ASISTENCIA = [['Asistencia', 'edicion'], ['Empleados', 'edicion']];
+// «Mi asistencia» y «Mi equipo»: cualquier nivel de Asistencia (consulta basta); además dependen del contexto del servidor
+const REQUIERE_CONSULTA_ASISTENCIA = [['Asistencia', 'consulta'], ['Asistencia', 'edicion']];
+
+/**
+ * Contenedor de los subitems de un grupo del menú. La altura abierta NO es fija: el CSS deja `max-height: none` cuando está
+ * abierto (cabe cualquier número de enlaces) y aquí solo se anima la apertura/cierre midiendo la altura real del contenido.
+ */
+function Subitems({ abierto, children }) {
+  const ref = useRef(null);
+  const previo = useRef(abierto);
+  const altura = useRef(0);
+  // Altura real del contenido mientras está abierto: se guarda ANTES de cerrar porque leer scrollHeight tras quitar la clase
+  // fuerza un cálculo de estilo con max-height 0 y la transición de cierre arrancaría desde 0 (saltaba en un cuadro)
+  useLayoutEffect(() => {
+    if (abierto && ref.current) altura.current = ref.current.scrollHeight;
+  });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || previo.current === abierto) return undefined;
+    previo.current = abierto;
+    // prefers-reduced-motion: sin animación (el CSS ya pone la transición en none); solo cambia el estado
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return undefined;
+    const limpiar = () => { el.style.maxHeight = ''; };
+    let r1 = 0;
+    let r2 = 0;
+    if (abierto) {
+      el.style.maxHeight = '0px';
+      void el.offsetHeight; // fuerza el cálculo para que arranque la transición
+      el.style.maxHeight = `${el.scrollHeight}px`;
+    } else {
+      // Cierre: el CSS ya dejó max-height en 0 (clase quitada); se fija la altura real y, DOS cuadros después, 0, para que
+      // el navegador vea el cambio px -> 0 y lo anime (con un solo reflow forzado el cierre saltaba en un cuadro)
+      el.style.maxHeight = `${altura.current || el.scrollHeight}px`;
+      r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => { el.style.maxHeight = '0px'; }); });
+    }
+    const t = setTimeout(limpiar, 360);
+    return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); clearTimeout(t); limpiar(); };
+  }, [abierto]);
+  return <div ref={ref} className={`sidebar-subitems${abierto ? ' abierto' : ''}`}>{children}</div>;
+}
 
 const SUB_RUTAS = {
   portal: [
@@ -19,11 +64,24 @@ const SUB_RUTAS = {
     { path: '/rh/admin', label: 'Permisos y ausencias', opcion: 'Permisos' },
     { path: '/rh/vacaciones', label: 'Vacaciones', opcion: 'Vacaciones' },
     { path: '/rh/vacaciones/listado', label: 'Solicitudes', opcion: 'Vacaciones' },
+    // Asistencia propia y del equipo (fuera del grupo «Asistencia» de administración): según el contexto del servidor
+    { path: '/rh/asistencia/mi-asistencia', label: 'Mi asistencia', opcion: 'Asistencia', requiere: REQUIERE_CONSULTA_ASISTENCIA, contexto: 'empleado' },
+    { path: '/rh/asistencia/mi-equipo', label: 'Mi equipo', opcion: 'Asistencia', requiere: REQUIERE_CONSULTA_ASISTENCIA, contexto: 'jefe' },
     { path: '/rh/calendario', label: 'Calendario', opcion: 'Calendario' },
     { path: '/rh/areas', label: 'Áreas', opcion: 'Empleados' },
     { path: '/rh/departamentos', label: 'Departamentos', opcion: 'Departamentos' },
     { path: '/rh/puestos', label: 'Puestos', opcion: 'Empleados' },
     { path: '/rh/ubicaciones', label: 'Ubicaciones', opcion: 'Empleados' },
+    // Grupo «Asistencia» (administración): visible solo con el permiso de Turnos / Ingesta
+    { path: '/rh/asistencia/turnos', label: 'Turnos', opcion: 'Turnos', grupo: 'Asistencia' },
+    { path: '/rh/asistencia/asignaciones', label: 'Asignaciones', opcion: 'Turnos', grupo: 'Asistencia' },
+    { path: '/rh/asistencia/marcas', label: 'Marcas', opcion: 'Ingesta', grupo: 'Asistencia' },
+    { path: '/rh/asistencia/sincronizacion', label: 'Sincronización', opcion: 'Ingesta', grupo: 'Asistencia' },
+    { path: '/rh/asistencia/llaves', label: 'Llaves de ingesta', opcion: 'Ingesta', grupo: 'Asistencia' },
+    // Resultados del motor (gestión): Asistencia:edicion o Empleados:edicion (rh_empleado solo tiene Asistencia:consulta)
+    { path: '/rh/asistencia/resultados', label: 'Resultados', opcion: 'Asistencia', requiere: REQUIERE_GESTION_ASISTENCIA, grupo: 'Asistencia' },
+    { path: '/rh/asistencia/periodos', label: 'Periodos', opcion: 'Asistencia', requiere: REQUIERE_GESTION_ASISTENCIA, grupo: 'Asistencia' },
+    { path: '/rh/asistencia/parametros', label: 'Parámetros', opcion: 'Asistencia', requiere: REQUIERE_GESTION_ASISTENCIA, grupo: 'Asistencia' },
   ],
   tickets: [
     { path: '/tickets', label: 'Dashboard', opcion: null },
@@ -103,7 +161,7 @@ function SidebarLogo() {
   );
 }
 
-export default function MenuDinamico({ modulos = [], permisos = [], abierto, onCerrar }) {
+export default function MenuDinamico({ modulos = [], permisos = [], abierto, onCerrar, onCerrarMenu }) {
   const { usuario, cerrarSesion } = usarAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -129,6 +187,9 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
     navigate('/inicio-sesion');
   }
 
+  // Contexto de asistencia (caché corta en cliente): solo se pide a quien tiene Asistencia:consulta
+  const consultaAsistencia = tieneAccesoMenu({ usuario, permisos, modulo: 'rh', opcion: 'Asistencia', requiere: REQUIERE_CONSULTA_ASISTENCIA });
+  const { datos: contextoAsistencia } = useContextoAsistencia({ habilitado: Boolean(usuario) && consultaAsistencia, refrescarCon: location.pathname });
   const esAdmin = usuario?.roles?.some(r => ROLES_ADMIN.includes(r));
   const modulosActivos = modulos.filter(m => m.activo);
 
@@ -136,7 +197,7 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
   const modulosVisibles = modulosActivos.filter((m) => {
     const subRutas = SUB_RUTAS[m.nombre] || [];
     if (subRutas.length === 0) return true; // módulos sin sub-rutas siempre se muestran
-    return subRutas.some((sr) => tieneAcceso(m.nombre, sr.opcion));
+    return subRutas.some((sr) => tieneAcceso(m.nombre, sr.opcion, Boolean(sr.grupo), sr.requiere) && visibleSegunContexto(sr.contexto, contextoAsistencia));
   });
 
   function esActivo(ruta) {
@@ -144,19 +205,14 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
     return location.pathname === ruta || location.pathname.startsWith(ruta + '/');
   }
 
-  function tieneAcceso(moduloNombre, opcion) {
-    if (usuario?.rol_nombre === 'super_admin') return true;
-    if (!opcion) return true;
-    if (permisos.length === 0) return true;
-    return permisos.some(
-      (p) =>
-        p.modulo.toLowerCase() === moduloNombre.toLowerCase() &&
-        p.opcion === opcion
-    );
+  function tieneAcceso(moduloNombre, opcion, estricto = false, requiere = null) {
+    return tieneAccesoMenu({ usuario, permisos, modulo: moduloNombre, opcion, estricto, requiere });
   }
 
   return (
     <aside className={`app-sidebar${abierto ? ' abierto' : ''}`}>
+      {/* Solo se ve cuando el menú es un drawer sin otro botón a mano (franja 641-768 px) */}
+      <button type="button" className="sidebar-cerrar-menu" onClick={onCerrarMenu || onCerrar}>Cerrar menú</button>
       <div className="sidebar-logo" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
         <SidebarLogo />
       </div>
@@ -197,19 +253,20 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
                 <span className={`sidebar-chevron${estaAbierto ? ' abierto' : ''}`}>›</span>
               </button>
 
-              <div className={`sidebar-subitems${estaAbierto ? ' abierto' : ''}`}>
+              <Subitems abierto={estaAbierto}>
                 {subRutas
-                  .filter((sr) => tieneAcceso(m.nombre, sr.opcion))
-                  .map(sr => (
-                    <Link
-                      key={sr.path}
-                      to={sr.path}
-                      className={esActivo(sr.path) ? 'activo' : ''}
-                    >
-                      {sr.label}
-                    </Link>
+                  .filter((sr) => tieneAcceso(m.nombre, sr.opcion, Boolean(sr.grupo), sr.requiere) && visibleSegunContexto(sr.contexto, contextoAsistencia))
+                  .map((sr, i, visibles) => (
+                    <Fragment key={sr.path}>
+                      {sr.grupo && visibles[i - 1]?.grupo !== sr.grupo && (
+                        <div className="sidebar-subgrupo" role="presentation">{sr.grupo}</div>
+                      )}
+                      <Link to={sr.path} className={esActivo(sr.path) ? 'activo' : ''}>
+                        {sr.label}
+                      </Link>
+                    </Fragment>
                   ))}
-              </div>
+              </Subitems>
             </div>
           );
         })}
@@ -230,7 +287,7 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
                 </span>
                 <span className={`sidebar-chevron${estaAbierto ? ' abierto' : ''}`}>›</span>
               </button>
-              <div className={`sidebar-subitems${estaAbierto ? ' abierto' : ''}`}>
+              <Subitems abierto={estaAbierto}>
                 {ADMIN_ITEMS.map(item => (
                   <Link
                     key={item.path}
@@ -240,7 +297,7 @@ export default function MenuDinamico({ modulos = [], permisos = [], abierto, onC
                     {item.label}
                   </Link>
                 ))}
-              </div>
+              </Subitems>
             </div>
           );
         })()}

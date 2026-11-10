@@ -197,6 +197,14 @@ describe("Ingesta - autenticación por llave", () => {
     expect(upd.params).toEqual([esc.fila.id, "127.0.0.1"]);
   });
 
+  it("GET /estado (sin enviar marcas) también actualiza ultimo_uso: es la 'última comunicación' de la pantalla de sincronización", async () => {
+    esc.fila.id = ++contadorLlave;
+    const r = await request(app).get(ESTADO).set("X-Api-Key", esc.llave);
+    expect(r.status).toBe(200);
+    const upd = bd.sqls().find((l) => /UPDATE asistencia_llaves SET ultimo_uso/.test(l.sql));
+    expect(upd.params).toEqual([esc.fila.id, "127.0.0.1"]);
+  });
+
   it("si el UPDATE de ultimo_uso falla, la petición sigue (200) y el log no lleva la llave", async () => {
     esc.fila.id = ++contadorLlave;
     esc.falla = { re: /UPDATE asistencia_llaves SET ultimo_uso/, error: new Error("fallo del UPDATE") };
@@ -428,6 +436,16 @@ describe("Ingesta - errores inesperados del manejador", () => {
 
 describe("Ingesta - rate limit (60 envíos por minuto por llave)", () => {
   it("el envío 61 en un minuto -> 429 con Retry-After; otra llave no se ve afectada", async () => {
+    // Reloj fijo: con el real, una corrida lenta (carga de CI) podía tardar más de un minuto en los 60 envíos y la ventana se deslizaba
+    const reloj = jest.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
+    try {
+      await cuerpoRateLimit();
+    } finally {
+      reloj.mockRestore();
+    }
+  });
+
+  const cuerpoRateLimit = async () => {
     for (let i = 0; i < 60; i += 1) {
       const r = await enviar({ marcas: [marca(5000 + i)] });
       expect(r.status).toBe(200);
@@ -442,7 +460,7 @@ describe("Ingesta - rate limit (60 envíos por minuto por llave)", () => {
     const nueva = generarLlave();
     esc.filas = [esc.fila, { ...esc.fila, id: esc.fila.id + 1000, prefijo: nueva.prefijo, hash_llave: nueva.hash }];
     expect((await enviar({ marcas: [marca(6001)] }, { llave: nueva.llave })).status).toBe(200);
-  });
+  };
 
   it("pasado el minuto vuelve a aceptar; las consultas de estado tienen su propio contador", async () => {
     const reloj = jest.spyOn(Date, "now");

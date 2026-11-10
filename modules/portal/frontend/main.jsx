@@ -6,7 +6,7 @@
 //   - Pasa `breadcrumb` al topbar dependiendo de la ruta activa.
 //   - Mantiene el resto del routing exactamente igual.
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import ReactDOM from 'react-dom/client';
 import {
   BrowserRouter,
@@ -39,6 +39,16 @@ import EmpleadoPage from '../../rh/frontend/pages/EmpleadoPage';
 import VacacionesPage from '../../rh/frontend/pages/VacacionesPage';
 import VacacionesListadoPage from '../../rh/frontend/pages/VacacionesListadoPage';
 import CalendarioLaboralPage from '../../rh/frontend/pages/CalendarioLaboralPage';
+import AsistenciaTurnosPage from '../../rh/frontend/pages/AsistenciaTurnosPage';
+import AsistenciaAsignacionesPage from '../../rh/frontend/pages/AsistenciaAsignacionesPage';
+import AsistenciaMarcasPage from '../../rh/frontend/pages/AsistenciaMarcasPage';
+import AsistenciaSincronizacionPage from '../../rh/frontend/pages/AsistenciaSincronizacionPage';
+import AsistenciaLlavesPage from '../../rh/frontend/pages/AsistenciaLlavesPage';
+import AsistenciaResultadosPage from '../../rh/frontend/pages/AsistenciaResultadosPage';
+import AsistenciaPeriodosPage from '../../rh/frontend/pages/AsistenciaPeriodosPage';
+import AsistenciaParametrosPage from '../../rh/frontend/pages/AsistenciaParametrosPage';
+import MiAsistenciaPage from '../../rh/frontend/pages/MiAsistenciaPage';
+import MiEquipoPage from '../../rh/frontend/pages/MiEquipoPage';
 import PuestosPage from '../../rh/frontend/pages/PuestosPage';
 import DepartamentosPage from '../../rh/frontend/pages/DepartamentosPage';
 import AreasPage from '../../rh/frontend/pages/AreasPage';
@@ -70,6 +80,16 @@ const BREADCRUMBS = {
   '/rh/admin':           ['Recursos Humanos', 'Permisos y ausencias'],
   '/rh/vacaciones':      ['Recursos Humanos', 'Vacaciones'],
   '/rh/calendario':      ['Recursos Humanos', 'Calendario'],
+  '/rh/asistencia/mi-asistencia': ['Recursos Humanos', 'Mi asistencia'],
+  '/rh/asistencia/mi-equipo':     ['Recursos Humanos', 'Mi equipo'],
+  '/rh/asistencia/turnos':        ['Recursos Humanos', 'Asistencia · Turnos'],
+  '/rh/asistencia/asignaciones':  ['Recursos Humanos', 'Asistencia · Asignaciones'],
+  '/rh/asistencia/marcas':        ['Recursos Humanos', 'Asistencia · Marcas'],
+  '/rh/asistencia/sincronizacion': ['Recursos Humanos', 'Asistencia · Sincronización'],
+  '/rh/asistencia/llaves':        ['Recursos Humanos', 'Asistencia · Llaves de ingesta'],
+  '/rh/asistencia/resultados':    ['Recursos Humanos', 'Asistencia · Resultados'],
+  '/rh/asistencia/periodos':      ['Recursos Humanos', 'Asistencia · Periodos'],
+  '/rh/asistencia/parametros':    ['Recursos Humanos', 'Asistencia · Parámetros'],
   '/auditoria':          ['Transversal', 'Auditoría'],
   '/auditoria/logs':     ['Transversal', 'Bitácora'],
   '/comercial':             ['Comercial', 'Dashboard'],
@@ -124,6 +144,21 @@ function LayoutConMenu({ children }) {
   // cierra el drawer cada vez que cambia la ruta (en mobile)
   useEffect(() => { setSidebarAbierto(false); }, [location.pathname]);
 
+  // Cerrar el drawer sin navegar (overlay, botón «Cerrar menú», Escape) devuelve el foco al botón de menú
+  const cerrarMenuConFoco = useCallback(() => {
+    setSidebarAbierto(false);
+    requestAnimationFrame(() => {
+      const boton = document.querySelector('.responsive-hamburger');
+      if (boton && boton.offsetParent !== null) boton.focus();
+    });
+  }, []);
+  useEffect(() => {
+    if (!sidebarAbierto) return undefined;
+    const alTecla = (e) => { if (e.key === 'Escape') cerrarMenuConFoco(); };
+    document.addEventListener('keydown', alTecla);
+    return () => document.removeEventListener('keydown', alTecla);
+  }, [sidebarAbierto, cerrarMenuConFoco]);
+
   if (!usuario) {
     return <main className="contenido-principal">{children}</main>;
   }
@@ -136,14 +171,16 @@ function LayoutConMenu({ children }) {
           permisos={permisos}
           abierto={sidebarAbierto}
           onCerrar={() => setSidebarAbierto(false)}
+          onCerrarMenu={cerrarMenuConFoco}
         />
         <div
           className={`responsive-overlay ${sidebarAbierto ? 'is-open' : ''}`}
-          onClick={() => setSidebarAbierto(false)}
+          onClick={cerrarMenuConFoco}
         />
         <div className="app-main">
           <AppTopbar
             onMenu={() => setSidebarAbierto(true)}
+            menuAbierto={sidebarAbierto}
             breadcrumb={breadcrumbFor(location.pathname)}
           />
           <main className="app-contenido">{children}</main>
@@ -174,6 +211,16 @@ function AppRutas() {
         <Route path="/rh/vacaciones" element={<RutaProtegida><VacacionesPage /></RutaProtegida>} />
         <Route path="/rh/vacaciones/listado" element={<RutaProtegida><VacacionesListadoPage /></RutaProtegida>} />
         <Route path="/rh/calendario" element={<RutaProtegida><CalendarioLaboralPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/mi-asistencia" element={<RutaProtegida><MiAsistenciaPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/mi-equipo" element={<RutaProtegida><MiEquipoPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/turnos" element={<RutaProtegida><AsistenciaTurnosPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/asignaciones" element={<RutaProtegida><AsistenciaAsignacionesPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/marcas" element={<RutaProtegida><AsistenciaMarcasPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/sincronizacion" element={<RutaProtegida><AsistenciaSincronizacionPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/llaves" element={<RutaProtegida><AsistenciaLlavesPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/resultados" element={<RutaProtegida><AsistenciaResultadosPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/periodos" element={<RutaProtegida><AsistenciaPeriodosPage /></RutaProtegida>} />
+        <Route path="/rh/asistencia/parametros" element={<RutaProtegida><AsistenciaParametrosPage /></RutaProtegida>} />
         <Route path="/rh/puestos" element={<RutaProtegida><PuestosPage /></RutaProtegida>} />
         <Route path="/rh/departamentos" element={<RutaProtegida><DepartamentosPage /></RutaProtegida>} />
         <Route path="/rh/areas" element={<RutaProtegida><AreasPage /></RutaProtegida>} />

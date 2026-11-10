@@ -1,0 +1,61 @@
+/* «Mi asistencia» y «Mi equipo»: se apoyan en asistencia.css y asistenciaResultados.css. Diseño móvil primero: una columna,
+   objetivos táctiles >= 44 px, texto en --color-texto sobre fondos claros (contraste >= 4,5:1) y el estado nunca solo en color. */
+.asm__selector select { min-width: min(100%, 22rem); }
+.asm__enlace-vacaciones { margin: 0 0 0.75rem; }
+.asm__enlace-vacaciones a, .asm a { color: var(--color-primario); font-weight: 600; display: inline-block; min-height: 44px; line-height: 44px; }
+.asm__enlace-vacaciones a:focus-visible, .asm a:focus-visible { outline: 3px solid var(--color-acento); outline-offset: 2px; }
+.asm__pie { margin-top: 1.25rem; }
+.asm__actualizado { align-self: center; margin: 0; }
+.asm__resumen-hoy { font-weight: 700; margin: 0.4rem 0 0.6rem; }
+
+/* La cuadrícula resalta el día de hoy sin depender del color */
+.asr__celda--hoy { box-shadow: 0 0 0 3px var(--color-primario); }
+.asr__celda-hoy { font-weight: 700; }
+
+/* Panel «Hoy» */
+.asm__hoy { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: 0.6rem; }
+.asm__hoy-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0.3rem; padding: 0.7rem 0.8rem; min-width: 0;
+  background: var(--color-superficie); border: 1px solid var(--color-borde); border-radius: 0.6rem; overflow-wrap: anywhere;
+}
+.asm__nombre { font-weight: 700; }
+.asm__hoy-texto { font-size: 0.9rem; }
+
+/* Equipo: tabla en pantallas anchas, tarjetas en estrechas (solo se ve una de las dos) */
+.asm__equipo { list-style: none; margin: 0 0 1rem; padding: 0; display: none; grid-template-columns: minmax(0, 1fr); gap: 0.6rem; }
+.asm__persona { padding: 0.7rem 0.8rem; background: var(--color-superficie); border: 1px solid var(--color-borde); border-radius: 0.6rem; min-width: 0; overflow-wrap: anywhere; }
+.asm__persona p { margin: 0.25rem 0; }
+.asm__persona-resumen { font-weight: 700; }
+.asm__persona-aviso { font-weight: 700; }
+.asm__chips { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.asm__chips .asr__estatus { white-space: normal; }
+
+/* Detalle del día */
+.asm__frase { font-size: 1.02rem; line-height: 1.45; margin: 0.4rem 0; overflow-wrap: anywhere; }
+.asm__detalle h3 { margin: 0.9rem 0 0.35rem; color: var(--color-primario); }
+.asm__justificacion { background: var(--color-exito-suave); border-left: 4px solid var(--color-exito); border-radius: 0.4rem; padding: 0.1rem 0.8rem 0.5rem; margin-top: 0.8rem; }
+.asm__justificacion p { overflow-wrap: anywhere; }
+.asm__marcas { list-style: none; margin: 0.3rem 0 0.6rem; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.asm__marca { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.75rem; padding: 0.4rem 0.6rem; border: 1px solid var(--color-borde); border-radius: 0.4rem; background: var(--color-superficie); }
+.asm__marca--entrada, .asm__marca--salida { border-color: var(--color-exito); background: var(--color-exito-suave); font-weight: 700; }
+.asm__marca--comida { border-color: var(--color-advertencia); background: var(--color-advertencia-suave); }
+.asm__hora { font-size: 1.05rem; font-weight: 700; }
+.asm .asm__cerrar { min-height: 44px; }
+
+@media (max-width: 768px) {
+  .asm__tabla-ancha { display: none; }
+  .asm__equipo { display: grid; }
+}
+@media (max-width: 600px) {
+  .asm .asi__btn { width: 100%; }
+  .asm .asi__barra > .asi__campo, .asm .asm__selector select, .asm .asi__campo input[type="search"] { width: 100%; max-width: 100%; }
+  .asm .asr__atajo { flex: 1 1 100%; }
+  .asm .asi__tarjetas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Detalle a pantalla completa en el celular */
+  .asm__dialogo { max-width: 100% !important; width: 100%; height: 100%; max-height: 100% !important; border-radius: 0; }
+  .asi__overlay:has(.asm__dialogo) { padding: 0; align-items: stretch; }
+  .asm__dialogo .asi__acciones { position: sticky; bottom: 0; background: var(--color-superficie); padding: 0.5rem 0; margin-bottom: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .asm *, .asm__dialogo, .asm__dialogo * { animation: none !important; transition: none !important; }
+}

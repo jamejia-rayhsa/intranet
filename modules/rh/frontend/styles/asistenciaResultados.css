@@ -1,0 +1,92 @@
+/* Pantallas de resultados, periodos y parámetros de Asistencia. Solo variables CSS globales; el texto va en
+   --color-texto sobre fondos claros (contraste >= 4,5:1) y el estatus nunca depende solo del color. */
+.asr .asi__btn, .asr .asi__pestana { min-height: 44px; }
+.asr .asi__btn--chico { min-height: 44px; }
+.asr .asi__campo input[type="text"], .asr .asi__campo input[type="search"], .asr .asi__campo input[type="date"],
+.asr .asi__campo input[type="time"], .asr .asi__campo input[type="number"], .asr .asi__campo select, .asr .asi__campo textarea { min-height: 44px; }
+.asr .asi__campo input[type="checkbox"] { min-width: 24px; min-height: 24px; }
+.asr__etiqueta { align-self: center; margin: 0; }
+.asr__conteo { margin: 0; align-self: center; font-size: 0.9rem; }
+.asr__rango { margin: 0; }
+.asr__vivo:focus { outline: none; }
+.asr__icono { display: inline-block; min-width: 1em; text-align: center; font-weight: 700; }
+
+/* Insignias de estatus */
+.asr__estatus {
+  display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.1rem 0.55rem; border-radius: 999px;
+  font-size: 0.82rem; font-weight: 700; color: var(--color-texto); border: 1px solid var(--color-borde); white-space: nowrap;
+}
+.asr__estatus--ok { background: var(--color-exito-suave); border-color: var(--color-exito); }
+.asr__estatus--aviso { background: var(--color-advertencia-suave); border-color: var(--color-advertencia); }
+.asr__estatus--error { background: var(--color-error-suave); border-color: var(--color-error); }
+.asr__estatus--info { background: var(--color-info-suave); border-color: var(--color-info); }
+.asr__estatus--neutro { background: var(--color-superficie-alt); border-color: var(--color-secundario); }
+
+/* Tarjetas */
+.asr__tarjetas { grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); }
+.asr__tarjeta { border-left-width: 5px; }
+.asr__tarjeta dt { color: var(--color-texto); }
+.asr__tarjeta--ok { border-left-color: var(--color-exito); }
+.asr__tarjeta--aviso { border-left-color: var(--color-advertencia); }
+.asr__tarjeta--error { border-left-color: var(--color-error); }
+.asr__tarjeta--info { border-left-color: var(--color-info); }
+.asr__tarjeta--neutro { border-left-color: var(--color-secundario); }
+
+/* Atajos y tabla de empleados */
+.asr__atajo[aria-pressed="true"], .asr__atajo--activo { background: var(--color-primario); border-color: var(--color-primario); color: var(--color-superficie); font-weight: 700; }
+.asr__enlace {
+  background: none; border: 0; padding: 0; min-height: 44px; font: inherit; font-weight: 700; color: var(--color-primario);
+  text-decoration: underline; cursor: pointer; text-align: left;
+}
+.asr__enlace:focus-visible { outline: 3px solid var(--color-acento); outline-offset: 1px; }
+.asr__fila-activa th, .asr__fila-activa td { background: var(--color-info-suave); }
+.asr__num-falta { font-weight: 700; color: var(--color-error); }
+.asr__tabla th[scope="row"] { min-width: 11rem; }
+
+/* Cuadrícula de la quincena */
+.asr__cuad { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.35rem; margin-top: 0.75rem; }
+.asr__cuad-cab, .asr__cuad-fila { display: contents; }
+.asr__cuad-dia { text-align: center; font-weight: 700; font-size: 0.8rem; padding: 0.2rem 0; }
+.asr__cuad-dia--fin { color: var(--color-texto-medio); }
+.asr__celda-caja { min-width: 0; display: flex; }
+.asr__celda--vacia { min-height: 0; }
+.asr__celda {
+  flex: 1 1 auto; display: flex; flex-direction: column; gap: 0.15rem; align-items: flex-start; text-align: left;
+  min-height: 5rem; min-width: 44px; padding: 0.35rem 0.4rem; border: 2px solid var(--color-borde); border-radius: 0.5rem;
+  background: var(--color-superficie); color: var(--color-texto); font: inherit; font-size: 0.78rem; cursor: pointer;
+  overflow-wrap: anywhere; box-sizing: border-box;
+}
+.asr__celda:focus-visible { outline: 3px solid var(--color-acento); outline-offset: 2px; }
+.asr__celda--ok { background: var(--color-exito-suave); border-color: var(--color-exito); }
+.asr__celda--aviso { background: var(--color-advertencia-suave); border-color: var(--color-advertencia); }
+.asr__celda--error { background: var(--color-error-suave); border-color: var(--color-error); }
+.asr__celda--info { background: var(--color-info-suave); border-color: var(--color-info); }
+.asr__celda--neutro { background: var(--color-superficie-alt); border-color: var(--color-secundario); }
+.asr__celda--fin { border-style: dashed; }
+.asr__celda--festivo { border-width: 3px; border-style: double; }
+.asr__celda-fecha { font-weight: 700; }
+.asr__celda-semana { display: none; }
+.asr__celda-nota { font-weight: 400; display: none; }
+.asr__celda-estatus { font-weight: 600; }
+.asr__celda-min { font-size: 0.74rem; }
+
+/* Detalle del día */
+.asr__detalle section { margin-bottom: 0.5rem; }
+.asr__detalle h3 { margin: 0.9rem 0 0.35rem; color: var(--color-primario); }
+.asr__regla { font-weight: 700; margin: 0.2rem 0; overflow-wrap: anywhere; }
+.asr__marca-usada td { font-weight: 700; }
+.asr__dl { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 0.4rem 1rem; }
+.asr__dl dt { color: var(--color-texto-medio); font-size: 0.8rem; font-weight: 600; }
+.asr__dl dd { margin: 0; overflow-wrap: anywhere; }
+.asr__param { max-width: 34rem; }
+
+@media (max-width: 600px) {
+  /* Una columna: cada día en su fila; la cabecera de días sobra porque cada celda nombra su día */
+  .asr__cuad { grid-template-columns: minmax(0, 1fr); }
+  .asr__cuad-cab { display: none; }
+  .asr__celda--vacia { display: none; }
+  .asr__celda-caja:has(.asr__celda--vacia) { display: none; }
+  .asr__celda { min-height: 3.25rem; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 0.86rem; }
+  .asr__celda-semana, .asr__celda-nota { display: inline; }
+  .asr__tarjetas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

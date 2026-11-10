@@ -167,7 +167,7 @@ const Ingesta = {
   /**
    * Re-vinculación de marcas huérfanas (empleado_id NULL) cuyo codigo_empleado coincide con UN SOLO
    * numero_nomina (texto exacto) y periodo de empleo vigente en la fecha de la marca (misma regla que la ingesta). Por lotes de `limite` filas (solo se evalúan las huérfanas, que son pocas); el trigger de inmutabilidad
-   * permite el cambio porque solo toca empleado_id. La Fase 4 la ejecutará periódicamente.
+   * permite el cambio porque solo toca empleado_id. El motor de asistencia la ejecuta en cada vuelta del planificador y recibe en `afectadas` los días a recalcular.
    * Devuelve { vinculadas, pendientes } (pendientes = huérfanas que siguen sin empleado).
    */
   async vincularHuerfanas({ limite = 5000 } = {}, cliente = grupo) {
@@ -181,11 +181,12 @@ const Ingesta = {
        )
        UPDATE asistencia_marcas m SET empleado_id = c.empleado_id
        FROM elegidas c WHERE m.id = c.id AND m.empleado_id IS NULL
-       RETURNING m.id`,
+       RETURNING m.id, m.empleado_id, m.marca_ts`,
       [limite],
     );
     const pendientes = await cliente.query("SELECT COUNT(*) AS total FROM asistencia_marcas WHERE empleado_id IS NULL");
-    return { vinculadas: r.rowCount, pendientes: Number(pendientes.rows[0].total) };
+    // afectadas: [{id, empleado_id, marca_ts}] para que el motor de asistencia recalcule esos días
+    return { vinculadas: r.rowCount, pendientes: Number(pendientes.rows[0].total), afectadas: r.rows };
   },
 };
 

@@ -27,6 +27,17 @@ node scripts/asistencia/simulador-marcas.js estado
 
 Opciones útiles: `--lote N` (1..500), `--semilla N`, `--id-inicial N`, `--sin-anomalias`, `--empleados N`, `--desde AAAA-MM-DD`, `--pausa-ms N`, `--silencioso`; en `historico`, `--paralelo N` (N trabajadores envían los **mismos** lotes a la vez) y `--repetir N` (cada lote N veces seguidas); en `incremental`, `--intervalo-s N` (la interfaz real espera 900) y `--retroceso N` (por omisión 300 ids, como el contrato). `--ayuda` imprime todas.
 
+## Modo `jornadas` (jornadas realistas para validar el motor de análisis)
+
+Genera, para un rango de **códigos de empleado** (`--codigos 9001-9071`, los `numero_nomina` ficticios de la prueba) entre `--desde` y `--hasta`, las checadas de un turno de oficina 08:00-18:00 en hora de México (UTC-6), de lunes a viernes, y las envía por el endpoint REAL de ingesta:
+
+```bash
+INTRANET_API_KEY='rhk_...' node scripts/asistencia/simulador-marcas.js jornadas \
+  --codigos 9001-9071 --desde 2026-09-01 --hasta 2026-10-22 --semilla 7 --id-inicial 5000000 --fines-semana --silencioso
+```
+
+Mezcla por día y empleado (determinista con la misma semilla): puntuales (la mayoría), retardos de 11 a 30 min, llegadas de más de 30 min, faltas (sin marcas), salidas anticipadas (17:55-17:56), retardo con salida anticipada, solo entrada, solo salida, entradas duplicadas a segundos, marcas de la comida, entrada antes de la ventana, y casos en el borde (08:00:xx/18:00:xx, 08:10:xx, 08:11:00, 08:30:xx). Con `--fines-semana` añade trabajo ocasional en sábado. Úsalo con `scripts/asistencia/verificar-motor.js`, que lo compara con un oráculo independiente (ver `motor-analisis.md`).
+
 ## Qué genera
 
 La misma semilla y los mismos ids producen las mismas marcas, así que repetir una corrida debe devolver todo como `duplicadas` (prueba de idempotencia). Los **ids** dependen solo de `--id-inicial` (por omisión 1000000) y de la posición; la semilla cambia el contenido de las marcas, no sus ids: para generar marcas nuevas en una base que ya recibió otras, usa otro `--id-inicial`. Los ids crecen **con huecos**, igual que `iclock_transaction`, y se mezclan:

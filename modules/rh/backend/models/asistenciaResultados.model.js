@@ -1,0 +1,480 @@
+// Lecturas y escrituras de la API del motor de asistencia (resultados por día, resumen, periodos, ajustes
+// pendientes, incidencias de RH). El cálculo vive en services/asistencia/; aquí solo hay consultas acotadas.
+const { grupo } = require("../../../portal/backend/config/database");
+const { clasificarMarcas } = require("../services/asistencia/motor");
+
+const ESTATUS = [
+  "puntual", "retardo", "falta", "salida_anticipada", "incompleta", "vacaciones", "permiso", "descanso", "festivo",
+  "justificada", "sin_turno", "pendiente",
+];
+const ESTATUS_JUSTIFICABLES = ["falta", "retardo", "salida_anticipada", "incompleta"];
+
+// COUNT(*) OVER() trae el total en cada fila: se separa de los datos
+const sinTotal = (fila) => {
+  const copia = { ...fila };
+  delete copia.total;
+  return copia;
+};
+
+// Campos internos que solo necesita RH (ids de otras tablas, versión del cálculo, marcas usadas): quien consulta lo
+// propio o a su equipo no los recibe
+const CAMPOS_INTERNOS_DIA = ["id", "turno_id", "departamento_id", "periodo_id", "marcas_usadas", "version_calculo"];
+const sinInternos = (fila, campos) => {
+  const copia = { ...fila };
+  for (const c of campos) delete copia[c];
+  return copia;
+};
+
+// Subordinado VIGENTE para el alcance de un jefe: activo, o dado de baja con fecha de baja dentro del rango consultado
+// (`$param` = inicio del rango). Un suspendido NO cuenta: es el mismo criterio de «activo» en todas las consultas.
+const subordinadoVigente = (alias, param) =>
+  `(${alias}.estatus = 'activo' OR (${alias}.estatus = 'baja' AND ${alias}.fecha_baja IS NOT NULL AND ${alias}.fecha_baja >= ${param}::date))`;
+
+// Campos de las filas de /resultados que recibe quien no es RH (lista blanca: un campo nuevo del motor no sale solo)
+const CAMPOS_LISTA_PUBLICOS = [
+  "empleado_id", "nombre", "apellido_paterno", "apellido_materno", "numero_nomina", "fecha", "estatus", "minutos_retardo",
+  "minutos_salida_anticipada", "periodo_estado",
+];
+const CAMPOS_PERIODO_PUBLICOS = ["fecha_inicio", "fecha_fin", "estado"];
+const pick = (obj, campos) => {
+  const r = {};
+  for (const c of campos) if (obj && obj[c] !== undefined) r[c] = obj[c];
+  return r;
+};
+
+const LIMITE_MARCAS_DIA = 100;
+const NOMBRE_EMPLEADO = `e.nombre, e.apellido_paterno, e.apellido_materno, e.numero_nomina`;
+
+const AsistenciaResultados = {
+  ESTATUS,
+  ESTATUS_JUSTIFICABLES,
+
+  /**
+   * Empleado propio y sus subordinados DIRECTOS (jefe inmediato vigente): ids visibles para quien no es RH.
+   * Un subordinado dado de baja solo se lista si su baja no es anterior al rango consultado; un suspendido no se lista.
+   * Quien llama debe haber comprobado que el empleado propio está ACTIVO.
+   */
+  async idsVisibles(empleadoPropioId, desde, cliente = grupo) {
+    const r = await cliente.query(
+      `SELECT id FROM empleados
+       WHERE jefe_inmediato_id = $1 AND id <> $1
+         AND ${subordinadoVigente("empleados", "$2")}
+       ORDER BY id`,
+      [empleadoPropioId, desde],
+    );
+    return [empleadoPropioId, ...r.rows.map((f) => f.id)];
+  },
+
+  /** ids: null = todos (RH). `esRH` = false (por omisión) quita los ids internos. Devuelve { filas, total }. */
+  async listarResultados({ ids, desde, hasta, limite, offset, esRH = false }, cliente = grupo) {
+    const r = await cliente.query(
+      `SELECT d.id, d.empleado_id, ${NOMBRE_EMPLEADO}, to_char(d.fecha, 'YYYY-MM-DD') AS fecha, d.estatus,
+              d.minutos_retardo, d.minutos_salida_anticipada, d.primera_marca, d.ultima_marca,
+              d.turno_id, d.turno_nombre, d.origen_turno, d.departamento_id,
+              to_char(d.entrada_programada, 'HH24:MI') AS entrada_programada,
+              to_char(d.salida_programada, 'HH24:MI') AS salida_programada,
+              d.periodo_id, p.estado AS periodo_estado, d.marcas_usadas, d.detalle, d.version_calculo, d.calculado_en,
+              COUNT(*) OVER() AS total
+       FROM asistencia_diaria d
+       JOIN empleados e ON e.id = d.empleado_id
+       LEFT JOIN asistencia_periodos p ON p.id = d.periodo_id
+       WHERE d.fecha BETWEEN $2::date AND $3::date AND ($1::int[] IS NULL OR d.empleado_id = ANY($1::int[]))
+       ORDER BY d.fecha, e.apellido_paterno, e.nombre, d.empleado_id
+       LIMIT $4 OFFSET $5`,
+      [ids, desde, hasta, limite, offset],
+    );
+    const filas = r.rows.map(sinTotal);
+    return { filas: esRH ? filas : filas.map((f) => pick(f, CAMPOS_LISTA_PUBLICOS)), total: r.rows[0] ? Number(r.rows[0].total) : 0 };
+  },
+
+  /**
+   * Días de un conjunto de empleados para exportar, paginados POR CLAVE (id ascendente): sin OFFSET, estables aunque el
+   * motor recalcule durante la exportación. `total` solo se calcula en la primera página (sin `despuesId`).
+   */
+  async listarDiasPorClave({ ids, desde, hasta, despuesId, limite }, cliente = grupo) {
+    const r = await cliente.query(
+      `SELECT d.id, d.empleado_id, ${NOMBRE_EMPLEADO}, to_char(d.fecha, 'YYYY-MM-DD') AS fecha, d.estatus,
+              d.minutos_retardo, d.minutos_salida_anticipada, d.primera_marca, d.ultima_marca, d.turno_nombre, d.periodo_id,
+              p.estado AS periodo_estado, d.detalle
+       FROM asistencia_diaria d
+       JOIN empleados e ON e.id = d.empleado_id
+       LEFT JOIN asistencia_periodos p ON p.id = d.periodo_id
+       WHERE d.fecha BETWEEN $2::date AND $3::date AND d.empleado_id = ANY($1::int[]) AND d.id > $4::int
+       ORDER BY d.id LIMIT $5`,
+      [ids, desde, hasta, despuesId || 0, limite],
+    );
+    let total = null;
+    if (!despuesId) {
+      const c = await cliente.query(
+        `SELECT COUNT(*)::int AS total FROM asistencia_diaria d WHERE d.fecha BETWEEN $2::date AND $3::date AND d.empleado_id = ANY($1::int[])`,
+        [ids, desde, hasta],
+      );
+      total = c.rows[0] ? c.rows[0].total : 0;
+    }
+    return { filas: r.rows, total, siguiente: r.rows.length === limite ? r.rows[r.rows.length - 1].id : null };
+  },
+
+  /** Conteos por empleado y estatus */
+  async resumen({ ids, departamentoId, desde, hasta, limite, offset, esRH = false }, cliente = grupo) {
+    const conteos = ESTATUS.map((s) => `COUNT(*) FILTER (WHERE d.estatus = '${s}')::int AS ${s}`).join(", ");
+    const r = await cliente.query(
+      `SELECT d.empleado_id, ${NOMBRE_EMPLEADO}, e.departamento_id, dep.nombre AS departamento, ${conteos},
+              COUNT(*) FILTER (WHERE d.primera_marca IS NOT NULL)::int AS dias_con_marcas,
+              COUNT(*) FILTER (WHERE d.estatus = 'falta' AND d.primera_marca IS NOT NULL)::int AS faltas_con_marcas,
+              COUNT(*) FILTER (WHERE d.estatus = 'incompleta' AND d.detalle->'banderas' @> '"ultima_marca_en_comida"'::jsonb)::int AS incompletas_comida,
+              COUNT(*)::int AS dias, COALESCE(SUM(d.minutos_retardo) FILTER (WHERE d.estatus IN ('retardo', 'justificada')), 0)::int AS minutos_retardo,
+              COALESCE(SUM(d.minutos_salida_anticipada), 0)::int AS minutos_salida_anticipada,
+              COUNT(*) OVER() AS total
+       FROM asistencia_diaria d
+       JOIN empleados e ON e.id = d.empleado_id
+       LEFT JOIN departamentos dep ON dep.id = e.departamento_id
+       WHERE d.fecha BETWEEN $2::date AND $3::date
+         AND ($1::int[] IS NULL OR d.empleado_id = ANY($1::int[]))
+         AND ($4::int IS NULL OR e.departamento_id = $4::int)
+       GROUP BY d.empleado_id, e.id, dep.id
+       ORDER BY e.apellido_paterno, e.nombre, d.empleado_id
+       LIMIT $5 OFFSET $6`,
+      [ids, desde, hasta, departamentoId || null, limite, offset],
+    );
+    const filas = r.rows.map(sinTotal);
+    return { filas: esRH ? filas : filas.map((f) => sinInternos(f, ["departamento_id"])), total: r.rows[0] ? Number(r.rows[0].total) : 0 };
+  },
+
+  /** esRH = false oculta los datos de gestión (quién cerró o reabrió, motivo, conteos globales) */
+  async listarPeriodos({ estado, limite, offset, esRH = false }, cliente = grupo) {
+    const r = await cliente.query(
+      `SELECT p.id, to_char(p.fecha_inicio, 'YYYY-MM-DD') AS fecha_inicio, to_char(p.fecha_fin, 'YYYY-MM-DD') AS fecha_fin,
+              p.estado, p.cerrado_en, p.cerrado_por, p.tipo_cierre, p.reabierto_en, p.reabierto_por, p.reabierto_motivo,
+              p.veces_reabierto, p.no_cerrar_automatico,
+              NULLIF(concat_ws(' ', uc.nombre, uc.apellido), '') AS cerrado_por_nombre,
+              NULLIF(concat_ws(' ', ur.nombre, ur.apellido), '') AS reabierto_por_nombre,
+              (SELECT COUNT(*)::int FROM asistencia_diaria x WHERE x.periodo_id = p.id AND x.estatus = 'pendiente') AS dias_pendientes,
+              (SELECT COUNT(*)::int FROM asistencia_ajustes_pendientes a WHERE a.periodo_id = p.id AND a.resuelto_en IS NULL) AS ajustes_pendientes,
+              COUNT(*) OVER() AS total
+       FROM asistencia_periodos p
+       LEFT JOIN usuarios uc ON uc.id = p.cerrado_por
+       LEFT JOIN usuarios ur ON ur.id = p.reabierto_por
+       WHERE ($1::text IS NULL OR p.estado = $1::text)
+       ORDER BY p.fecha_inicio DESC LIMIT $2 OFFSET $3`,
+      [estado || null, limite, offset],
+    );
+    const filas = r.rows.map(sinTotal).map((f) => {
+      if (esRH) return f;
+      // Solo fechas y estado: sin id, ni quién cerró o reabrió, ni el motivo, ni conteos (días pendientes y ajustes cuentan a
+      // TODOS los empleados: serían datos de otras personas)
+      return pick(f, CAMPOS_PERIODO_PUBLICOS);
+    });
+    return { filas, total: r.rows[0] ? Number(r.rows[0].total) : 0 };
+  },
+
+  /** Empleados que el motor NO analiza: sin número de nómina o con una nómina compartida en el mismo periodo */
+  async sinIdentificador({ analisisDesde, limite, offset }, cliente = grupo) {
+    const r = await cliente.query(
+      `SELECT e.id, ${NOMBRE_EMPLEADO}, e.estatus, e.departamento_id,
+              to_char(e.fecha_ingreso, 'YYYY-MM-DD') AS fecha_ingreso, to_char(e.fecha_baja, 'YYYY-MM-DD') AS fecha_baja,
+              CASE WHEN e.numero_nomina IS NULL OR btrim(e.numero_nomina) = '' THEN 'sin_numero_nomina' ELSE 'nomina_duplicada' END AS motivo,
+              COUNT(*) OVER() AS total
+       FROM empleados e
+       WHERE (e.fecha_baja IS NULL OR e.fecha_baja >= $1::date)
+         AND (e.estatus IS DISTINCT FROM 'baja' OR e.fecha_baja IS NOT NULL)
+         AND (e.numero_nomina IS NULL OR btrim(e.numero_nomina) = '' OR EXISTS (
+               SELECT 1 FROM empleados o
+               WHERE o.id <> e.id AND o.numero_nomina = e.numero_nomina
+                 AND daterange(COALESCE(o.fecha_ingreso, '-infinity'::date), COALESCE(o.fecha_baja, 'infinity'::date), '[]')
+                  && daterange(COALESCE(e.fecha_ingreso, '-infinity'::date), COALESCE(e.fecha_baja, 'infinity'::date), '[]')))
+       ORDER BY e.apellido_paterno, e.nombre, e.id LIMIT $2 OFFSET $3`,
+      [analisisDesde, limite, offset],
+    );
+    return { filas: r.rows.map(sinTotal), total: r.rows[0] ? Number(r.rows[0].total) : 0 };
+  },
+
+  async listarAjustes({ resueltos, limite, offset }, cliente = grupo) {
+    const r = await cliente.query(
+      `SELECT a.id, a.empleado_id, ${NOMBRE_EMPLEADO}, to_char(a.fecha, 'YYYY-MM-DD') AS fecha, a.periodo_id, a.marca_id,
+              a.motivo, a.detectado_en, a.resuelto_en, a.resuelto_por, a.nota_resolucion, COUNT(*) OVER() AS total
+       FROM asistencia_ajustes_pendientes a JOIN empleados e ON e.id = a.empleado_id
+       WHERE ($1::boolean IS TRUE AND a.resuelto_en IS NOT NULL) OR ($1::boolean IS NOT TRUE AND a.resuelto_en IS NULL)
+       ORDER BY a.detectado_en DESC, a.id DESC LIMIT $2 OFFSET $3`,
+      [resueltos === true, limite, offset],
+    );
+    return { filas: r.rows.map(sinTotal), total: r.rows[0] ? Number(r.rows[0].total) : 0 };
+  },
+
+  async obtenerAjuste(id, cliente = grupo) {
+    const r = await cliente.query(
+      `SELECT id, empleado_id, to_char(fecha, 'YYYY-MM-DD') AS fecha, periodo_id, marca_id, motivo, resuelto_en FROM asistencia_ajustes_pendientes WHERE id = $1`,
+      [id],
+    );
+    return r.rows[0] || null;
+  },
+
+  /** null si ya estaba resuelto o no existe */
+  async resolverAjuste(id, usuarioId, nota, cliente = grupo) {
+    const r = await cliente.query(
+      `UPDATE asistencia_ajustes_pendientes SET resuelto_en = NOW(), resuelto_por = $2, nota_resolucion = $3
+       WHERE id = $1 AND resuelto_en IS NULL
+       RETURNING id, empleado_id, to_char(fecha, 'YYYY-MM-DD') AS fecha, periodo_id, marca_id, motivo, resuelto_en, resuelto_por, nota_resolucion`,
+      [id, usuarioId || null, nota || null],
+    );
+    return r.rows[0] || null;
+  },
+
+  /**
+   * Justificación de RH sobre un día calculado. Todo en una transacción con el periodo bloqueado FOR SHARE: no se
+   * puede cerrar mientras se inserta. Devuelve { codigo } si no procede.
+   */
+  async justificarDia({ empleadoId, fecha, motivo, usuarioId }) {
+    const cliente = await grupo.connect();
+    let errorRollback;
+    try {
+      await cliente.query("BEGIN");
+      const dia = await cliente.query(
+        `SELECT d.id, d.estatus, d.periodo_id FROM asistencia_diaria d WHERE d.empleado_id = $1 AND d.fecha = $2::date`,
+        [empleadoId, fecha],
+      );
+      if (!dia.rows[0]) {
+        await cliente.query("ROLLBACK");
+        return { codigo: "sin_resultado" };
+      }
+      const periodo = await cliente.query("SELECT id, estado FROM asistencia_periodos WHERE id = $1 FOR SHARE", [dia.rows[0].periodo_id]);
+      if (!periodo.rows[0] || periodo.rows[0].estado !== "abierto") {
+        await cliente.query("ROLLBACK");
+        return { codigo: "periodo_cerrado", periodo_id: dia.rows[0].periodo_id };
+      }
+      if (dia.rows[0].estatus === "justificada") {
+        await cliente.query("ROLLBACK");
+        return { codigo: "ya_justificada" };
+      }
+      if (!ESTATUS_JUSTIFICABLES.includes(dia.rows[0].estatus)) {
+        await cliente.query("ROLLBACK");
+        return { codigo: "no_justificable", estatus: dia.rows[0].estatus };
+      }
+      const previa = await cliente.query(
+        `SELECT id FROM asistencia_incidencias WHERE empleado_id = $1 AND fecha = $2::date AND activa AND tipo = 'justificacion'`,
+        [empleadoId, fecha],
+      );
+      if (previa.rows[0]) {
+        await cliente.query("ROLLBACK");
+        return { codigo: "ya_justificada" };
+      }
+      const r = await cliente.query(
+        `INSERT INTO asistencia_incidencias (empleado_id, fecha, tipo, motivo, creado_por)
+         VALUES ($1, $2::date, 'justificacion', $3, $4)
+         RETURNING id, empleado_id, to_char(fecha, 'YYYY-MM-DD') AS fecha, tipo, motivo, activa, creado_por, fecha_creacion`,
+        [empleadoId, fecha, motivo, usuarioId || null],
+      );
+      await cliente.query("COMMIT");
+      return { codigo: "ok", incidencia: r.rows[0], estatus_previo: dia.rows[0].estatus };
+    } catch (error) {
+      await cliente.query("ROLLBACK").catch((e) => {
+        errorRollback = e;
+      });
+      // dos justificaciones simultáneas del mismo día: gana una (índice único parcial)
+      if (error && error.code === "23505") return { codigo: "ya_justificada" };
+      throw error;
+    } finally {
+      cliente.release(errorRollback);
+    }
+  },
+
+  /** Anula (activa=false) una justificación; solo si el día pertenece a un periodo abierto */
+  async anularIncidencia({ id }) {
+    const cliente = await grupo.connect();
+    let errorRollback;
+    try {
+      await cliente.query("BEGIN");
+      const inc = await cliente.query(
+        `SELECT i.id, i.empleado_id, to_char(i.fecha, 'YYYY-MM-DD') AS fecha, i.tipo, i.activa FROM asistencia_incidencias i WHERE i.id = $1 FOR UPDATE`,
+        [id],
+      );
+      if (!inc.rows[0]) {
+        await cliente.query("ROLLBACK");
+        return { codigo: "no_existe" };
+      }
+      if (!inc.rows[0].activa) {
+        await cliente.query("ROLLBACK");
+        return { codigo: "ya_anulada" };
+      }
+      const periodo = await cliente.query(
+        `SELECT id, estado FROM asistencia_periodos WHERE $1::date BETWEEN fecha_inicio AND fecha_fin FOR SHARE`,
+        [inc.rows[0].fecha],
+      );
+      if (periodo.rows[0] && periodo.rows[0].estado !== "abierto") {
+        await cliente.query("ROLLBACK");
+        return { codigo: "periodo_cerrado", periodo_id: periodo.rows[0].id };
+      }
+      await cliente.query("UPDATE asistencia_incidencias SET activa = false, fecha_actualizacion = NOW() WHERE id = $1", [id]);
+      await cliente.query("COMMIT");
+      return { codigo: "ok", incidencia: inc.rows[0] };
+    } catch (error) {
+      await cliente.query("ROLLBACK").catch((e) => {
+        errorRollback = e;
+      });
+      throw error;
+    } finally {
+      cliente.release(errorRollback);
+    }
+  },
+
+  async obtenerDia(empleadoId, fecha, cliente = grupo) {
+    const r = await cliente.query(
+      `SELECT d.empleado_id, to_char(d.fecha, 'YYYY-MM-DD') AS fecha, d.estatus, d.minutos_retardo, d.minutos_salida_anticipada,
+              d.periodo_id, d.incidencia_id, d.detalle
+       FROM asistencia_diaria d WHERE d.empleado_id = $1 AND d.fecha = $2::date`,
+      [empleadoId, fecha],
+    );
+    return r.rows[0] || null;
+  },
+
+  /**
+   * Detalle de UN día: fila calculada con el snapshot del turno, las marcas del día local de México (más el día
+   * siguiente si el turno cruza la medianoche), los cruces (vacaciones, permiso, festivo, justificación) y el estado
+   * del periodo. null si el día no tiene resultado. `vista` decide qué se entrega (por omisión la más restringida):
+   *   'rh'     todo (ids, terminal, quién justificó);
+   *   'propio' el empleado ve lo suyo: sin ids ni terminal ni quién justificó, con el tipo de su permiso y su comida completa;
+   *   'equipo' el jefe ve lo de su subordinado: además sin el tipo de permiso, sin horas ni exceso de comida y sin última marca.
+   */
+  async detalleDia({ empleadoId, fecha, vista = "equipo" }, cliente = grupo) {
+    const esRH = vista === "rh";
+    const d = await cliente.query(
+      `SELECT d.id, d.empleado_id, to_char(d.fecha, 'YYYY-MM-DD') AS fecha, d.estatus, d.minutos_retardo, d.minutos_salida_anticipada,
+              d.primera_marca, d.ultima_marca, d.turno_id, d.turno_nombre, d.origen_turno, d.departamento_id,
+              to_char(d.entrada_programada, 'HH24:MI') AS entrada_programada, to_char(d.salida_programada, 'HH24:MI') AS salida_programada,
+              d.cruza_medianoche, d.tolerancia_retardo_min, d.tolerancia_salida_min, d.umbral_falta_min,
+              d.ventana_entrada_antes_min, d.ventana_entrada_despues_min, d.ventana_salida_antes_min, d.ventana_salida_despues_min,
+              to_char(d.descanso_inicio, 'HH24:MI') AS descanso_inicio, d.descanso_min,
+              d.periodo_id, d.marcas_usadas, d.detalle, d.version_calculo, d.calculado_en,
+              d.solicitud_vacaciones_id, d.permiso_id, d.calendario_id, d.incidencia_id,
+              p.estado AS periodo_estado, to_char(p.fecha_inicio, 'YYYY-MM-DD') AS periodo_inicio, to_char(p.fecha_fin, 'YYYY-MM-DD') AS periodo_fin,
+              ${NOMBRE_EMPLEADO}, e.departamento_id AS departamento_actual_id, dep.nombre AS departamento
+       FROM asistencia_diaria d
+       JOIN empleados e ON e.id = d.empleado_id
+       LEFT JOIN departamentos dep ON dep.id = e.departamento_id
+       LEFT JOIN asistencia_periodos p ON p.id = d.periodo_id
+       WHERE d.empleado_id = $1 AND d.fecha = $2::date`,
+      [empleadoId, fecha],
+    );
+    const dia = d.rows[0];
+    if (!dia) return null;
+    const dias = dia.cruza_medianoche ? 2 : 1;
+    const [marcas, vac, per, fes, inc] = await Promise.all([
+      cliente.query(
+        `SELECT m.id, m.marca_ts, m.terminal_alias${esRH ? ", m.terminal_sn" : ""}
+         FROM asistencia_marcas m
+         WHERE m.empleado_id = $1
+           AND m.marca_ts >= ($2::date::timestamp AT TIME ZONE 'America/Mexico_City')
+           AND m.marca_ts < (($2::date + $3::int)::timestamp AT TIME ZONE 'America/Mexico_City')
+         ORDER BY m.marca_ts, m.id LIMIT ${LIMITE_MARCAS_DIA + 1}`,
+        [empleadoId, fecha, dias],
+      ),
+      dia.solicitud_vacaciones_id
+        ? cliente.query(
+            `SELECT id, to_char(fecha_inicial, 'YYYY-MM-DD') AS fecha_inicial, to_char(fecha_final, 'YYYY-MM-DD') AS fecha_final, estatus
+             FROM solicitudes_vacaciones WHERE id = $1`,
+            [dia.solicitud_vacaciones_id],
+          )
+        : { rows: [] },
+      dia.permiso_id
+        ? cliente.query(
+            `SELECT id, tipo, to_char(fecha_inicio, 'YYYY-MM-DD') AS fecha_inicio, to_char(fecha_fin, 'YYYY-MM-DD') AS fecha_fin, estatus
+             FROM permisos_ausencia WHERE id = $1`,
+            [dia.permiso_id],
+          )
+        : { rows: [] },
+      dia.calendario_id
+        ? cliente.query(`SELECT id, nombre, tipo FROM calendario_laboral WHERE id = $1`, [dia.calendario_id])
+        : { rows: [] },
+      cliente.query(
+        `SELECT i.id, i.motivo, i.activa, i.fecha_creacion, ${esRH ? "NULLIF(concat_ws(' ', u.nombre, u.apellido), '')" : "NULL::text"} AS creado_por_nombre
+         FROM asistencia_incidencias i LEFT JOIN usuarios u ON u.id = i.creado_por
+         WHERE i.empleado_id = $1 AND i.fecha = $2::date AND i.tipo = 'justificacion' AND i.activa
+         ORDER BY i.id DESC LIMIT 1`,
+        [empleadoId, fecha],
+      ),
+    ]);
+    const truncadas = marcas.rows.length > LIMITE_MARCAS_DIA;
+    const lista = marcas.rows.slice(0, LIMITE_MARCAS_DIA);
+    // El rol de cada marca lo calcula el MISMO código del motor (duplicados y ventana de comida guardada en el día)
+    const roles = clasificarMarcas({
+      fecha: dia.fecha,
+      marcas: lista.map((m) => ({ id: m.id, ts: m.marca_ts })),
+      marcasUsadas: dia.marcas_usadas,
+      banderas: (dia.detalle && dia.detalle.banderas) || [],
+      comida: (dia.detalle && dia.detalle.comida) || null,
+      cruza: Boolean(dia.cruza_medianoche),
+    });
+    const fila = sinInternos(dia, ["solicitud_vacaciones_id", "permiso_id", "calendario_id", "incidencia_id", "departamento_actual_id"]);
+    const conRol = lista.map((m) => ({ ...m, rol: roles[String(m.id)] || "otra" }));
+    const cruces = {
+      vacaciones: vac.rows[0] || null,
+      permiso: per.rows[0] || null,
+      festivo: fes.rows[0] || null,
+      justificacion: inc.rows[0] || null,
+    };
+    if (esRH) return { dia: fila, marcas: conRol, marcas_truncadas: truncadas, cruces };
+
+    // Quien consulta lo propio o a su equipo: lista blanca del detalle del motor (un campo nuevo no sale solo), sin ids
+    // internos (del día, del turno, de las marcas, de los cruces) y sin la terminal. El motivo de la justificación SÍ se
+    // entrega (decisión del humano); quién la hizo no (la consulta ya lo devuelve nulo).
+    const propio = vista === "propio";
+    const det = dia.detalle || {};
+    const detalle = pick(det, ["banderas", "minutos_tarde", "minutos_antes_salida", "calculo_original", "calculo_provisional", "dia_completo"]);
+    if (det.comida) detalle.comida = pick(det.comida, ["desde", "hasta", "marcas"]);
+    if (propio) {
+      Object.assign(detalle, pick(det, ["minutos_comida", "exceso_comida_min"]));
+    } else {
+      // El jefe no ve cuánto duró la comida ni su exceso (solo cuántas marcas hubo)
+      detalle.banderas = (detalle.banderas || []).filter((b) => b !== "exceso_comida");
+    }
+    const sinId = (x) => (x ? sinInternos(x, ["id"]) : null);
+    const permiso = sinId(cruces.permiso);
+    if (permiso && !propio) delete permiso.tipo; // el tipo (p. ej. incapacidad) solo lo ve el propio empleado y RH
+    const visibles = propio ? conRol : conRol.filter((m) => m.rol !== "comida");
+    const publica = { ...sinInternos(fila, [...CAMPOS_INTERNOS_DIA, "calculado_en"]), detalle };
+    if (!propio) delete publica.ultima_marca; // puede ser una marca de comida
+    return {
+      dia: publica,
+      marcas: visibles.map((m) => ({ marca_ts: m.marca_ts, rol: m.rol })),
+      marcas_truncadas: truncadas,
+      ...(propio ? {} : { comida_marcas: conRol.length - visibles.length }),
+      cruces: { vacaciones: sinId(cruces.vacaciones), permiso, festivo: sinId(cruces.festivo), justificacion: sinId(cruces.justificacion) },
+    };
+  },
+
+  /** Bitácora de las últimas ejecuciones del motor (sin datos personales; el error ya es genérico: código o tipo) */
+  async listarEjecuciones({ limite }, cliente = grupo) {
+    const r = await cliente.query(
+      `SELECT id, tipo, origen, estado, inicio, fin, to_char(desde, 'YYYY-MM-DD') AS desde, to_char(hasta, 'YYYY-MM-DD') AS hasta,
+              empleados_evaluados, dias_evaluados, dias_modificados, marcas_vinculadas, periodos_cerrados, ajustes_nuevos,
+              LEFT(error, 120) AS error
+       FROM asistencia_ejecuciones ORDER BY inicio DESC, id DESC LIMIT $1`,
+      [limite],
+    );
+    return r.rows;
+  },
+
+  /**
+   * Contadores FRESCOS que se muestran al cerrar una quincena y que el servidor vuelve a comparar al cerrar:
+   * días pendientes de calificar, ajustes sin resolver y empleados sin identificador. null si el periodo no existe.
+   */
+  async contadoresCierre(periodoId, analisisDesde, cliente = grupo) {
+    const p = await cliente.query(
+      `SELECT p.estado,
+              (SELECT COUNT(*)::int FROM asistencia_diaria d WHERE d.periodo_id = p.id AND d.estatus = 'pendiente') AS dias_pendientes,
+              (SELECT COUNT(*)::int FROM asistencia_ajustes_pendientes a WHERE a.periodo_id = p.id AND a.resuelto_en IS NULL) AS ajustes_pendientes
+       FROM asistencia_periodos p WHERE p.id = $1`,
+      [periodoId],
+    );
+    if (!p.rows[0]) return null;
+    const sin = await AsistenciaResultados.sinIdentificador({ analisisDesde, limite: 1, offset: 0 }, cliente);
+    return { estado: p.rows[0].estado, dias_pendientes: p.rows[0].dias_pendientes, ajustes_pendientes: p.rows[0].ajustes_pendientes, sin_identificador: sin.total };
+  },
+
+  async empleadoExiste(id, cliente = grupo) {
+    const r = await cliente.query("SELECT id FROM empleados WHERE id = $1", [id]);
+    return Boolean(r.rows[0]);
+  },
+};
+
+module.exports = AsistenciaResultados;
+module.exports.subordinadoVigente = subordinadoVigente;

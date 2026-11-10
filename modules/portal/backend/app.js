@@ -3,6 +3,7 @@ const cors = require("cors");
 const { probarConexion } = require("./config/database");
 const Storage = require("./services/storage.service");
 const { manejadorErrores } = require("./middleware/errores.middleware");
+const { iniciarPlanificadorAsistencia } = require("../../rh/backend/services/asistencia/planificador");
 const { leerTrustProxy } = require("../../rh/backend/utils/trustProxy");
 const {
   resolverConfigIngesta,
@@ -45,6 +46,9 @@ app.use(cors());
 // la puerta dedicada (ver rh/backend/servidorIngesta.js y docs/asistencia/operacion-ingesta.md).
 montarIngestaEnPrincipal(app, configIngesta);
 
+// 'Importar usuarios': hasta 200 filas (el tope de archivo es 1 MB); el parser global (100 kb) cortaría un archivo grande. Va ANTES
+// del parser global; un cuerpo mayor responde 413 en JSON por el manejador de errores
+app.use("/api/usuarios/importar", express.json({ limit: "1mb" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -176,6 +180,14 @@ async function iniciar() {
     recordatorioMs: Number(process.env.INGESTA_RECORDATORIO_MS) || 5 * 60 * 1000,
   });
 
+  // Motor de análisis de asistencia: solo con ASISTENCIA_MOTOR_ACTIVO=true; un fallo al arrancarlo no tumba el portal
+  let planificadorAsistencia = { detener: async () => {} };
+  try {
+    planificadorAsistencia = iniciarPlanificadorAsistencia({ env: process.env });
+  } catch (error) {
+    console.error(`[Asistencia] no se pudo iniciar el planificador del motor (${(error && (error.code || error.name)) || "Error"})`);
+  }
+
   // Cierre ordenado de ambos servidores
   let cerrando = false;
   const apagar = async (senal) => {
@@ -183,6 +195,7 @@ async function iniciar() {
     cerrando = true;
     console.log(`${senal} recibida: cerrando servidores`);
     puerta.detener();
+    await planificadorAsistencia.detener().catch(() => {});
     await cerrarTodos([principal, puerta.servidor()]);
     process.exit(0);
   };

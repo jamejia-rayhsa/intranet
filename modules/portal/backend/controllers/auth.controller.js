@@ -71,6 +71,14 @@ const ControladorAuth = {
           .json({ exito: false, mensaje: "Usuario no encontrado" });
       }
 
+      // Una cuenta Microsoft (ms365) no tiene contraseña local: ponerle una abriría una segunda puerta de entrada
+      if (usuario.auth_tipo !== "local") {
+        return res.status(400).json({
+          exito: false,
+          mensaje: "Las cuentas de Microsoft no tienen contraseña local: inician sesión con Microsoft",
+        });
+      }
+
       if (!usuario.auth_uid) {
         return res.status(409).json({
           exito: false,

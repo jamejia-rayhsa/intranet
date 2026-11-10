@@ -51,6 +51,8 @@ FROM nginx:alpine AS production
 
 COPY --from=builder /app/modules/portal/frontend/dist /usr/share/nginx/html
 COPY config/nginx/nginx.spa.conf /etc/nginx/conf.d/default.conf
+# Lista blanca de GoTrue (map de contexto http; conf.d se incluye dentro de http)
+COPY config/nginx/auth-v1-allowlist.conf /etc/nginx/conf.d/00-auth-v1-allowlist.conf
 # Genera /config.js (anon key, URL, flag de Microsoft) al ARRANCAR: una imagen para todos los entornos
 COPY config/nginx/40-config-js.sh /docker-entrypoint.d/40-config-js.sh
 RUN chmod +x /docker-entrypoint.d/40-config-js.sh
