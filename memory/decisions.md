@@ -1510,4 +1510,4 @@ Al desactivar (o registrar inactiva/sábado/domingo/sobre festivo) una actividad
 - No se probó aún con un usuario real por HTTP (sesión + permisos reales) ni en el navegador — solo con pruebas unitarias con mocks y, para la lógica central, directo contra Postgres real en el stack aislado `convenios-test` (sin pasar por HTTP/auth).
 - No se corrió revisor ni tester como agentes separados en esta ronda (se hizo todo en esta misma sesión); el autocontrol fue: pruebas + lint + verificación manual contra Postgres real, que sí encontró y corrigió 1 bug real.
 
-**Puerta:** GO del humano para desplegar (commit/push/PR/staging) — todavía no se ha pedido.
+**Puerta:** ~~GO del humano para desplegar (commit/push/PR/staging) — todavía no se ha pedido.~~ **GO dado (2026-11-10): "realiza el Push/PR/Despliegue dela fase y empieza la fase 5"** — push hecho, PR #29 abierta hacia `main`.
