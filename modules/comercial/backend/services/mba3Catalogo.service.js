@@ -19,7 +19,7 @@ const TTL_MS = {
   vendedor: 60 * 60 * 1000, // 1 h — catálogo de vendedores cambia poco
   vendedor_listado: 60 * 60 * 1000,
   producto: 30 * 60 * 1000, // 30 min
-  producto_listado: 30 * 60 * 1000,
+  producto_nombre: 30 * 60 * 1000, // búsqueda por nombre (sustituye a producto_listado, que no existe)
   clientes_vendedor: 15 * 60 * 1000,
   existencias_ventas: 5 * 60 * 1000, // más volátil: pensado para el dashboard de la Fase 5
 };
@@ -90,16 +90,22 @@ async function buscarVendedores() {
   });
 }
 
+// A diferencia de vendedores/clientes, MBA3 no tiene un endpoint de "listar todos los productos"
+// (confirmado 2026-11-10, ver mba3Lectura.service.js) — por eso ya no hay rama de "catálogo
+// completo" aquí. `buscarProductos(codigo)` es solo el código exacto (usa resolverProducto); la
+// búsqueda por nombre es `buscarProductosPorNombre`.
 async function buscarProductos(codigo) {
-  if (!codigo) {
-    // Catálogo completo: tipo propio ('producto_listado'), nunca comparte clave con resolverProducto.
-    return conCache('producto_listado', '*', async () => {
-      const { data } = await Mba3Lectura.listarProductos();
-      return data;
-    });
-  }
-  return conCache('producto', codigo, async () => {
-    const { data } = await Mba3Lectura.listarProductos(codigo);
+  return resolverProducto(codigo);
+}
+
+// Búsqueda por nombre (decisión humana 2026-11-10: por código Y por nombre). Tipo de caché propio
+// ('producto_nombre', clave = término de búsqueda en minúsculas) — nunca comparte clave con
+// resolverProducto (mismo motivo que R-F2-4: un término de búsqueda no debe colisionar con un
+// código real de producto).
+async function buscarProductosPorNombre(nombre) {
+  const clave = String(nombre).trim().toLowerCase();
+  return conCache('producto_nombre', clave, async () => {
+    const { data } = await Mba3Lectura.buscarProductosPorNombre(nombre);
     return data;
   });
 }
@@ -122,16 +128,20 @@ function primerCampo(registro, nombres) {
   return null;
 }
 
+// 'NOM_CLIENTE'/'NOM_ESPAÑOL' confirmados contra datos reales (2026-11-10, ver mba3Lectura
+// CAMPOS_CODIGO); el resto sigue sin confirmar.
 function extraerNombreCliente(registro) {
-  return primerCampo(registro, ['nombre', 'cliente_nombre', 'razon_social', 'nombre_cliente']);
+  return primerCampo(registro, ['NOM_CLIENTE', 'nombre', 'cliente_nombre', 'razon_social', 'nombre_cliente']);
 }
 
 function extraerNombreVendedor(registro) {
-  return primerCampo(registro, ['nombre', 'vendedor_nombre', 'nombre_vendedor']);
+  return primerCampo(registro, ['NOM_ESPAÑOL', 'nombre', 'vendedor_nombre', 'nombre_vendedor']);
 }
 
+// 'DESCRIPCION'/'NOM_PRODUCTO' confirmados contra datos reales de `productos-buscar-nombre`
+// (2026-11-10, ver mba3Lectura CAMPOS_CODIGO); el resto sigue sin confirmar.
 function extraerDescripcionProducto(registro) {
-  return primerCampo(registro, ['descripcion', 'producto_descripcion', 'nombre', 'descripcion_producto']);
+  return primerCampo(registro, ['DESCRIPCION', 'NOM_PRODUCTO', 'descripcion', 'producto_descripcion', 'nombre', 'descripcion_producto']);
 }
 
 module.exports = {
@@ -142,6 +152,7 @@ module.exports = {
   buscarClientesPorVendedor,
   buscarVendedores,
   buscarProductos,
+  buscarProductosPorNombre,
   resolverExistenciasVentas,
   extraerNombreCliente,
   extraerNombreVendedor,

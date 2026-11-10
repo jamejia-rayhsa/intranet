@@ -59,18 +59,24 @@ const ControladorMba3 = {
     }
   },
 
+  // Búsqueda por código exacto (?codigo=) o por nombre (?nombre=) — decisión humana 2026-11-10:
+  // MBA3 no tiene un "listar todos los productos" (a diferencia de vendedores), así que uno de
+  // los 2 parámetros es obligatorio.
   async productos(req, res) {
     try {
       const codigo = req.query.codigo ? String(req.query.codigo).trim() : null;
-      const { datos, advertencia } = await Mba3Catalogo.buscarProductos(codigo);
-      // R-F2-1: con un código buscado, solo devolver registros con ese código EXACTO (sin
-      // distinguir mayúsculas/minúsculas, no subcadena); no confiar en que MBA3 ya filtró exacto
-      // con el body asumido `{codigo}` (defensa en profundidad).
-      const codigoMin = codigo ? codigo.toLowerCase() : null;
-      const filtrados = codigoMin
-        ? (Array.isArray(datos) ? datos : []).filter((p) => String(p?.codigo ?? '').trim().toLowerCase() === codigoMin)
-        : datos;
-      const respuesta = { exito: true, datos: filtrados };
+      const nombre = req.query.nombre ? String(req.query.nombre).trim() : null;
+      if (!codigo && !nombre) {
+        return res.status(400).json({ exito: false, mensaje: 'codigo o nombre es requerido' });
+      }
+      if (codigo) {
+        const { datos, advertencia } = await Mba3Catalogo.buscarProductos(codigo);
+        const respuesta = { exito: true, datos };
+        if (advertencia) respuesta.advertencias = [advertencia];
+        return res.json(respuesta);
+      }
+      const { datos, advertencia } = await Mba3Catalogo.buscarProductosPorNombre(nombre);
+      const respuesta = { exito: true, datos };
       if (advertencia) respuesta.advertencias = [advertencia];
       return res.json(respuesta);
     } catch (error) {

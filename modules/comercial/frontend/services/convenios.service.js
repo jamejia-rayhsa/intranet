@@ -57,3 +57,9 @@ export async function buscarVendedorMba3(codigo) {
 export async function buscarProductoMba3(codigo) {
   return solicitar(`/comercial/mba3/productos?codigo=${encodeURIComponent(codigo)}`);
 }
+
+// MBA3 no tiene "listar todos los productos" (a diferencia de vendedores): la búsqueda de
+// producto en el formulario es por código exacto (de arriba) O por nombre (esta).
+export async function buscarProductoPorNombreMba3(nombre) {
+  return solicitar(`/comercial/mba3/productos?nombre=${encodeURIComponent(nombre)}`);
+}

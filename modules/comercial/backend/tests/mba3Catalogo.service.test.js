@@ -86,35 +86,39 @@ describe("resolverCliente (caché + TTL)", () => {
 // R-F2-4 (revisión post Fase 2): el catálogo completo ('*listado') ya no comparte clave de caché
 // con la resolución de un código real que sea literalmente "*".
 describe("colisión de caché con código '*' (R-F2-4)", () => {
-  it("resolverProducto('*') y buscarProductos (catálogo completo) usan tipos de caché distintos", async () => {
+  // 2026-11-10: MBA3 no tiene "listar todos los productos" (a diferencia de vendedores) — se
+  // confirmó contra la API real que ese endpoint no existe. `buscarProductos` ya no tiene una
+  // rama de "catálogo completo"; en su lugar, la búsqueda por nombre (`buscarProductosPorNombre`)
+  // es la que necesita su propio tipo de caché para no colisionar con `resolverProducto`.
+  it("resolverProducto('*') y buscarProductosPorNombre (por nombre) usan tipos de caché distintos", async () => {
     CacheMba3.obtener.mockResolvedValue(null);
     Mba3Lectura.obtenerProducto.mockResolvedValue({ codigo: "*", descripcion: "Producto con código asterisco" });
-    Mba3Lectura.listarProductos.mockResolvedValue({ data: [{ codigo: "P1" }, { codigo: "P2" }], advertencias: [] });
+    Mba3Lectura.buscarProductosPorNombre.mockResolvedValue({ data: [{ codigo: "P1" }, { codigo: "P2" }], advertencias: [] });
 
     await Mba3Catalogo.resolverProducto("*");
-    await Mba3Catalogo.buscarProductos(); // catálogo completo, sin código
+    await Mba3Catalogo.buscarProductosPorNombre("tornillo");
 
     const tiposGuardados = CacheMba3.guardar.mock.calls.map((llamada) => llamada[0]);
     expect(tiposGuardados).toContain("producto");
-    expect(tiposGuardados).toContain("producto_listado");
+    expect(tiposGuardados).toContain("producto_nombre");
     expect(tiposGuardados[0]).not.toBe(tiposGuardados[1]); // nunca la misma clave (tipo,codigo)
   });
 
-  it("buscarProductos (catálogo completo) ya no se envenena con un producto de código '*' cacheado", async () => {
+  it("buscarProductosPorNombre no se envenena con un producto de código '*' cacheado bajo 'producto'", async () => {
     // Simula que YA existe un producto real con código "*" cacheado bajo tipo 'producto'.
     CacheMba3.obtener.mockImplementation(async (tipo) => {
       if (tipo === "producto") {
         return { datos: { codigo: "*", descripcion: "Producto con código asterisco" }, consultado_en: new Date() };
       }
-      return null; // 'producto_listado' nunca se cacheó todavía
+      return null; // 'producto_nombre' nunca se cacheó todavía
     });
-    Mba3Lectura.listarProductos.mockResolvedValue({ data: [{ codigo: "P1" }, { codigo: "P2" }], advertencias: [] });
+    Mba3Lectura.buscarProductosPorNombre.mockResolvedValue({ data: [{ codigo: "P1" }, { codigo: "P2" }], advertencias: [] });
 
-    const { datos } = await Mba3Catalogo.buscarProductos(); // catálogo completo
-    // Antes de la corrección, esto habría devuelto el objeto único del producto "*" (envenenado).
+    const { datos } = await Mba3Catalogo.buscarProductosPorNombre("tornillo");
+    // Antes de la corrección, un tipo de caché compartido habría devuelto el objeto único "*".
     expect(Array.isArray(datos)).toBe(true);
     expect(datos).toEqual([{ codigo: "P1" }, { codigo: "P2" }]);
-    expect(Mba3Lectura.listarProductos).toHaveBeenCalled(); // sí consultó, no usó la caché ajena
+    expect(Mba3Lectura.buscarProductosPorNombre).toHaveBeenCalled(); // sí consultó, no usó la caché ajena
   });
 
   it("resolverVendedor('*') y buscarVendedores (catálogo completo) usan tipos de caché distintos", async () => {

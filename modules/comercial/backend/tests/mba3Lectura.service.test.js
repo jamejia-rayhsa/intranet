@@ -250,6 +250,38 @@ describe("coincidencia exacta de código (R-F2-1)", () => {
     const producto = await Mba3Lectura.obtenerProducto("P1");
     expect(producto).toBeNull();
   });
+
+  // Confirmado contra /openapi.json real (2026-11-10): no existe "productos" para listar todo;
+  // obtenerProducto usa ficha-producto con body {"Codigo": "..."} (mayúscula).
+  it("obtenerProducto: llama a ficha-producto con {Codigo} y encuentra por PRODUCTO (mayúscula)", async () => {
+    process.env.MBA3_LECTURA_USUARIO = "svc";
+    process.env.MBA3_LECTURA_PASSWORD = "secreto";
+    const post = montarClienteMock();
+    post
+      .mockResolvedValueOnce({ data: { access_token: "tok1", refresh_token: "ref1" } })
+      .mockResolvedValueOnce({ data: { data: [{ PRODUCTO: "P1", NOMBRE: "Tornillo" }] } });
+
+    const producto = await Mba3Lectura.obtenerProducto("P1");
+    expect(producto).toEqual({ PRODUCTO: "P1", NOMBRE: "Tornillo" });
+    expect(post).toHaveBeenNthCalledWith(2, "/v1/api/ficha-producto", { Codigo: "P1" }, expect.anything());
+  });
+
+  it("buscarProductosPorNombre: llama a productos-buscar-nombre con {nombre} y pagina", async () => {
+    process.env.MBA3_LECTURA_USUARIO = "svc";
+    process.env.MBA3_LECTURA_PASSWORD = "secreto";
+    const post = montarClienteMock();
+    post
+      .mockResolvedValueOnce({ data: { access_token: "tok1", refresh_token: "ref1" } })
+      .mockResolvedValueOnce({
+        data: { data: [{ PRODUCTO: "P1" }, { PRODUCTO: "P2" }], pagination: { total: 2, returned: 2 } },
+      });
+
+    const { data } = await Mba3Lectura.buscarProductosPorNombre("tornillo");
+    expect(data).toEqual([{ PRODUCTO: "P1" }, { PRODUCTO: "P2" }]);
+    // El servidor no envuelve el término en comodines solo: hay que mandar %termino% (confirmado
+    // en vivo el 2026-11-10 — sin % siempre da 0 resultados).
+    expect(post).toHaveBeenNthCalledWith(2, "/v1/api/productos-buscar-nombre", { nombre: "%tornillo%" }, expect.anything());
+  });
 });
 
 // R-F2-2 (revisión post Fase 2): single-flight + cooldown de login.

@@ -285,10 +285,15 @@ async function paginarTodo(endpoint, body = {}, { porPagina = TAMANO_PAGINA, top
 // verificar, así que una API que devolviera varios registros (o el filtro por subcadena del
 // controlador) podía guardar el nombre de OTRO cliente/vendedor/producto. "No hay coincidencia
 // exacta" se trata igual que "no encontrado" (null), nunca "usa el primero que venga".
+// 'CLIENTE'/'VENDEDOR' confirmados contra datos reales de `clientes-vendedor`/`vendedores`
+// (2026-11-10); 'PRODUCTO' es la misma convención de MBA3 (visto en `ultimacompra`/`acuvtaprod`)
+// pero sin confirmar todavía en la respuesta de `ficha-producto` (bloqueado por un 500 del
+// servidor — ver blockers.md). Se mantienen las variantes en minúscula por si alguna respuesta
+// usa otra convención.
 const CAMPOS_CODIGO = {
-  cliente: ['codigo'],
-  vendedor: ['codigo', 'codigo_vendedor'],
-  producto: ['codigo', 'codigo_producto'],
+  cliente: ['CLIENTE', 'codigo'],
+  vendedor: ['VENDEDOR', 'codigo', 'codigo_vendedor'],
+  producto: ['PRODUCTO', 'codigo', 'codigo_producto'],
 };
 
 function coincideExacto(registro, codigoBuscado, camposCodigo) {
@@ -317,14 +322,17 @@ async function obtenerFichaCliente(codigo) {
   return encontrarPorCodigoExacto(lista, codigo, 'cliente');
 }
 
-// SUPOSICIÓN SIN VERIFICAR: nombre de endpoint confirmado por el humano (`clientes-vendedor`),
-// pero el campo de filtro es una suposición por analogía con ficha-cliente (`codigo_vendedor`).
+// CONFIRMADO contra /openapi.json real (2026-11-10): el campo de filtro es `vendedor`, no
+// `codigo_vendedor`. También existe `inactivo` (default 0) sin usar por ahora.
 async function listarClientesPorVendedor(codigoVendedor) {
-  return paginarTodo('clientes-vendedor', { codigo_vendedor: codigoVendedor });
+  return paginarTodo('clientes-vendedor', { vendedor: codigoVendedor });
 }
 
-// SUPOSICIÓN SIN VERIFICAR: endpoint `vendedores` confirmado por el humano; el body asumido es
-// {} para listar todos y {"codigo": "..."} para uno solo (mismo patrón que ficha-cliente).
+// CONFIRMADO contra /openapi.json real (2026-11-10): `vendedores` NO declara ningún parámetro de
+// filtro (schema vacío) — siempre devuelve el catálogo completo; el `{codigo}` que mandamos aquí
+// lo ignora el servidor. No es un bug: `obtenerVendedor` ya filtra el resultado completo con
+// `encontrarPorCodigoExacto`, así que el comportamiento final es correcto, solo trae más datos de
+// los necesarios cuando se pide un código específico.
 async function listarVendedores(codigo) {
   return paginarTodo('vendedores', codigo ? { codigo } : {});
 }
@@ -334,21 +342,34 @@ async function obtenerVendedor(codigo) {
   return encontrarPorCodigoExacto(data, codigo, 'vendedor');
 }
 
-// SUPOSICIÓN SIN VERIFICAR: endpoint `productos` confirmado; body asumido igual que vendedores.
-async function listarProductos(codigo) {
-  return paginarTodo('productos', codigo ? { codigo } : {});
-}
-
+// CONFIRMADO contra /openapi.json real (2026-11-10): NO existe un endpoint `productos` para
+// listar el catálogo completo (404 "Endpoint no existe" probado contra MBA3 real) — a diferencia
+// de vendedores, productos no tiene un "listar todos". Los 2 endpoints reales son `ficha-producto`
+// (código exacto, body {"Codigo": "..."} con mayúscula) y `productos-buscar-nombre` (por nombre,
+// ver buscarProductosPorNombre). Decisión humana 2026-11-10: la búsqueda de producto en el
+// formulario de Convenios es por código exacto Y por nombre (no solo código).
+// SIN VERIFICAR todavía: la forma de la respuesta de `ficha-producto` — probarlo contra MBA3 real
+// dio 500 "Error ejecutando la consulta" con cualquier código (real o inventado), consistente, lo
+// que sugiere un bug del lado del servidor y no de este body. Pendiente de reportar/reintentar.
 async function obtenerProducto(codigo) {
-  const { data } = await listarProductos(codigo);
-  return encontrarPorCodigoExacto(data, codigo, 'producto');
+  const resp = await llamarEndpoint('ficha-producto', { Codigo: codigo });
+  const lista = Array.isArray(resp?.data) ? resp.data : [];
+  return encontrarPorCodigoExacto(lista, codigo, 'producto');
 }
 
-// SUPOSICIÓN SIN VERIFICAR: endpoint `acuvtaprod` confirmado (existencias y ventas de un
-// producto); el campo de filtro asumido es `codigo_producto` (no `codigo`, por analogía con
-// `codigo_vendedor` de clientes-vendedor: ambos son "el producto/vendedor de otra entidad").
+// Búsqueda por nombre (sustituye al "listar todos" que no existe para productos). CONFIRMADO
+// contra MBA3 real (2026-11-10): el servidor NO envuelve el término en comodines — hay que mandar
+// `%termino%` explícito o siempre da 0 resultados (probado: "tornillo" sin % = 0, "%a%" = 269
+// reales). `activo` no se manda: el default del servidor para ese parámetro no está confirmado
+// como seguro (ver aviso de la guía de BI sobre defaults engañosos en parámetros "opcionales").
+async function buscarProductosPorNombre(nombre) {
+  return paginarTodo('productos-buscar-nombre', { nombre: `%${nombre}%` });
+}
+
+// CONFIRMADO contra /openapi.json real (2026-11-10): el campo de filtro es `Producto`
+// (con mayúscula inicial), no `codigo_producto`.
 async function obtenerExistenciasVentas(codigoProducto) {
-  const resp = await llamarEndpoint('acuvtaprod', { codigo_producto: codigoProducto });
+  const resp = await llamarEndpoint('acuvtaprod', { Producto: codigoProducto });
   return Array.isArray(resp?.data) ? resp.data : [];
 }
 
@@ -364,8 +385,8 @@ module.exports = {
   listarClientesPorVendedor,
   listarVendedores,
   obtenerVendedor,
-  listarProductos,
   obtenerProducto,
+  buscarProductosPorNombre,
   obtenerExistenciasVentas,
   _resetEstadoParaTests,
 };

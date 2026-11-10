@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   obtenerConvenio, crearConvenio, actualizarConvenio,
-  buscarFichaClienteMba3, buscarVendedorMba3, buscarProductoMba3,
+  buscarFichaClienteMba3, buscarVendedorMba3, buscarProductoMba3, buscarProductoPorNombreMba3,
 } from '../services/convenios.service';
 import PageHeader from '../../../portal/frontend/components/PageHeader';
 import '../styles/comercial.css';
@@ -43,6 +43,13 @@ export default function ConvenioForm() {
   const [cargando, setCargando] = useState(editando);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
+
+  // Búsqueda de producto por nombre (MBA3 no tiene "listar todos los productos" como sí hay para
+  // vendedores — decisión humana 2026-11-10: buscar por código exacto Y por nombre). Estado por
+  // línea: término tecleado, resultados encontrados, y si está buscando.
+  const [terminoBusqueda, setTerminoBusqueda] = useState({});
+  const [resultadosBusqueda, setResultadosBusqueda] = useState({});
+  const [buscandoNombre, setBuscandoNombre] = useState({});
 
   // R-11: sin esto, un error de red/404 dejaba el formulario vacío sin aviso y, al "Guardar", la
   // actualización sobrescribía el convenio real con datos en blanco. `cargaFallida` bloquea el envío.
@@ -115,9 +122,38 @@ export default function ConvenioForm() {
     try {
       const res = await buscarProductoMba3(codigo.trim());
       const registro = encontrarExacto(res, codigo.trim());
-      const descripcion = extraerCampo(registro, ['descripcion', 'producto_descripcion', 'nombre', 'descripcion_producto']);
+      const descripcion = extraerCampo(registro, ['DESCRIPCION', 'NOM_PRODUCTO', 'descripcion', 'producto_descripcion', 'nombre', 'descripcion_producto']);
       if (descripcion) cambiarLinea(i, 'producto_descripcion', descripcion);
     } catch (_err) { /* best-effort */ }
+  }
+
+  // Búsqueda por nombre: MBA3 no tiene "listar todos los productos", así que esto es la única
+  // forma de encontrar un producto sin saber ya su código exacto. Muestra una lista de
+  // coincidencias para que el usuario elija (nunca se autocompleta solo, a diferencia del código).
+  async function buscarProductoPorNombre(i) {
+    const termino = (terminoBusqueda[i] || '').trim();
+    if (!termino) return;
+    setBuscandoNombre(b => ({ ...b, [i]: true }));
+    setError('');
+    try {
+      const res = await buscarProductoPorNombreMba3(termino);
+      const lista = Array.isArray(res?.datos) ? res.datos : [];
+      setResultadosBusqueda(r => ({ ...r, [i]: lista }));
+    } catch (err) {
+      setError(err.message || 'No se pudo buscar el producto por nombre');
+      setResultadosBusqueda(r => ({ ...r, [i]: [] }));
+    } finally {
+      setBuscandoNombre(b => ({ ...b, [i]: false }));
+    }
+  }
+
+  function elegirProductoBuscado(i, registro) {
+    const codigo = extraerCampo(registro, ['PRODUCTO', 'codigo', 'codigo_producto']);
+    const descripcion = extraerCampo(registro, ['DESCRIPCION', 'NOM_PRODUCTO', 'descripcion', 'producto_descripcion', 'nombre', 'descripcion_producto']);
+    if (codigo) cambiarLinea(i, 'producto_codigo', codigo);
+    if (descripcion) cambiarLinea(i, 'producto_descripcion', descripcion);
+    setResultadosBusqueda(r => ({ ...r, [i]: [] }));
+    setTerminoBusqueda(t => ({ ...t, [i]: '' }));
   }
 
   function cambiarLinea(i, campo, valor) {
@@ -130,6 +166,10 @@ export default function ConvenioForm() {
 
   function quitarLinea(i) {
     setProductos(ps => (ps.length > 1 ? ps.filter((_, idx) => idx !== i) : ps));
+    // Los índices de las líneas se recorren tras quitar una: la búsqueda por nombre es estado
+    // transitorio de UI, así que es más simple limpiarla toda que reindexarla.
+    setTerminoBusqueda({});
+    setResultadosBusqueda({});
   }
 
   async function guardar(e) {
@@ -220,6 +260,35 @@ export default function ConvenioForm() {
               onChange={e => cambiarLinea(i, 'producto_codigo', e.target.value)}
               onBlur={e => autocompletarProducto(i, e.target.value)}
             />
+            <span style={{ display: 'inline-flex', gap: '0.3rem' }}>
+              <input
+                placeholder="Buscar producto por nombre"
+                value={terminoBusqueda[i] || ''}
+                onChange={e => setTerminoBusqueda(t => ({ ...t, [i]: e.target.value }))}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); buscarProductoPorNombre(i); } }}
+              />
+              <button type="button" className="btn-secundario" onClick={() => buscarProductoPorNombre(i)} disabled={buscandoNombre[i]}>
+                {buscandoNombre[i] ? 'Buscando…' : 'Buscar'}
+              </button>
+            </span>
+            {Array.isArray(resultadosBusqueda[i]) && resultadosBusqueda[i].length > 0 && (
+              <ul className="convenio-resultados-busqueda">
+                {resultadosBusqueda[i].map((registro, idx) => {
+                  const codigo = extraerCampo(registro, ['PRODUCTO', 'codigo', 'codigo_producto']);
+                  const descripcion = extraerCampo(registro, ['DESCRIPCION', 'NOM_PRODUCTO', 'descripcion', 'producto_descripcion', 'nombre', 'descripcion_producto']);
+                  return (
+                    <li key={codigo || idx}>
+                      <button type="button" className="btn-secundario" onClick={() => elegirProductoBuscado(i, registro)}>
+                        {codigo || '(sin código)'} — {descripcion || '(sin descripción)'}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {Array.isArray(resultadosBusqueda[i]) && resultadosBusqueda[i].length === 0 && (
+              <p className="convenio-sin-resultados">Sin resultados para esa búsqueda</p>
+            )}
             <input placeholder="Descripción *" required value={p.producto_descripcion} onChange={e => cambiarLinea(i, 'producto_descripcion', e.target.value)} />
             <input placeholder="Empaque" type="number" value={p.empaque} onChange={e => cambiarLinea(i, 'empaque', e.target.value)} />
             <input placeholder="Unidad (ej. PZ)" value={p.unidad_medida} onChange={e => cambiarLinea(i, 'unidad_medida', e.target.value)} />

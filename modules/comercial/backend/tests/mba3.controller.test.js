@@ -82,6 +82,40 @@ describe("ControladorMba3.vendedores", () => {
   });
 });
 
+describe("ControladorMba3.productos", () => {
+  it("400 sin codigo ni nombre (MBA3 no tiene 'listar todos los productos')", async () => {
+    const res = crearRes();
+    await Controlador.productos({ query: {} }, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("con codigo: busca por código exacto", async () => {
+    Mba3Catalogo.buscarProductos.mockResolvedValue({ datos: { codigo: "P1", descripcion: "Tornillo" } });
+    const res = crearRes();
+    await Controlador.productos({ query: { codigo: "P1" } }, res);
+    expect(Mba3Catalogo.buscarProductos).toHaveBeenCalledWith("P1");
+    expect(Mba3Catalogo.buscarProductosPorNombre).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith({ exito: true, datos: { codigo: "P1", descripcion: "Tornillo" } });
+  });
+
+  it("con nombre (y sin codigo): busca por nombre", async () => {
+    Mba3Catalogo.buscarProductosPorNombre.mockResolvedValue({ datos: [{ codigo: "P1" }, { codigo: "P2" }] });
+    const res = crearRes();
+    await Controlador.productos({ query: { nombre: "tornillo" } }, res);
+    expect(Mba3Catalogo.buscarProductosPorNombre).toHaveBeenCalledWith("tornillo");
+    expect(Mba3Catalogo.buscarProductos).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith({ exito: true, datos: [{ codigo: "P1" }, { codigo: "P2" }] });
+  });
+
+  it("con codigo y nombre a la vez: codigo gana", async () => {
+    Mba3Catalogo.buscarProductos.mockResolvedValue({ datos: { codigo: "P1" } });
+    const res = crearRes();
+    await Controlador.productos({ query: { codigo: "P1", nombre: "tornillo" } }, res);
+    expect(Mba3Catalogo.buscarProductos).toHaveBeenCalledWith("P1");
+    expect(Mba3Catalogo.buscarProductosPorNombre).not.toHaveBeenCalled();
+  });
+});
+
 describe("ControladorMba3.existenciasVentas", () => {
   it("400 sin codigo", async () => {
     const res = crearRes();

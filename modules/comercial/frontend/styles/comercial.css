@@ -332,3 +332,23 @@
   font-size: 0.82rem;
   min-width: 0;
 }
+
+.convenio-resultados-busqueda,
+.convenio-sin-resultados {
+  grid-column: 1 / -1;
+}
+
+.convenio-resultados-busqueda {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0.2rem 0 0.4rem;
+  padding: 0;
+}
+
+.convenio-sin-resultados {
+  font-size: 0.8rem;
+  color: var(--color-texto-claro);
+  margin: 0.2rem 0 0.4rem;
+}
