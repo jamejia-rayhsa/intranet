@@ -62,6 +62,7 @@ import SolicitudesListado from '../../comercial/frontend/pages/SolicitudesListad
 import SolicitudCreditoForm from '../../comercial/frontend/pages/SolicitudCreditoForm';
 import ConveniosListado from '../../comercial/frontend/pages/ConveniosListado';
 import ConvenioForm from '../../comercial/frontend/pages/ConvenioForm';
+import ConvenioDetalle from '../../comercial/frontend/pages/ConvenioDetalle';
 import AutorizadoresPage from '../../comercial/frontend/pages/AutorizadoresPage';
 
 import MenuDinamico from './components/MenuDinamico';
@@ -237,6 +238,7 @@ function AppRutas() {
         <Route path="/comercial/convenios" element={<RutaProtegida><ConveniosListado /></RutaProtegida>} />
         <Route path="/comercial/convenios/nuevo" element={<RutaProtegida><ConvenioForm /></RutaProtegida>} />
         <Route path="/comercial/convenios/:id/editar" element={<RutaProtegida><ConvenioForm /></RutaProtegida>} />
+        <Route path="/comercial/convenios/:id" element={<RutaProtegida><ConvenioDetalle /></RutaProtegida>} />
         <Route path="/comercial/autorizadores" element={<RutaProtegida><AutorizadoresPage /></RutaProtegida>} />
         <Route path="*" element={<Navigate to="/inicio-sesion" />} />
       </Routes>

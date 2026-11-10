@@ -119,6 +119,7 @@ export default function ConveniosListado() {
                 <td><span className={badgeClass(c.estatus)}>{c.estatus}</span></td>
                 <td>{c.total_productos}</td>
                 <td style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                  <button className="btn-secundario" onClick={() => navigate(`/comercial/convenios/${c.id}`)}>Ver</button>
                   {c.estatus === 'pendiente_autorizacion' && (
                     <>
                       {(esCreador(c) || esSuperAdmin) && (

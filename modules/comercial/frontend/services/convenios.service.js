@@ -63,3 +63,19 @@ export async function buscarProductoMba3(codigo) {
 export async function buscarProductoPorNombreMba3(nombre) {
   return solicitar(`/comercial/mba3/productos?nombre=${encodeURIComponent(nombre)}`);
 }
+
+// Fase 4 — registro real de consumo y tiempo estimado para agotar el stock de cada línea.
+export async function obtenerEstadoConsumoConvenio(convenioId) {
+  return solicitar(`/comercial/convenios/${convenioId}/consumo`);
+}
+
+export async function listarMovimientos(convenioId, productoId) {
+  return solicitar(`/comercial/convenios/${convenioId}/productos/${productoId}/movimientos`);
+}
+
+export async function registrarMovimiento(convenioId, productoId, datos) {
+  return solicitar(`/comercial/convenios/${convenioId}/productos/${productoId}/movimientos`, {
+    method: 'POST',
+    body: JSON.stringify(datos),
+  });
+}
