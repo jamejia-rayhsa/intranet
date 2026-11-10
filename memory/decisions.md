@@ -6,6 +6,114 @@ type: project
 
 # Decisiones de Arquitectura
 
+### [2026-10-23] orquestador — Fase 3 de Convenios de compra CERRADA (commit en `feat/comercial-convenios`)
+
+**Resultado:** las 2 decisiones del humano y los hallazgos del revisor se aplicaron: folio 90 y cualquier `VIGENCIA` no-fecha ahora importan como `cancelado` (se eliminó la heurística frágil); el inventario histórico de la columna "16.10.26" quedó en `observaciones` por línea de producto; nueva columna `origen_historico` (migración 004) con índice único parcial evita que la carga histórica colisione con convenios creados desde la UI; dry-run y corrida real ya coinciden al dividir por vendedor; re-ejecutar con líneas nuevas avisa en vez de callar; `CONSUMO` con "MESES" ya no finge un periodo mensual en silencio.
+
+**Resultado final verificado (Postgres real):** 170 convenios, 196 líneas, 119 `autorizado` / 51 `cancelado`, 109 convenios con nota de inventario histórico. Idempotente (segunda corrida: 0 creados). `npx jest` 2344/2344, eslint 0 errores.
+
+**Deuda documentada, no bloqueante:** R-P3-7 (el estatus se toma de la primera línea del grupo, frágil al orden de filas si el CSV cambia — es un cambio de diseño, no un fix puntual) y R-P3-8 (convenios `autorizado` con `vigente_hasta` ya vencido se importan igual; "vencido" se calcula por fecha, no por estatus, como se decidió desde la Fase 1 — comportamiento esperado, no un bug).
+
+**Siguiente paso:** GO del humano para la Fase 4 (registro real de consumo y tiempo estimado) o para correr esta carga contra datos reales de staging/prod (requiere que alguien revise el reporte final antes, y decidir el `--creado-por-usuario-id` a usar).
+
+---
+
+### [2026-10-23] orquestador — Fase 3 de Convenios de compra: revisión/pruebas y 2 decisiones del humano antes de corregir
+
+**Resultado:** coder construyó el script de carga histórica; revisor APROBADO CON OBSERVACIONES (0 críticos, 1 ALTO: folio 90 con `VIGENCIA="No sale en precio"` se importaba como autorizado con fecha ya vencida; varios medios); tester confirmó en vivo sin fallos nuevos (170 convenios/196 líneas, idempotencia, casos especiales, transacción por convenio, 2324/2324 jest).
+
+**Decisiones del humano:**
+1. **Inventario histórico (columna "16.10.26"):** guardarlo como nota de texto en `observaciones` de cada convenio (no se crea columna nueva).
+2. **Folio 90 y cualquier fila con `VIGENCIA` en texto no reconocible (ni fecha, ni "No vigente"):** tratarla como **cancelado**, igual que "No vigente"/"Ya no comprar" — mismo criterio, generalizado a cualquier texto en `VIGENCIA` que no sea una fecha válida.
+
+**Siguiente paso:** ronda de correcciones del coder con estas 2 decisiones + los hallazgos MEDIO del revisor (colisión de idempotencia con convenios creados desde la UI, inconsistencia dry-run vs. real al dividir por vendedor, re-ejecutar sin avisar si el archivo trae una línea nueva, periodo "mensual" inventado para texto de duración como "20-30 meses"). Bajos a criterio del coder.
+
+---
+
+### [2026-10-23] orquestador — Fase 2 de Convenios de compra CERRADA (commit en `feat/comercial-convenios`); MBA3 real sigue bloqueado por Cloudflare Access
+
+**Resultado:** coder construyó el cliente de lectura MBA3 (login/refresh/caché/fallback) y el autocompletar en el convenio; revisor APROBADO CON OBSERVACIONES (2 ALTOS: coincidencia de código por `data[0]`/subcadena en vez de exacta, y login sin single-flight/cooldown con riesgo de bloquear la cuenta de servicio 15 min); tester confirmó en vivo que el medio de latencia (resolución en serie) llegaba a ~70 s peor caso. Ronda de correcciones aplicada: coincidencia exacta de código, single-flight + cooldown de login, resolución en paralelo (`Promise.allSettled`, de ~70 s a ~tiempo de 1 llamada), namespace de caché separado para listados (ya no colisiona con un código real `"*"`), y se agregó la migración 002 (Fase 1) que faltaba en `docker-compose.supabase.yml` — bug real que habría dejado un entorno nuevo sin las tablas de convenios. Verificado con jest (184/184 del módulo, 2266/2266 del repo) y mediciones de tiempo antes/después.
+
+**Bloqueo que SIGUE activo (no se resuelve con código):** `mba3api.rayhsa.net` está detrás de Cloudflare Access — ver `blockers.md`. Toda esta fase se construyó y probó contra un MBA3 falso local; **nada se ha verificado contra el MBA3 real**, y los bodies de 4 de los 5 endpoints (`clientes-vendedor`, `vendedores`, `productos`, `acuvtaprod`) siguen siendo una suposición sin confirmar (solo `ficha-cliente` tiene su contrato documentado). Antes de dar por buena esta integración en staging/prod hace falta: (a) que alguien con acceso a Cloudflare Access para `rayhsa.net` dé un Service Token o un bypass de IP, y (b) con eso, correr `/openapi.json` real y ajustar los nombres de campo si no coinciden con lo que se asumió (documentado campo por campo en code-notes.md).
+
+**Deuda documentada, no bloqueante:** caché sin límite de tasa propio ni purga automática; datos crudos de MBA3 se cachean y devuelven completos (sin proyectar a campos mínimos, porque la forma real de la respuesta no está confirmada todavía); varios hallazgos bajos del revisor sin tocar.
+
+---
+
+### [2026-10-23] orquestador — Fase 2 de Convenios de compra: endpoints de MBA3 confirmados por el humano
+
+**Respuestas del humano a lo que pedía la Fase 2 (ver entrada "MBA3 lectura: canal confirmado" más abajo):**
+1. **Endpoints exactos** (bajo `POST /v1/api/{endpoint}`, mismo contrato que `ficha-cliente`):
+   - Clientes por vendedor: `clientes-vendedor`
+   - Vendedores: `vendedores`
+   - Productos: `productos`
+   - Existencias y ventas (un solo endpoint para ambas): `acuvtaprod`
+   - (Cliente individual ya confirmado en el manual: `ficha-cliente`)
+2. **Credenciales:** ya existe un usuario de servicio para esta API (el humano no compartió usuario/password en el chat — correcto, no se piden aquí; van en `.env` de cada entorno cuando se pruebe en vivo).
+3. **Red:** el host es alcanzable desde donde corre la intranet.
+
+**Qué falta confirmar (no bloquea empezar, sí bloquea la verificación en vivo):** el cuerpo exacto de parámetros de `clientes-vendedor`, `vendedores`, `productos` y `acuvtaprod` — solo `ficha-cliente` tiene su body confirmado en el manual (`{"codigo": "..."}`). Plan: el coder intenta `GET https://mba3api.rayhsa.net/openapi.json` primero (el manual dice que no requiere login para consultarlo) para obtener el esquema real; si el sandbox no tiene salida a internet, construye con el mismo patrón de `ficha-cliente` como mejor suposición, lo deja documentado como pendiente de confirmar, y diseña el cliente para que ajustar un nombre de campo sea un cambio de una línea. La prueba de extremo a extremo con login real requiere las credenciales reales en `.env` — eso lo hace el humano cuando se pruebe en un entorno con salida a internet (probablemente staging).
+
+---
+
+### [2026-10-23] orquestador — Fase 1 de Convenios de compra CERRADA (commit en `feat/comercial-convenios`)
+
+**Resultado:** coder corrigió los 3 hallazgos MEDIO del revisor (R-1 "nunca lo propio" movido al WHERE del UPDATE, R-2 ids validados → 400, R-3 fechas/montos validados → 400) y aplicó las 2 reglas de negocio decididas por el humano (cancelar un convenio autorizado: solo autorizador activo o `super_admin`; editar uno pendiente: solo el creador o `super_admin`), de paso arregló varios BAJOS y un bug real en `AutorizadoresPage.jsx` (el chequeo de super_admin nunca funcionaba). Verificado en vivo (Postgres real + backend real + JWT reales, 17/17) y por pruebas (`jest modules/comercial` 136/136; repo completo 2218/2218; eslint 0 errores nuevos). Sin re-revisión completa de esta ronda (cambios acotados y verificados en vivo; ver code-notes.md "Correcciones post-revisión [2026-10-23]").
+
+**Deuda documentada, no bloqueante:** R-6 (forma de respuesta inconsistente entre endpoints — arreglarlo bien rompe asserts existentes, se deja para una limpieza transversal), R-10 (ventana de milisegundos en autorizar/rechazar, ya aceptada por el revisor como de bajo riesgo), parte de R-12 (el frontend no sabe si el usuario actual es autorizador activo para ocultar botones; hoy se resuelve con 403 del backend, sin problema de seguridad, solo de UX).
+
+**Qué queda construido de la Fase 1:** migración `002-convenios-compra.sql` (+ réplica en `init.sql`): `comercial_convenios`, `comercial_convenio_productos`, `comercial_autorizadores`; opción de permiso "Convenios" en Comercial con consulta+edición para `super_admin`/`portal_admin`/`comercial_admin`; CRUD completo con reglas de autorización/cancelación/edición; pantalla mínima (`ConveniosListado`, `ConvenioForm`, `AutorizadoresPage`). Todo sin tocar MBA3, CSV histórico, movimientos de consumo ni dashboard (fases 2-5).
+
+**Siguiente paso:** GO del humano para la Fase 2 (integración de lectura MBA3) — ahí hay que preguntarle qué endpoints usar (ya lo pidió explícitamente el 2026-10-23), porque el manual adjuntado solo confirma `ficha-cliente`.
+
+---
+
+### [2026-10-23] orquestador — Fase 1 de Convenios de compra: revisión/pruebas sin críticos; decisiones del humano sobre cancelar y editar
+
+**Contexto:** coder implementó la Fase 1 (modelo de datos, autorización por lista, CRUD, pantalla mínima) en la rama `feat/comercial-convenios`. Revisor: APROBADO CON OBSERVACIONES, sin críticos (R-1 a R-13 en reviews.md: "nunca lo propio" comprobado en JS y no en el WHERE del UPDATE; ids/montos/fechas sin validar numéricamente, dan 500 en vez de 400; entre otros bajos). Tester: sin fallos nuevos de forma independiente (Postgres real, backend real, Chromium real, concurrencia, vigencia, jest 56/56 y 2138/2138 del repo); confirmó en vivo R-4/R-9 del revisor y abrió un PARA RESOLVER porque decisions.md de hoy no definía quién puede cancelar un convenio ya autorizado ni quién puede editar uno pendiente.
+
+**Decisiones del humano (resuelven ese PARA RESOLVER):**
+- **Cancelar un convenio ya autorizado:** solo alguien de la lista de `comercial_autorizadores` (activo) o `super_admin` — mismo criterio que autorizar/rechazar. El creador por sí solo NO puede cancelar algo ya aprobado.
+- **Editar un convenio pendiente de autorización:** solo el creador (`creado_por_id`) o `super_admin` — nadie más, aunque tenga el permiso general de edición de Convenios.
+
+**Siguiente paso:** ronda de correcciones del coder: aplicar estas 2 reglas nuevas + los 3 hallazgos MEDIO del revisor (R-1 nunca-lo-propio en SQL, R-2 ids no numéricos → 400, R-3 fechas/montos sin validar → 400); los BAJOS (R-5 a R-13) se corrigen si son triviales, si no quedan como deuda documentada. Luego commit de la Fase 1 completa (sin re-revisión completa salvo que algo mayor cambie) y GO/NO-GO del humano para la Fase 2.
+
+---
+
+### [2026-10-23] orquestador — Decisiones del humano para "Convenios de compra" (Comercial): autorización, catálogos, dashboard, modelo de datos
+
+**Contexto:** tras la investigación de [[research]] (entrada 2026-10-22 del investigador) se presentaron 4 preguntas abiertas antes de planear por fases. Respuestas del humano:
+
+1. **Autorización:** NO es un rol nuevo (`director_comercial`) ni una persona única fija. Es **una lista de personas** que pueden autorizar convenios, mantenible por un administrador (tabla propia de autorizadores con FK a `usuarios`, no un rol de RBAC). Cualquiera de esa lista puede autorizar; se registra quién y cuándo (mismo patrón que vacaciones).
+2. **Catálogos de Cliente/Producto:** **esperar la integración de lectura de MBA3** en vez de construir catálogos propios internos. Esto es un BLOQUEO real: ver [[blockers]] — el investigador confirmó que el canal de lectura de MBA3 (inventario, ventas, clientes, productos) **no está confirmado** en este repo (ni credenciales ni esquema; solo hay un canal de escritura confirmado, alta de cliente CODE_s=05). Antes de poder avanzar con catálogos reales hace falta resolver ese acceso.
+3. **Dashboard:** **registro real de consumo** (no solo estimado por tiempo transcurrido). Se necesita una tabla de movimientos/facturación real por convenio para comparar consumo real vs. plan. Esto es alcance adicional de desarrollo frente al MVP mínimo.
+4. **Modelo de datos:** **1 convenio = 1 Cliente + 1 Vendedor + 1 o más Productos** (líneas). Al cargar el CSV histórico, cada folio que agrupa varios clientes bajo el mismo producto (ej. folio 60, 124) se **separa en convenios independientes por cliente**; dentro de un mismo convenio sí pueden coexistir varias líneas de producto (ej. folio 27 con tallas T8/T9, folio 80 con T6-T10).
+
+**Pendiente de resolver antes de poder fijar las fases finales:** ~~cómo y cuándo se resuelve el acceso de lectura a MBA3 (punto 2) — es una dependencia externa (red, credenciales, a quién pedírselo) que puede tardar y que bloquea Cliente/Producto/Inventario reales.~~ RESUELTO el mismo día — ver siguiente entrada y [[blockers]].
+
+---
+
+### [2026-10-23] orquestador — MBA3 lectura: canal confirmado (API REST ODBC propia, distinta del web service de escritura)
+
+**Contexto:** el humano adjuntó `manual-conexion-api.md` (manual de conexión a la "API ODBC REST" de MBA3), resolviendo el bloqueo de [[blockers]] del mismo día. Pedido explícito: usarla para traer catálogo de **Vendedores, Clientes y Productos**.
+
+**Hallazgo clave — son DOS integraciones MBA3 distintas en este proyecto, no confundir:**
+1. **Escritura (ya existe, Solicitudes de Crédito):** `${MBA3_URL}/wsAPIS/api_wr`, alta/actualización de cliente (CODE_s=05). Ver `solicitudCredito.controller.js:233-313` y el ADR de corrección del 2026-10-22 más abajo.
+2. **Lectura (nueva, para Convenios):** `https://mba3api.rayhsa.net`, API REST propia (FastAPI/Uvicorn detrás de Cloudflare, que termina el TLS). **No tiene relación de código con el web service de escritura** — son sistemas distintos que ambos hablan con MBA3.
+
+**Contrato de la API de lectura (resumen del manual; el manual completo vive en esta conversación, no en el repo todavía — guardarlo en `docs/comercial/mba3-odbc-api-manual.md` cuando se implemente la Fase de integración):**
+- Auth JWT: `POST /v1/login` (usuario/password) → `access_token` (~15 min) + `refresh_token` (~7 días); `POST /v1/refresh` para renovar; `POST /v1/logout` revoca. 5 intentos fallidos → cuenta bloqueada 15 min; rate limit 5 req/min en login.
+- Catálogo: `POST /v1/api/{nombre_endpoint}?limit=&offset=` con `Authorization: Bearer <token>` y body JSON de parámetros. Respuesta `{ data: [...], pagination: { total, limit, offset, returned }, advertencias?: [...] }`.
+- **Endpoint confirmado por el manual:** `ficha-cliente` (body `{"codigo": "C00001"}`).
+- **NO confirmados todavía** (el manual es genérico, no lista el catálogo completo de endpoints): el equivalente para vendedor, producto, existencias/inventario e historial de ventas/consumo. Se descubren con `GET /openapi.json` o `/docs` (documentación interactiva, generada en vivo desde el catálogo real — nunca desactualizada) usando credenciales reales. Roles: `usuario` (ejecuta endpoints con `rol_requerido: usuario`) y `admin` (todo, incluida administración del catálogo).
+- Errores: JSON `{"detail": "mensaje"}` siempre (sin stack traces); 401 = reintentar con refresh o relogin; 403 = falta rol; 429 = rate limit o cuenta bloqueada.
+
+**Decisión:** la Fase de integración MBA3 de "Convenios de compra" usa esta API de lectura (no el web service de escritura, que sigue siendo exclusivo de Solicitudes de Crédito). Antes de implementarla, confirmar contra `/openapi.json` real: nombres de endpoint para vendedor, producto, existencias y ventas/consumo promedio, y decidir si Convenios cachea estos datos en tablas locales (necesario para el dashboard de consumo, que no puede depender de latencia/disponibilidad de una API externa en cada render) o los consulta en vivo. Recomendación a confirmar con el humano en la fase correspondiente: cachear un snapshot (cliente/vendedor/producto) al crear el convenio — mismo patrón que `solicitud_vacaciones` guarda datos desnormalizados del empleado — y refrescar existencias/ventas en un job periódico o al abrir el dashboard, nunca bloqueando la captura del convenio si MBA3 no responde.
+
+**Pendiente:** credenciales de esta API (quién las administra, si hay un usuario de servicio para la intranet o hay que crear uno), y si el host `mba3api.rayhsa.net` es alcanzable desde donde corren dev/staging/prod de la intranet (es un dominio público detrás de Cloudflare, así que probablemente sí, pero no verificado).
+
+---
+
 ### [2026-10-22] orquestador — Corrección: MBA3 en Solicitudes de Crédito ya no es stub (drift sin registrar)
 
 **Contexto:** al investigar el módulo Comercial para planear "Convenios de compra" (ver research.md, entrada del investigador del mismo día), se encontró que el ADR de Fase 1 de Comercial (más abajo, 2026-05-15) describe `POST /solicitudes/:id/sincronizar-mba3` como stub (501, no activa `enviada_mba3`). El código actual (`modules/comercial/backend/controllers/solicitudCredito.controller.js:233-313`) ya hace un GET real a `${MBA3_URL}/wsAPIS/api_wr` (CODE_s=05, alta/actualización de cliente) y sí activa `enviada_mba3` (líneas 290-292). No hay ningún ADR posterior que registre este cambio — quedó implementado sin documentar.
@@ -1152,6 +1260,87 @@ Al desactivar (o registrar inactiva/sábado/domingo/sobre festivo) una actividad
 **Revisor:** NO APROBADO para la carga real en modo actualizar (3 altos verificados: A1 CURP inválida sin nómina se inserta como empleado nuevo (duplicado silencioso) y la nómina con un cero de más duplica; A2 un NSS de 10 dígitos se completa con 0 y pisa el NSS válido; A3 la columna Estatus reactiva/da de baja sin control). **Tester:** F-IE-7 (alto) reprodujo A1-A3 con HTTP real (71 → 72 → 73 empleados); F-IE-1 deadlock entre importaciones simultáneas (60 de 90 respuestas 500, BD íntegra por ROLLBACK); F-IE-2 carrera de ciclos de jefes (28 de 40 rondas); F-IE-3 exportación con fechas desfasadas si el servidor corre al este de UTC; F-IE-4 fechas de 1939-1950 un día antes y CLABE numérica pierde dígitos; F-IE-5 un 403 marca todas las filas como no confirmadas; F-IE-6 el log imprime la fila completa (CURP/RFC/NSS). Lo demás pasó (3195/3195 comprobaciones de actualización de 71 empleados y 15 departamentos; formatos CSV/xlsx 33/33 en Chromium y Firefox; lotes y rollback; permisos y auditoría).
 **Decisiones del orquestador (en curso con el coder):** CURP inválida = error de fila; en modo actualizar sin identificador = error, nunca se inserta; nómina que coincide ignorando ceros = posible duplicado (error); coincidencia con varios empleados = error; NSS/CLABE no se completan (advertencia y se omite); en modo actualizar estatus/fecha_baja/motivo_baja se ignoran con advertencia; candado consultivo por importación y filas ordenadas (deadlocks), segunda pasada de jefes bajo el mismo candado con revalidación de ciclos y solo jefes activos; SAVEPOINT por fila; 403 detiene el proceso; fechas de Excel por aritmética de serial (sin Date/TZ); exportación con orden único, fechas en SQL, permiso de lectura y auditoría; log sin datos de la fila; ejemplos de plantilla obviamente ficticios (también CURP y nombres de departamentos).
 **Hasta que se corrija y se despliegue NO se debe cargar el archivo real de los 71 en modo actualizar.** Antes de usarlo: respaldo (`scripts/supabase/backup.sh`) y prueba con 5 filas.
+
+### [2026-10-23] orquestador — OK del humano: despliegue a staging del PR #17 y GO a la Fase 4 en paralelo
+**Autorización (humano, directa):** "OK para el despliegue y arranca en paralelo la Fase 4". (1) Despliegue **solo a staging** del PR #17 (plantilla de carga completa de empleados y departamentos), merge `ad838bd`; (2) **GO a la Fase 4** (motor de análisis de asistencia) en la rama `feat/asistencia-motor`, desde `main` ya con el PR #17. Los criterios del motor son los de las entradas del 2026-10-21/22 (snapshot de turno, quincenas, análisis desde el 2026-09-01, cierre automático desde la quincena 16-31 oct, `sin_identificador`, ejecución periódica en proceso con candado). Las quincenas anteriores quedan abiertas hasta que RH las cierre.
+
+### [2026-10-23] [tester] — PARA RESOLVER: Convenios de compra Fase 1 — ¿cancelar y editar requieren autoridad?
+
+**Contexto:** probando Convenios de compra Fase 1 con backend real + Postgres real (ver [[tests]] "Convenios de compra: Fase 1"), confirmé en vivo dos ambigüedades de negocio que el revisor ya había señalado por lectura de código (`reviews.md`, R-4 y R-9): decisions.md 2026-10-23 solo dice quién **autoriza o rechaza** (lista de autorizadores o `super_admin`, nunca el propio creador) pero no dice quién puede **cancelar** o **editar**.
+
+1. **Cancelar un convenio ya autorizado no exige ninguna autoridad especial.** Lo probé con el propio creador: crea el convenio, otra persona lo autoriza, y el mismo creador lo cancela con un simple `PUT /convenios/:id/cancelar` (200) — ni la lista de autorizadores ni `super_admin` intervienen. Cancelar una compra ya aprobada es una decisión de negocio potencialmente sensible (según R-4 del revisor).
+2. **Editar un convenio pendiente no exige ser el creador ni un autorizador**, solo el permiso granular "Convenios:edicion". Cualquier `comercial_admin`/`portal_admin`/`super_admin` puede reescribir cabecera y líneas de un convenio ajeno mientras siga `pendiente_autorizacion` (R-9 del revisor).
+
+**Para decidir:** (a) ¿cancelar un convenio `autorizado` debe limitarse a quien está en `comercial_autorizadores` o a `super_admin` (mismo candado que autorizar/rechazar), o se deja abierto a cualquiera con el permiso de edición como está hoy? (b) ¿editar un convenio pendiente debe limitarse al creador (y/o a un autorizador), o el permiso granular de módulo ya es suficiente control como en el resto del proyecto (p. ej. Solicitudes de Crédito)? Fix sugerido por el revisor si se decide restringir: aplicar `motivoSinAutoridad` también a cancelar cuando `previo.estatus === 'autorizado'`, y comprobar `creado_por_id === usuario_id` (u otra regla de propiedad) antes de `Convenio.actualizar`.
+
+**No bloquea el GO de la Fase 1** (no hay crítico ni alto; es un hueco de alcance, no un bug) pero conviene cerrarlo antes de producción. El resto de los hallazgos del revisor (R-1, R-2, R-3, R-5 a R-8, R-10 a R-13) son correcciones de código con fix sugerido, no decisiones de negocio — ver `reviews.md` directamente.
+
+---
+
+### [2026-10-23] [tester] — Convenios de compra Fase 2: confirmación empírica de R-F2-3 del revisor (latencia de guardado con MBA3 caído)
+
+**Contexto:** probando Convenios de compra Fase 2 con Postgres real + backend real + un MBA3 falso propio (ver [[tests]] "Convenios de compra: Fase 2 (MBA3)"), el revisor ya había encontrado por lectura de código (`reviews.md`, "Convenios de compra: Fase 2 (MBA3)", **R-F2-3**, severidad medio/alto) que las resoluciones de cliente/vendedor/producto en `resolverSnapshots` son secuenciales y cada una puede tardar hasta el timeout de axios (10 s) si MBA3 no responde. **Lo confirmo con medición real, sin duplicar el hallazgo:** con MBA3 colgado, un convenio con cliente + vendedor + 1 sola línea de producto por código tardó **27.4 s** en guardarse (201, sin pérdida de datos, con 3 advertencias) — consistente con la fórmula del revisor `(2+N)×10 s`. No agrego una pregunta nueva al humano: el fix sugerido por el revisor (resolver en paralelo con `Promise.allSettled` y un presupuesto total de tiempo) ya es accionable tal cual está en `reviews.md`; esta entrada solo deja evidencia de tiempo real para dimensionar la urgencia (con 5 líneas de producto, que sí ocurren en el histórico de convenios — folio 27 T8/T9, folio 80 T6-T10 — el peor caso sube a ≈ 70 s, suficiente para chocar con un timeout de proxy/nginx delante del backend en producción).
+
+**No bloquea nada de lo ya construido.** El resto de la Fase 2 (migración 003, login/refresh/relogin acotado sin loop, caché con TTL y fallback, permisos y validación de parámetros en `/api/comercial/mba3/*`, regresión) pasó sin fallos — ver `tests.md`.
+
+---
+
+### [2026-10-28] [orquestador] — Stack de dev aislado para probar en vivo sin chocar con otra sesión concurrente
+
+**Contexto:** el usuario quería probar Convenios de compra en vivo (no hay staging para esta rama todavía). El stack compartido (`intranet_backend_dev`, `intranet_supabase_*`) estaba arriba hacía 9 h y, al revisar los bind mounts (`docker inspect intranet_backend_dev`), apuntaba al checkout principal (`/home/jamejia/intranet`), no a este worktree — y esa otra sesión está activamente commiteando/pusheando/abriendo PR/desplegando a staging en la rama `feat/asistencia-motor`. Los `container_name` de `docker-compose.dev.yml` + los incluidos de `docker-compose.supabase.yml` son fijos (no parametrizados por proyecto), así que no se puede tener dos stacks con el mismo nombre a la vez, y recrearlos desde este worktree habría tirado lo que esa sesión tuviera corriendo. Hay precedente exacto de este patrón en `docs/supabase.md` ("proyecto aislado `-p ibk`" para pruebas de respaldo/restore).
+
+**Decisión:** levantar un stack Docker Compose **completamente aparte**, sin tocar el compartido:
+- `docker compose -p convenios-test -f docker-compose.dev.yml -f <override>.yml --env-file .env.dev --env-file .env.dev.local up -d`, invocado **desde este worktree** (así el bind mount `./modules`/`./config` sí es el código de `feat/comercial-convenios`).
+- `.env.dev.local` (nuevo, gitignored por el patrón `.env.*` ya existente — nunca se commitea) solo remapea puertos para no pisar los del stack compartido: `BACKEND_PORT=4100`, `FRONTEND_PORT=3100`, `INGESTA_PORT=4110`, `POSTGRES_PORT=5433`, `SUPABASE_STUDIO_PORT=54423`.
+- Un compose override (vive en el scratchpad de la sesión, no en el repo — es infraestructura de prueba personal, no parte del feature) solo renombra los 9 `container_name` fijos (`backend`, `frontend`, `supabase-db`, `supabase-db-init`, `supabase-auth`, `supabase-rest`, `supabase-storage`, `supabase-meta`, `supabase-studio`) con prefijo `convenios_`.
+- `-p convenios-test` aísla además red y volúmenes (`convenios-test_internal`, `convenios-test_supabase_db_data`, etc.) — DB nueva y vacía, no la del stack compartido.
+
+**Resultado verificado:** las 4 tablas de Convenios (`comercial_convenios`, `comercial_convenio_productos`, `comercial_autorizadores`, `comercial_cache_mba3`) se crean solas vía `supabase-db-init` (migraciones 002-004 ya están en `config/database/init.sql`). Bind mount del backend confirmado apuntando a este worktree (no al checkout principal). Corrí `node scripts/migrar-usuarios-supabase.js` dentro de `convenios_backend_dev` para poblar GoTrue con los 7 usuarios de dev (mismas contraseñas de siempre) — sin esto nadie puede iniciar sesión porque la DB de Auth también nace vacía.
+
+**No afecta al stack compartido ni a la otra sesión:** contenedores, red, volúmenes y puertos son todos distintos; `intranet_*` sigue arriba sin tocarse.
+
+**Pendiente (no bloquea probar la UI/API):** las 4 variables `MBA3_LECTURA_*`/`MBA3_LECTURA_CF_ACCESS_*` siguen vacías en `.env.dev` (a propósito, es tracked) — para probar la integración MBA3 real, el usuario debe ponerlas en `.env.dev.local` (nunca en `.env.dev`) y recrear `convenios_backend_dev`.
+
+---
+
+### [2026-11-10] [coder] — 2 de los 4 endpoints MBA3 sin verificar: nombre de parámetro corregido contra `/openapi.json` real; `productos` NO EXISTE (pregunta abierta)
+
+**Contexto:** con el bloqueo de Cloudflare Access y de credenciales ya resueltos (ver [[blockers]]), se probó por primera vez contra MBA3 real cada uno de los 4 endpoints que seguían marcados "SUPOSICIÓN SIN VERIFICAR" en `mba3Lectura.service.js`. Se confirmó el catálogo real de endpoints vía `GET /openapi.json` (lista completa en blockers.md) y el schema exacto de cada uno.
+
+**Corregido (bug de nombre de parámetro, fix aplicado y verificado con datos reales):**
+- `listarClientesPorVendedor`: el filtro real es `vendedor`, no `codigo_vendedor` que se asumía por analogía con `ficha-cliente`. Verificado: `vendedor: 'MEX01'` → 8 clientes reales (nombre, RFC, dirección, etc.)
+- `obtenerExistenciasVentas` (`acuvtaprod`): el filtro real es `Producto` (con mayúscula inicial), no `codigo_producto`. Verificado que la llamada ya no da error (antes no se pudo probar en absoluto por el bloqueo de Cloudflare); con un código inventado da 0 filas como se espera, sin probarse aún con un código real (ver abajo).
+- `listarVendedores`/`obtenerVendedor`: el schema real de `vendedores` **no declara ningún parámetro** — el `{codigo}` que mandamos lo ignora el servidor y siempre devuelve el catálogo completo. No es un bug porque `obtenerVendedor` ya filtra el resultado con `encontrarPorCodigoExacto`, pero es menos eficiente de lo que el comentario original asumía. Se dejó así (funciona, solo documentado el porqué).
+- `obtenerFichaCliente` (`ficha-cliente`): confirmado que el campo `codigo` (minúscula) ya estaba correcto desde el manual original — sin cambios.
+
+**NO RESUELTO — pregunta abierta de producto, necesita decisión humana:** el endpoint `productos` (que `listarProductos`/`obtenerProducto` asumían, igual que `vendedores`) **no existe en el catálogo real** (`POST /v1/api/productos` → `404 MBA3: Endpoint no existe`). Los endpoints reales relacionados con productos son:
+- `ficha-producto` — búsqueda por código exacto (`{"Codigo": "..."}`, con mayúscula). ~~Probado contra un código real (`R-010-05-0552`, tomado de `ultimacompra`) y dio `500 Error ejecutando la consulta` del lado de MBA3 — sin confirmar todavía si es por el guion en el código, por el nombre de campo, o un problema real del servidor; queda sin verificar, no se insistió más por el incidente de seguridad de abajo.~~ **Corregido más abajo (2026-11-10, actualización): el 500 era por probar con códigos que no tenían el formato `R-000-00-0000`, no un bug del servidor — ya confirmado y funcionando.**
+- `productos-buscar-nombre` — búsqueda por nombre (`{"nombre": "...", "activo": 0|1}`). Probado con `nombre: "A"` (con y sin `activo: 1`) y devolvió 0 resultados — no se confirmó todavía si es porque "A" es un substring demasiado corto/no coincide, o si el parámetro `activo` tiene el mismo problema de default-engañoso que `vtasmens` (ver la guía de BI: "un parámetro opcional puede no tener un default seguro").
+
+**No hay ningún endpoint de "listar todos los productos"** como sí existe para vendedores. Esto afecta directo al selector de producto del formulario de Convenios (Fase 1/2 ya construidas asumiendo que existía una lista completa). **Para decidir (humano):** ¿el flujo de "agregar línea de producto" en el formulario de Convenios debe basarse en captura de código exacto + `ficha-producto` (una vez que se resuelva el 500), en búsqueda por nombre con `productos-buscar-nombre`, o en ambos? No se tocó código de `listarProductos`/`obtenerProducto` todavía — siguen apuntando al endpoint inexistente.
+
+**INCIDENTE DE SEGURIDAD durante esta prueba:** ver [[blockers]], entrada "RESUELTO — bloqueo de Cloudflare Access..." — se expuso en el chat el access_token y el Service Token completo de Cloudflare al imprimir un error de axios sin filtrar. Se recomendó al humano regenerar el Service Token. Por eso se detuvo la investigación de `ficha-producto`/`productos-buscar-nombre` antes de confirmarlos del todo.
+
+---
+
+### [2026-11-10] [orquestador+coder] — CERRADA la pregunta abierta de producto: búsqueda por código Y por nombre implementada y verificada con datos reales
+
+**Decisión del humano:** "la búsqueda es por ambos" — código exacto (`ficha-producto`) y por nombre (`productos-buscar-nombre`), no solo uno.
+
+**Implementado:**
+- `mba3Lectura.service.js`: `obtenerProducto(codigo)` ahora llama a `ficha-producto` con `{Codigo: codigo}` (mayúscula); nuevo `buscarProductosPorNombre(nombre)` llama a `productos-buscar-nombre`.
+- **CONFIRMADO contra MBA3 real:** el servidor NO envuelve el término en comodines — hay que mandar `%termino%` explícito, si no siempre da 0 resultados (probado "tornillo" sin `%` = 0 vs. "%a%" = 269 reales, "%3M%" = 118 reales). `buscarProductosPorNombre` ya aplica `%${nombre}%` automáticamente.
+- `mba3Catalogo.service.js`: nuevo tipo de caché `producto_nombre` (clave = término en minúsculas) para `buscarProductosPorNombre`, separado de `producto` (igual razón que R-F2-4: un término de búsqueda no debe colisionar con un código real). Se eliminó la rama de "catálogo completo" de `buscarProductos` (no existe para productos).
+- `mba3.controller.js`: `GET /comercial/mba3/productos` acepta `?codigo=` (exacto) o `?nombre=` (búsqueda); 400 si no viene ninguno; si vienen ambos, gana `codigo`.
+- Frontend (`ConvenioForm.jsx`): cada línea de producto tiene, además del campo de código de siempre, un input "Buscar producto por nombre" + botón, que muestra una lista de resultados (código — descripción) para elegir; al elegir uno se llenan código y descripción de la línea.
+- **Campos reales confirmados y agregados como candidatos** (antes solo había suposiciones en minúscula): producto → `PRODUCTO` (código), `DESCRIPCION`/`NOM_PRODUCTO` (descripción); cliente → `CLIENTE` (código), `NOM_CLIENTE` (nombre); vendedor → `VENDEDOR` (código), `NOM_ESPAÑOL` (nombre). **Hallazgo colateral importante:** antes de este fix, `obtenerVendedor`/`obtenerFichaCliente` buscaban coincidencia exacta por un campo `codigo` que NUNCA existe en las respuestas reales (son `CLIENTE`/`VENDEDOR`) — es decir, el autocompletar de nombre al capturar un código **nunca funcionó de verdad** desde que se construyó en Fase 2, hasta este fix. Verificado en vivo: `obtenerVendedor('MEX01')` y `obtenerFichaCliente('C03658')` ahora sí devuelven el registro real (antes habrían devuelto `null` siempre).
+- 268/268 pruebas (6 nuevas) y 0 errores de eslint.
+
+**Verificado en vivo contra MBA3 real:** `buscarProductosPorNombre('3M')` → 118 resultados reales, con descripción extraída correctamente (`DESCRIPCION`).
+
+**[2026-11-10, actualización] `ficha-producto` TAMBIÉN confirmado — el 500 anterior era por el formato del código, no un bug del servidor.** El humano aclaró que el código de producto debe tener el formato exacto `R-000-00-0000` (letra, 3 dígitos, 2 dígitos, 4 dígitos). Los códigos usados antes para probar (`ABC123`, `NOEXISTE`, `R0100505552` sin guiones) no cumplían ese formato y causaban el 500; con el formato correcto (`R-010-05-0552`, código real) responde `200` con el registro completo, y con códigos inventados pero bien formateados (`R-001-01-0001`, `R-000-00-0000`) responde `200` con `data: []` limpio — sin ningún 500. `obtenerProducto('R-010-05-0552')` ya probado de punta a punta (incluye coincidencia exacta por `PRODUCTO`). **Los 2 caminos de producto (código exacto y búsqueda por nombre) quedan confirmados y funcionando contra MBA3 real — no queda ningún pendiente de este tema.**
+
+---
 
 ### [2026-10-23] [tester] — PARA RESOLVER: pantallas de Asistencia (Fase 5, parte 1), HEAD 461bf58: 3 hallazgos menores; detalle y evidencia en tests.md «Pantallas de administración de Asistencia (Fase 5, parte 1)»
 **PARA RESOLVER F-P5T-1 (menor, código/a11y):** la región `<div role="status" aria-live="polite">` del aviso de sincronización (`AsistenciaSincronizacionPage.jsx`) cambia de texto en cada refresco de 60 s («Última comunicación hace 1 min» → «hace 2 min»; 2 mutaciones en ~125 s con reloj real, Chromium y Firefox): un lector de pantalla lo anuncia cada minuto, contra la intención del comentario del código («sin … anunciar cada actualización»). Sugerencia: dejar `aria-live` solo en el texto que cambia de ESTADO (ok/retraso/fuera de horario) y poner el «hace N min» fuera de la región viva (o `aria-live="off"` en el tick automático). Criterio incumplido: accesibilidad (aria-live sin ruido).

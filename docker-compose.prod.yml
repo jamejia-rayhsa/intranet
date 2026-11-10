@@ -47,6 +47,13 @@ services:
       MSSQL_USER: ${MSSQL_USER}
       MSSQL_PASSWORD: ${MSSQL_PASSWORD}
       MSSQL_DB: ${MSSQL_DB}
+      # Lectura de catálogos MBA3 (Convenios de compra, Fase 2); distinta de MBA3_URL (escritura)
+      MBA3_LECTURA_URL: ${MBA3_LECTURA_URL:-https://mba3api.rayhsa.net}
+      MBA3_LECTURA_USUARIO: ${MBA3_LECTURA_USUARIO:-}
+      MBA3_LECTURA_PASSWORD: ${MBA3_LECTURA_PASSWORD:-}
+      # Service Token de Cloudflare Access para mba3api.rayhsa.net (ver blockers.md)
+      MBA3_LECTURA_CF_ACCESS_CLIENT_ID: ${MBA3_LECTURA_CF_ACCESS_CLIENT_ID:-}
+      MBA3_LECTURA_CF_ACCESS_CLIENT_SECRET: ${MBA3_LECTURA_CF_ACCESS_CLIENT_SECRET:-}
       # Proxies de confianza para req.ip (lista de IP de las llaves de ingesta): vacío = ninguno
       TRUST_PROXY: ${TRUST_PROXY:-}
       # Motor de análisis de asistencia (planificador en proceso, una vuelta cada ASISTENCIA_MOTOR_INTERVALO_MIN min; el candado de PostgreSQL evita que corra en dos réplicas). Apágalo con ASISTENCIA_MOTOR_ACTIVO=false

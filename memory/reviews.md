@@ -3257,6 +3257,304 @@ Hallazgos abiertos:
 4. Ejecutar en modo actualizar y exigir insertados = 0 (con los 71 existentes, cualquier alta indica identificación fallida); revisar los errores "Conflicto" y "Posible duplicado".
 5. Una sola importación a la vez; no lanzar otra mientras corre (R-3).
 
+### [2026-10-23] [revisor] — Convenios de compra: Fase 1
+**Alcance:** worktree feat+comercial-convenios, sin commit. Leídos: roadmap (Fase 1), decisions 2026-10-23, code-notes "[2026-10-23] [coder]", research 2026-10-22, migración 002-convenios-compra.sql, bloque de init.sql, convenio.controller.js, autorizador.controller.js, convenio.model.js, autorizador.model.js, convenios.routes.js, app.js, main.jsx, MenuDinamico.jsx, comercial.css, convenios.service.js, ConveniosListado.jsx, ConvenioForm.jsx, AutorizadoresPage.jsx. Ejecutado: npx jest modules/comercial, 4 suites y 56 tests OK.
+
+**Veredicto: APROBADO CON OBSERVACIONES.** Sin críticos. No hay violación de decisions.md (autorización propia bloqueada, lista de autorizadores con activo, administración solo super_admin, permisos granulares, vigencia calculada en SQL). No hace falta escalar.
+
+**Verificado sin hallazgos:**
+- Autorización propia: se comprueba en JS antes de la lista (convenio.controller.js:26), y ningún UPDATE modifica creado_por_id. Ver R-1 sobre la falta de predicado en SQL.
+- Lista de autorizadores: esActivo exige activo = true (autorizador.model.js:51), así que un dado de baja queda bloqueado. super_admin pasa sin estar en la lista (convenio.controller.js:27). soloSuperAdmin está aplicado en las tres rutas /autorizadores (convenios.routes.js:28-30).
+- Permisos: las 7 rutas de /convenios pasan por verificarPermiso('comercial','Convenios', consulta|edicion), incluido el detalle GET /convenios/:id, así que no hay fuga por esa vía. La migración y init.sql tienen el mismo contenido en tablas, índices, opción y permisos (comparado a mano; solo difieren los comentarios). comercial_admin, portal_admin y super_admin reciben consulta y edición.
+- Transacciones: crear e insert de líneas van en enTransaccion (convenio.model.js:131-160). actualizar toma FOR UPDATE antes de reemplazar líneas (convenio.model.js:164-203), así que no hay carrera con una autorización concurrente.
+- Estados: editar exige estatus = pendiente_autorizacion en el UPDATE y en el bloqueo (convenio.model.js:178). Cancelar excluye cancelado en SQL (convenio.model.js:239). Rechazar exige motivo_rechazo (convenio.controller.js:197).
+- Vigencia: SQL_VENCIDO usa (now() AT TIME ZONE 'America/Mexico_City')::date (convenio.model.js:6). No hay columna de estatus vencido ni new Date() en JS.
+- SQL: todos los valores van por parámetros $N. periodo se valida contra la lista en backend (convenio.controller.js:8 y :46); no hay CHECK en BD, decisión documentada por el coder.
+- Auditoría: las acciones usadas son crear, actualizar, autorizar, rechazar, cancelar, agregar y quitar, todas de 10 caracteres o menos (límite VARCHAR(20) de auditoria).
+- Respuestas de error: ninguna expone mensajes de Postgres al cliente (solo console.error en servidor).
+- Fuera de alcance respetado: no hay referencias a MBA3, CSV, movimientos ni tiempo estimado en los archivos nuevos. El CHECK de rol_opcion_permisos.tipo no se modificó (el diff de init.sql solo agrega INSERTs).
+
+**R-1. MEDIO — Autorizar/rechazar: la exclusión de lo propio no está en el UPDATE**
+**Archivo/línea:** modules/comercial/backend/models/convenio.model.js:211 y :225 (WHERE de autorizar y rechazar); comprobación previa en modules/comercial/backend/controllers/convenio.controller.js:170 y :211.
+**Problema:** la regla "nunca lo propio" depende de una lectura previa (obtener) fuera de la sentencia de escritura; el UPDATE solo protege el estatus. Hoy no hay exploit porque creado_por_id es inmutable en el código, pero un cambio futuro que lo modifique rompería la regla sin que la BD lo impida.
+**Severidad:** medio (defensa en profundidad; no explotable con el código actual).
+**Fix sugerido:** añadir AND creado_por_id <> $N al WHERE de autorizar y rechazar, manteniendo el chequeo JS para el mensaje. Si el UPDATE no afecta filas, el controlador ya responde 409; para distinguir el caso propio, releer la fila tras el 409 o usar FOR UPDATE en una transacción. Prueba: en un test de modelo, forzar creado_por_id igual al usuario y verificar que el UPDATE devuelve 0 filas.
+
+**R-2. MEDIO — IDs no validados como numéricos antes de la query**
+**Archivo/línea:** modules/comercial/backend/controllers/convenio.controller.js:91, 132, 160, 201, 237; modules/comercial/backend/controllers/autorizador.controller.js:26 y :45; modules/comercial/backend/routes/convenios.routes.js:21-26 y :30.
+**Problema:** req.params.id y usuario_id llegan sin validar a SQL. Con /convenios/abc, Postgres lanza 22P02 y la respuesta es 500 "Error al obtener convenio" en vez de 400/404. En agregar solo se maneja 23503, así que un usuario_id no numérico también da 500. No hay inyección (son parámetros), pero incumple la regla de validación de entrada.
+**Severidad:** medio.
+**Fix sugerido:** validar con una expresión tipo ^\d+$ (y rango de INT) en las rutas con :id y en agregar/quitar; responder 400 con mensaje "id inválido".
+
+**R-3. MEDIO — Fechas y montos sin validar en backend: entradas inválidas terminan en 500**
+**Archivo/línea:** modules/comercial/backend/controllers/convenio.controller.js:60-65 (fecha_inicio, vigente_hasta) y :37-48 (validarProductos); modules/comercial/backend/models/convenio.model.js:119-125 (empaque, precios, factor).
+**Problema:** solo se verifica que fecha_inicio exista; un formato inválido llega a Postgres (22007) y da 500. La comparación vigente_hasta < fecha_inicio (:63) es de strings, correcta solo con formato ISO. empaque, precio_compra, precio_venta y factor no se validan: aceptan negativos, y texto no numérico da 500.
+**Severidad:** medio.
+**Fix sugerido:** validar fecha_inicio y vigente_hasta con formato AAAA-MM-DD y fecha real; validar empaque, precio_* y factor como números finitos mayores o iguales a 0 (o null). Responder 400 con mensaje por campo.
+
+**R-4. MEDIO (a confirmar con el humano) — Cancelar no exige autoridad**
+**Archivo/línea:** modules/comercial/backend/controllers/convenio.controller.js:235-257; modules/comercial/backend/models/convenio.model.js:234-245; ruta convenios.routes.js:26.
+**Problema:** cualquier usuario con permiso de edición puede cancelar un convenio ya autorizado, sin estar en la lista de autorizadores ni ser super_admin. Las decisiones no dicen si cancelar requiere autoridad, pero cancelar una compra aprobada es una decisión de negocio sensible.
+**Severidad:** medio (pendiente de confirmación).
+**Fix sugerido:** preguntar al humano. Si cancelar autorizados requiere autoridad, aplicar motivoSinAutoridad al cancelar cuando previo.estatus es autorizado, o limitar esa transición a super_admin y autorizadores.
+
+**R-5. BAJO — Autorizar/rechazar: 409 de estado antes que 403 de autoridad**
+**Archivo/línea:** modules/comercial/backend/controllers/convenio.controller.js:162-167 y :203-208 (antes de motivoSinAutoridad en :170 y :211).
+**Problema:** un usuario sin autoridad recibe 409 si el convenio ya no está pendiente, lo que revela el estado a quien no debería consultarlo.
+**Severidad:** bajo.
+**Fix sugerido:** invertir el orden: primero motivoSinAutoridad (403), luego el estado (409).
+
+**R-6. BAJO — Respuestas con forma inconsistente entre listar/obtener y las acciones**
+**Archivo/línea:** modules/comercial/backend/models/convenio.model.js:131-160 (crear), :164-203 (actualizar), :206-217 (autorizar), :219-231 (rechazar), :234-245 (cancelar).
+**Problema:** listar y obtener devuelven vencido, creado_por_nombre y productos; crear, actualizar, autorizar, rechazar y cancelar devuelven RETURNING * sin vencido ni nombres. Un front que reemplace la fila con la respuesta de una acción pierde campos.
+**Severidad:** bajo.
+**Fix sugerido:** tras cada escritura, devolver Convenio.obtener(id) para que todas las respuestas tengan la misma forma.
+
+**R-7. BAJO — productos con elementos null produce 500**
+**Archivo/línea:** modules/comercial/backend/controllers/convenio.controller.js:36-37.
+**Problema:** con productos: [null], p.producto_descripcion lanza TypeError y responde 500 en vez de 400.
+**Severidad:** bajo.
+**Fix sugerido:** al inicio del bucle, rechazar p nulo o no objeto con un mensaje de formato inválido. Opcional: tope de líneas por convenio (hoy no hay límite).
+
+**R-8. BAJO — Filtros de listado: ILIKE sin escapar y estatus sin validar**
+**Archivo/línea:** modules/comercial/backend/models/convenio.model.js:35-36 (estatus), :43-44 y :51-52 (ILIKE).
+**Problema:** % y _ del usuario actúan como comodines; ?estatus=a&estatus=b produce un arreglo que puede dar 500. No hay inyección.
+**Severidad:** bajo.
+**Fix sugerido:** escapar \, % y _ en el patrón ILIKE, y validar estatus contra la lista de la CHECK antes de consultar.
+
+**R-9. BAJO — Edición sin control de propiedad ni de autoridad**
+**Archivo/línea:** modules/comercial/backend/models/convenio.model.js:164-203; ruta modules/comercial/backend/routes/convenios.routes.js:23.
+**Problema:** cualquiera con edición puede reescribir cabecera y líneas de un convenio ajeno mientras esté pendiente. Es coherente con el permiso granular, pero no está confirmado en decisions.md.
+**Severidad:** bajo.
+**Fix sugerido:** confirmar con el humano. Si debe ser solo del creador o de un autorizador, añadir la comprobación en el controlador antes de Convenio.actualizar.
+
+**R-10. BAJO — Autorizador desactivado en la ventana entre lectura y UPDATE**
+**Archivo/línea:** modules/comercial/backend/controllers/convenio.controller.js:170 (lectura de esActivo) y modules/comercial/backend/models/convenio.model.js:207 (UPDATE).
+**Problema:** la autoridad se evalúa antes del UPDATE, fuera de transacción. Si la baja ocurre en ese intervalo, la autorización se completa. Es una ventana de milisegundos y aceptable para este caso.
+**Severidad:** bajo.
+**Fix sugerido:** documentarlo como aceptado. Si se quiere cerrar, hacer la lectura de autoridad y el UPDATE en una transacción con FOR SHARE sobre la fila de comercial_autorizadores.
+
+**R-11. BAJO — Frontend: Editar sin manejo de error al cargar**
+**Archivo/línea:** modules/comercial/frontend/pages/ConvenioForm.jsx:34-50.
+**Problema:** obtenerConvenio(id).then(...).finally(...) no tiene catch. Si la carga falla, el formulario queda vacío sin mensaje, y un guardado posterior sobrescribiría el convenio con lo que el usuario capture.
+**Severidad:** bajo.
+**Fix sugerido:** añadir catch que muestre el error, y no permitir guardar en modo edición si no hubo datos cargados.
+
+**R-12. BAJO — Frontend: botones de autorizar/rechazar visibles a quien no puede usarlos**
+**Archivo/línea:** modules/comercial/frontend/pages/ConveniosListado.jsx:113-119; modules/portal/frontend/components/MenuDinamico.jsx:37-38 (opción "Autorizadores" visible con permiso Convenios).
+**Problema:** los botones aparecen al creador y a usuarios que no son autorizadores; el backend responde 403 y la UI solo muestra el texto del error. El menú "Autorizadores" aparece a comercial_admin y portal_admin, que solo ven el aviso de la página.
+**Severidad:** bajo.
+**Fix sugerido:** ocultar los botones cuando creado_por_id coincida con el usuario, y exponer si el usuario es autorizador activo (p. ej. en /me). Para el menú, filtrar "Autorizadores" por rol_nombre === 'super_admin'.
+
+**R-13. BAJO — Documentación de rol desfasada (no introducido por este cambio)**
+**Archivo/línea:** .claude/rules/backend/api.md (dice "un rol por usuario via usuarios.rol_id"); código real en modules/portal/backend/middleware/auth.middleware.js:66-85 (lee usuario_rol ... LIMIT 1).
+**Problema:** la regla del proyecto no coincide con el código, y el código no ordena el LIMIT 1, así que con dos roles el resultado no es determinista. Este cambio depende de req.user.rol_nombre y rol_id para super_admin y permisos.
+**Severidad:** bajo.
+**Fix sugerido:** corregir api.md o el middleware según la decisión vigente, y añadir ORDER BY determinista en completarRol. Fuera del alcance de este encargo; registrado como nota.
+
+**Notas de alcance:** productos[] sin tope de tamaño y falta de test de concurrencia real ya estaban anotados por el coder; siguen abiertos para la Fase 6.
+
+### [2026-10-23] [revisor] — Convenios de compra: Fase 2 (MBA3)
+**Alcance:** worktree feat+comercial-convenios, sin commit. Leídos: code-notes "[2026-10-23] [coder] — Convenios de compra Fase 2", decisions 2026-10-23 (endpoints y canal confirmados), blockers (Cloudflare Access, hoy), roadmap "Fase 2 — Integración de lectura MBA3" y el diff/archivos nuevos (services, model, controller mba3, migración 003, convenio.controller diff, routes, ConvenioForm diff, env y compose). No se pegó al MBA3 real ni se corrieron pruebas; revisión de código.
+
+**Veredicto: APROBADO CON OBSERVACIONES.** Sin críticos: no hay violación de decisions.md (la API de lectura no se mezcla con el web service de escritura, los endpoints son los confirmados por el humano, y la captura no se bloquea por MBA3). No hace falta escalar por crítico. Recomiendo que el coder corrija R-F2-1 (snapshot con código no exacto) y R-F2-2 (login sin coordinación) antes del GO a staging.
+
+**Verificado sin hallazgos:**
+- Tokens: `access_token`/`refresh_token` viven en `estado` (variable de módulo, `mba3Lectura.service.js:58-61`), nunca en BD ni en respuestas. La cuenta de servicio es única, así que no hay fuga entre usuarios; los logs solo imprimen `error.message`.
+- Reintento acotado: `llamarEndpoint` (`mba3Lectura.service.js:130-149`) hace como máximo dos peticiones al endpoint; un 401 tras el reintento sale como `ErrorMba3`. No hay bucle.
+- Sin configurar: `login()` lanza `ErrorMba3NoConfigurado` antes de cualquier red (`:89`). En `/mba3/*` se traduce a 503 (`mba3.controller.js:11-12`); en guardado lo captura `resolverCampo` y deja advertencia.
+- Guardado: todo lo que lanza `fnResolver` queda dentro del try de `resolverCampo` (`convenio.controller.js:22-40`); no aparece 500/502 nuevo en crear/editar.
+- TTL por tipo correcto (`mba3Catalogo.service.js:11-17`): producto 30 min, cliente 15 min, vendedor 1 h, existencias 5 min.
+- Fallback sin caché: `conCache` relanza solo si no hay nada cacheado; el llamador lo degrada a advertencia (`mba3Catalogo.service.js:45-53`).
+- Migración idempotente (`003-mba3-cache.sql:8,11`), replicada en `init.sql` (bloque nuevo, ~línea 671) y en `docker-compose.supabase.yml:88,118-122`. SQL parametrizado en `cacheMba3.model.js`.
+- Variables: `MBA3_LECTURA_URL/USUARIO/PASSWORD` no comparten nombre ni valor con `MBA3_URL/MBA3_CORP/MBA3_PASSWORD` en los dos `.env.*.example` ni en los tres compose.
+- Permisos: las 5 rutas `/mba3/*` (`convenios.routes.js:35-39`) pasan por `authenticateJWT` (global) y `verificarPermiso('comercial','Convenios','consulta')`.
+- Validación: `ficha`, `clientesPorVendedor` y `existenciasVentas` rechazan código vacío con 400 antes de llamar a MBA3. Respuestas con `exito` y `mensaje`/`advertencias`, consistentes con el patrón.
+- Fuera de alcance respetado: no hay CSV, movimientos, dashboard ni escritura hacia `wsAPIS/api_wr`.
+
+**Hallazgos:**
+
+**R-F2-1 — Snapshot con registro de otro cliente/vendedor/producto (coincidencia no exacta).**
+**Archivo/línea:** `modules/comercial/backend/services/mba3Lectura.service.js:180, 197, 207` (`lista[0]`, `data[0]`); `modules/comercial/frontend/pages/ConvenioForm.jsx:98, 108` (`res.datos[0]`); `modules/comercial/backend/controllers/mba3.controller.js:48-51` (filtro de vendedores por `includes`).
+**Problema:** ninguna capa verifica que el primer registro tenga `codigo` igual al pedido; el filtro de vendedores es por subcadena, así que buscar "1" puede traer "10" u "11" y el nombre equivocado queda guardado (el backend lo sobreescribe en `convenio.controller.js:30`).
+**Severidad:** alto.
+**Fix sugerido:** en las tres funciones de `mba3Lectura` y en el formulario, aceptar solo coincidencia exacta del campo código (`String(registro.<campo_codigo>).trim() === codigo`); si no hay coincidencia, tratar como "no encontrado" con advertencia. Poner el nombre del campo de código en una sola constante.
+
+**R-F2-2 — Login sin single-flight ni cooldown: riesgo de bloquear la cuenta de servicio.**
+**Archivo/línea:** `modules/comercial/backend/services/mba3Lectura.service.js:131, 137-141` (login/refresh sin coordinación), `:86-94`.
+**Problema:** peticiones concurrentes sin token disparan N logins en paralelo; con credenciales malas, cada petición (cada blur, cada guardado con varias líneas) vuelve a intentar login. Según el manual, 5 fallos bloquean la cuenta 15 min y el login tiene 5 req/min.
+**Severidad:** alto.
+**Fix sugerido:** compartir una promesa en curso para login y refresh (single-flight); tras un fallo de login, cooldown (p. ej. 60 s) sin reintentar; no reintentar ante 429.
+
+**R-F2-3 — Latencia de guardado sin límite total de tiempo cuando MBA3 está caído.**
+**Archivo/línea:** `modules/comercial/backend/controllers/convenio.controller.js:42-63` (llamadas en serie), `:192, 220`; `mba3Lectura.service.js:70` (timeout 10 s por llamada).
+**Problema:** con MBA3 colgado, cada consulta cuesta hasta 10 s; un convenio con N productos suma del orden de (2+N)×10 s antes de guardar. No da 500, pero contradice "nunca bloquear el guardado" y puede cortar la petición del navegador.
+**Severidad:** medio (sube a alto si MBA3 se cae con frecuencia).
+**Fix sugerido:** resolver en paralelo con límite de concurrencia (`Promise.allSettled`), presupuesto total para autocompletar (p. ej. 3 s), y corte en el proceso tras error de red para no reintentar al host durante unos segundos.
+
+**R-F2-4 — Caché colisionable por entrada del usuario (clave `'*'`).**
+**Archivo/línea:** `modules/comercial/backend/services/mba3Catalogo.service.js:65-67` (`resolverProducto` usa el código tal cual), `:86` (`buscarProductos` usa `codigo || '*'`), `:58`, `:79-82` (vendedores: `'*'` guarda el arreglo y `resolverVendedor('*')` guarda un registro en la misma clave).
+**Problema:** un usuario con permiso de edición que escriba `producto_codigo: "*"` envenena durante 30 min el catálogo completo de productos (y 1 h el de vendedores). `mba3.controller.js:50` hace `.filter` sobre un objeto, lo que da TypeError y 502 en la búsqueda.
+**Severidad:** medio.
+**Fix sugerido:** separar claves por forma (p. ej. `catalogo_producto` vs `producto`) y validar el código en rutas y en `resolverCampo` (no vacío, sin `*`, longitud máxima, charset acotado).
+
+**R-F2-5 — Caché sin límite de crecimiento ni purga; amplificación hacia MBA3 sin límite de tasa.**
+**Archivo/línea:** `modules/comercial/backend/models/cacheMba3.model.js:18-26`; `migrations/003-mba3-cache.sql:11` (índice en `consultado_en` sin job de purga); `mba3.controller.js:21, 34, 74` (sin longitud máxima).
+**Problema:** cualquier usuario con `Convenios:consulta` crea una fila y una llamada a MBA3 por cada código distinto que escriba; no hay purga ni límite de tasa propio (el coder lo reconoce como pendiente).
+**Severidad:** medio.
+**Fix sugerido:** validar longitud y charset del código; límite de tasa por usuario en `/mba3/*`; purga periódica de filas con `consultado_en` mayor a N días.
+
+**R-F2-6 — Paginación truncada en silencio.**
+**Archivo/línea:** `modules/comercial/backend/services/mba3Lectura.service.js:163` (si no viene `pagination.total`, `total = acumulado.length` y corta en la primera página); `:38, 157` (tope de 20 páginas, unos 2000 registros).
+**Problema:** un catálogo sin `total` se queda con 100 registros, y uno mayor a 2000 se corta; en ambos casos sin advertencia al usuario.
+**Severidad:** medio.
+**Fix sugerido:** si falta `total`, seguir hasta página vacía; al llegar al tope, devolver advertencia "resultado truncado" en `advertencias`.
+
+**R-F2-7 — Datos crudos de MBA3 cacheados y devueltos completos a todos los usuarios con consulta.**
+**Archivo/línea:** `modules/comercial/backend/models/cacheMba3.model.js:25` (guarda el registro completo como JSONB); `modules/comercial/backend/controllers/mba3.controller.js:24, 52, 64, 77` (devuelve el registro completo).
+**Problema:** la forma del registro no está confirmada y puede incluir crédito, saldo, RFC o dirección que el formulario no necesita. Se guardan en una tabla compartida y se entregan a cualquier usuario con permiso de consulta.
+**Severidad:** medio.
+**Fix sugerido:** proyectar a campos mínimos (código, nombre, vendedor, descripción) antes de cachear y de devolver; documentar qué campos se conservan y confirmarlo con el humano antes de staging.
+
+**R-F2-8 — Advertencia engañosa cuando el registro existe pero no trae un campo de nombre reconocido.**
+**Archivo/línea:** `modules/comercial/backend/controllers/convenio.controller.js:33` ("MBA3 no encontró ... con código"), alimentado por `modules/comercial/backend/services/mba3Catalogo.service.js:111-120`.
+**Problema:** si MBA3 sí devuelve el registro pero con un nombre de campo no previsto, la advertencia dice "no encontró" y la suposición de campos queda oculta.
+**Severidad:** medio.
+**Fix sugerido:** distinguir "sin registro" de "registro sin campo de nombre reconocido" y registrar una vez (sin datos) las claves del registro para ajustar la lista.
+
+**R-F2-9 — Suposición de campos repetida en backend y frontend.**
+**Archivo/línea:** `mba3Catalogo.service.js:111, 115, 119`; `modules/comercial/frontend/pages/ConvenioForm.jsx:19-24, 85-109` (listas propias de nombres de campo).
+**Problema:** un cambio de nombre de campo obliga a tocar al menos cuatro listas en dos capas; el frontend interpreta campos crudos de MBA3.
+**Severidad:** medio.
+**Fix sugerido:** que el backend devuelva un objeto normalizado (`{ codigo, nombre, ... }`) y el frontend lea solo esas claves; dejar la lista de nombres en un único módulo del backend.
+
+**R-F2-10 — Despliegue: la migración 002 (Fase 1) no está en la lista de `supabase-db-init`.**
+**Archivo/línea:** `docker-compose.supabase.yml:85-122` (solo se añade `003`).
+**Problema:** en un Supabase nuevo no se crean las tablas de Convenios de la Fase 1, y la Fase 2 sí. El coder lo documentó como hueco heredado, pero bloquea staging.
+**Severidad:** medio (preexistente de Fase 1, relevante para el despliegue).
+**Fix sugerido:** añadir `002-convenios-compra.sql` antes de `003`, con el mismo patrón de volumen y `psql`.
+
+**R-F2-11 — Llamadas a MBA3 antes de validar y antes del chequeo de propiedad.**
+**Archivo/línea:** `modules/comercial/backend/controllers/convenio.controller.js:192` (crear, antes de `validarCabecera`), `:220` (actualizar, antes del chequeo de creador en `:229-232`).
+**Problema:** se consulta MBA3 para peticiones que luego se rechazan con 400 o 403.
+**Severidad:** bajo.
+**Fix sugerido:** mover `resolverSnapshots` después de las validaciones y del chequeo de propiedad (en actualizar, después de `:232`).
+
+**R-F2-12 — Mensajes internos expuestos al cliente.**
+**Archivo/línea:** `modules/comercial/backend/controllers/mba3.controller.js:12, 15` (campo `error: error.message` en 502; 503 expone nombres de variables), `convenio.controller.js:35` (mensaje de error en `advertencias`), `mba3Lectura.service.js:43`.
+**Problema:** el detalle del error de MBA3 y los nombres de variables de entorno llegan a cualquier usuario con consulta.
+**Severidad:** bajo.
+**Fix sugerido:** mensaje genérico en la respuesta y detalle solo en el log.
+
+**R-F2-13 — Errores de login fuera de `convertirError`.**
+**Archivo/línea:** `modules/comercial/backend/services/mba3Lectura.service.js:131` (`login()` fuera del try) y `:140`.
+**Problema:** un error de login sale como AxiosError crudo, no como `ErrorMba3`; el manejo posterior depende del llamador.
+**Severidad:** bajo.
+**Fix sugerido:** envolver `login()` y `refrescar()` con `convertirError` dentro de `llamarEndpoint`.
+
+**R-F2-14 — Caché negativa de 15 min.**
+**Archivo/línea:** `modules/comercial/backend/services/mba3Catalogo.service.js:57-59` y `modules/comercial/backend/models/cacheMba3.model.js:18-26` (se guarda `null`).
+**Problema:** un cliente dado de alta en MBA3 no aparece hasta que expire la caché; una respuesta vacía transitoria queda fijada.
+**Severidad:** bajo.
+**Fix sugerido:** no cachear `null`, o usar un TTL más corto para negativos.
+
+**R-F2-15 — Autocompletar en el frontend puede sobrescribir un nombre con una respuesta tardía.**
+**Archivo/línea:** `modules/comercial/frontend/pages/ConvenioForm.jsx:85-92` (`setCabecera` tras `await`, sin comprobar que el código siga vigente).
+**Problema:** si el usuario cambia el código mientras llega la respuesta, queda el nombre del código anterior.
+**Severidad:** bajo.
+**Fix sugerido:** comparar el código actual con el enviado antes de aplicar el resultado.
+
+**Notas de alcance:** el contrato real de MBA3 sigue sin verificarse en vivo (blocker de Cloudflare Access). R-F2-1, R-F2-7 y R-F2-8 dependen de la forma real del registro y deben revisarse al llegar el Service Token. Los bodies de `clientes-vendedor`, `vendedores`, `productos` y `acuvtaprod` siguen siendo suposición. No se modificó código, no hubo commit, y `memory/INDEX.md` no se tocó por instrucción del encargo.
+
+### [2026-10-23] [revisor] — Convenios de compra: Fase 3 (carga CSV)
+
+**Veredicto:** APROBADO CON OBSERVACIONES, 0 críticos. No hay violación de decisions.md (separación de folios 60/124 por cliente cumplida). Verificado contra el CSV real: 197 filas de datos con 39 campos cada una; 171 grupos folio+cliente; 170 convenios candidatos (120 autorizado / 50 cancelado), 196 líneas; folio 130 omitido sin convenio vacío; folio 37 cancelado por "Ya no comprar"; folio 61 serial 46112 -> 2026-03-31; folios 139/140 reparados a 2026-08-20; sin claves duplicadas; ningún `vigente_hasta` anterior a `fecha_inicio`. Tests: 59/59 pasan (importar-convenios-historicos + convenio.model). Los conteos del reporte del coder coinciden con lo que produce el código.
+
+**Confirmado correcto:**
+- Transacción por convenio: `Convenio.crearHistorico` usa `enTransaccion` (convenio.model.js:250); `ejecutar` captura el error por candidato (script:723-733) y sigue con los demás. Un fallo no revierte convenios previos.
+- SQL parametrizado en todas las consultas nuevas (model:243-300).
+- `--creado-por-usuario-id` / `--creado-por-correo` se validan contra `usuarios` en `resolverCreadoPorId` (script:634-644) antes de cualquier INSERT; falla con mensaje claro.
+- Parser CSV: saltos de línea dentro de comillas (folios 54, 139, 140) y filas finales vacías correctos.
+- Exclusión de líneas CANCELADO antes de construir el convenio (script:527-562).
+
+**Hallazgos:**
+
+**R-P3-1 — Folio 90 (BA GLASS) importado como `autorizado` con fecha ya vencida.**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:431-447` (CSV fila 118).
+**Problema:** VIGENCIA literal es "No sale en precio"; la heurística toma OBSERVACIONES="19/08/2026" como `vigente_hasta` y deja el convenio activo. Esa fecha ya pasó (hoy 2026-10-23) y el texto literal apunta a producto fuera de precio, es decir, cancelado. Tiene advertencia, pero el estatus por defecto es el que entra a la base.
+**Severidad:** alto.
+**Fix sugerido:** importar este folio como `cancelado` o dejarlo fuera hasta decisión humana. Como mínimo, la heurística no debe dar `autorizado` cuando la fecha tomada de OBSERVACIONES ya pasó.
+
+**R-P3-2 — Idempotencia: un convenio creado desde la UI con el mismo `folio_origen` hace que el histórico se omita en silencio.**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:701-710`; `modules/comercial/backend/models/convenio.model.js:285-291`; `modules/comercial/frontend/pages/ConvenioForm.jsx:181` (folio de texto libre).
+**Problema:** `existeHistorico` no distingue convenios históricos de los creados por la UI. Si un usuario escribió un folio igual a uno del CSV con el mismo cliente, el histórico se reporta como "ya importado" (motivo incorrecto) y no se crea.
+**Severidad:** medio.
+**Fix sugerido:** marcar el origen (columna `origen` o flag) y consultar solo esas filas; como mínimo, mostrar en el reporte el id y `creado_por_id` del convenio existente.
+
+**R-P3-3 — Dry-run y corrida real divergen si un folio+cliente se divide por vendedor (ruta latente).**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:358-367` (split por vendedor) y `:701-710` (chequeo contra BD).
+**Problema:** los dos subgrupos comparten folio y cliente. En la corrida real, el segundo subgrupo encuentra la fila recién insertada por el primero y se omite como "ya importado" (se pierden sus líneas). En `--dry-run` ambos aparecen como "creados". El CSV actual no dispara esta ruta (verificado: ningún folio+cliente tiene dos vendedores) y el test de línea 329 solo cubre funciones puras, no `ejecutar`.
+**Severidad:** medio.
+**Fix sugerido:** llevar un `Set` de claves creadas o simuladas dentro de la corrida y consultarlo antes de `existeHistorico`; añadir test de `ejecutar` con un folio dividido por vendedor.
+
+**R-P3-4 — Re-ejecutar con una línea nueva en un folio+cliente ya importado no la inserta ni avisa.**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:705-710`.
+**Problema:** la clave es folio+cliente; si el CSV gana una línea para un convenio ya importado, se omite como "ya importado" con exit 0 y la línea nueva nunca entra. No hay diferencia de líneas en el reporte.
+**Severidad:** medio.
+**Fix sugerido:** comparar número de líneas/productos con la BD y reportar `[diferencia]` con detalle; documentar que la carga es de una sola corrida.
+
+**R-P3-5 — Periodo "mensual" asignado sin dato fuente a casi todas las líneas; "20-30 meses" queda como 20 mensual.**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:237` (default) y `:249-250`; CSV fila 119 (folio 91, CONSUMO="20-30 meses").
+**Problema:** cualquier CONSUMO sin BIMESTRAL/TRIMESTRAL recibe `periodo='mensual'` sin advertencia. Es la mayoría de las líneas y aparentan dato confirmado. "Meses" se trata como mensual.
+**Severidad:** medio.
+**Fix sugerido:** advertencia por línea cuando no hay periodo explícito, o valor de periodo "no especificado"; tratar "meses" como periodo propio. El humano debe aceptar la suposición antes de la carga real.
+
+**R-P3-6 — Inventario histórico (columna `16.10.26`) descartado: 193 de 197 filas con dato.**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:89-110` (no se mapea); CSV columna índice 28.
+**Problema:** verificado que la columna tiene valor en 193 filas. Se ignoró por encargo y el coder lo documentó; no es defecto de código sino decisión pendiente con dato de negocio perdido.
+**Severidad:** medio (decisión de negocio que bloquea la carga real según la Puerta del roadmap).
+**Fix sugerido:** decidir con el humano el destino (columna en `comercial_convenio_productos` u observaciones) antes de la carga real y re-verificar.
+
+**R-P3-7 — Estatus tomado solo de la primera línea del grupo (frágil al orden).**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:396` y `:518-524`.
+**Problema:** VIGENCIA, OBSERVACIONES y AUTORIZACION se leen de `filas[0]`. En folio 68 la primera línea trae AUTORIZACION="SIA" y otra línea vacía; si cambiara el orden, el convenio quedaría cancelado. Hoy no cambia el resultado.
+**Severidad:** bajo.
+**Fix sugerido:** definir una regla explícita sobre el grupo (por ejemplo, cancelado si cualquier línea trae "Ya no comprar"/"No vigente") y documentarla.
+
+**R-P3-8 — Seis convenios importados como `autorizado` con `vigente_hasta` ya vencido.**
+**Archivo/línea:** resultado de la carga (folios 19, 20, 59, 61, 67, 90).
+**Problema:** `vigente_hasta` entre 2026-03-31 y 2026-08-19, anterior a hoy. Si la Fase 5 cuenta `autorizado` como activo, aparecerán como vigentes.
+**Severidad:** bajo.
+**Fix sugerido:** confirmar que Fase 5 calcula "vencido" por fecha y no por estatus, o decidir estatus para estos seis.
+
+**R-P3-9 — "Fila N" en el reporte es índice lógico, no línea física del archivo.**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:662-667`.
+**Problema:** `numeroFila` cuenta registros, no líneas; con saltos dentro de comillas el número no coincide con la línea del editor (folios 139/140).
+**Severidad:** bajo.
+**Fix sugerido:** registrar la línea física en el parser o llamarlo "registro N" en el reporte.
+
+**R-P3-10 — Parser de CONSUMO: coma decimal se lee como miles (latente).**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:249`.
+**Problema:** "1,5" se convierte en 15. No hay casos así en el CSV actual, pero sería un error silencioso si aparecen.
+**Severidad:** bajo.
+**Fix sugerido:** tratar la coma como miles sólo con exactamente tres dígitos después; en otro caso como decimal o con advertencia.
+
+**R-P3-11 — Sin restricción de unicidad para el histórico (carrera entre corridas).**
+**Archivo/línea:** `modules/comercial/backend/migrations/002-convenios-compra.sql:6-25`.
+**Problema:** la idempotencia depende de un SELECT previo sin lock; dos corridas simultáneas pueden duplicar.
+**Severidad:** bajo.
+**Fix sugerido:** índice único parcial para históricos o advertencia operativa de una sola corrida.
+
+**R-P3-12 — Filas con solo FOLIOS/CLIENTE/MARCA vacíos se descartan sin contarse (latente).**
+**Archivo/línea:** `scripts/comercial/importar-convenios-historicos.js:263-265` y `:665`.
+**Problema:** una fila con datos de precio pero sin esos campos se omite sin aparecer en el reporte. El CSV actual no tiene ninguna (verificado).
+**Severidad:** bajo.
+**Fix sugerido:** contar las filas saltadas con datos en el reporte.
+
+**Notas de alcance:** sin conexión a MBA3 (Fase 2 intacta); no se tocan tablas de Fase 4/5; `package.json` solo agrega el script. No se revisó la corrida contra Postgres real (los conteos del coder no se repitieron aquí, solo el dry-run lógico). Antes de la carga real, la Puerta del roadmap exige decidir R-P3-1, R-P3-5 y R-P3-6. No se modificó código, no hubo commit, y `memory/INDEX.md` no se tocó por instrucción del encargo.
+
+---
+
 ### [2026-10-23] [revisor] — Pantallas de administración de Asistencia (Fase 5, parte 1)
 **Alcance:** commit a76e37c (rama feat/asistencia-pantallas, árbol de trabajo). 5 pantallas RH, 7 endpoints GET nuevos, MenuDinamico (modo estricto), CSS, pruebas. Lectura de memory/decisions.md, code-notes.md, docs/asistencia/*, .claude/rules/*.
 **Veredicto:** CON OBSERVACIONES. Crítico: 0. Alto: 0. Medio: 8. Bajo: 10.
