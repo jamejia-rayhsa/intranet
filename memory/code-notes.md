@@ -920,3 +920,12 @@ Archivos modificados:
 **Decisión de código:** la guarda ahora es `auth_tipo !== 'local'` (fail-closed: 'MS365', 'x', vacío, null exigen OAuth; la columna es NOT NULL DEFAULT 'local' y hoy solo hay 'local'/'ms365', sin cambio para ellas); `amr` con `password` se rechaza aunque traiga `oauth`. `scripts/cuentas/prep.js` y `scripts/importar-usuarios/prep.js` firman tokens ms365 con `amr oauth`; `verificar-motor.js` crea cuentas `local` (sin cambio).
 **Trampa evitada:** el fixture de `auth.middleware.test.js` no tenía `auth_tipo` y con fail-closed pasó a 401; ahora lleva `'local'`.
 **NO verificado:** no repetí la prueba con GoTrue real tras estos ajustes (solo jest); los harnesses no se re-ejecutaron.
+
+### [2026-11-10] [coder] — Consumo automático MBA3: trampas encontradas
+- `pedidos-detalle` exige `pedido` (único parámetro); el "Error ejecutando la consulta" de la investigación anterior era por no mandarlo bien, no un fallo del servidor. `facturas` usa `FECHA_INI`/`FECHA_FIN`; `notascredito` igual.
+- `FACTURADOS` de `pedidos-detalle` es 0 siempre; usar `FACTURADO` (bool) + `DESPACHADOS` (ver `cantidadFacturada`).
+- `notascredito` trae el cliente como `C00255-R0001` (con sufijo de empresa) y `facturas`/`pedidos-detalle` como `C00255`: normalizar antes de comparar. Solo `CONCEPTO='DEVV'` es devolución física (178 de 194 NC en 30 días eran `NCAA`, aplicación de anticipo).
+- `paginarTodo` corta en 2 000 registros y solo avisa por `advertencias`: la sincronización parte el rango en trozos de 7 días y trata un resultado truncado como trozo incompleto (no avanza el punto cubierto).
+- Nunca registrar el objeto de error de axios (headers con el Service Token de Cloudflare): solo `.message`; hay pruebas que lo verifican.
+- Los scripts de prueba dentro del contenedor deben copiarse a `/app` (no `/tmp`) para resolver `node_modules`.
+- `ON CONFLICT ... DO UPDATE ... WHERE` distingue insertado/actualizado/sin cambios con `RETURNING (xmax = 0)`: sin fila = sin cambios.

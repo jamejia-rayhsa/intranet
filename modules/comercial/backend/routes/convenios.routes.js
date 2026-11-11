@@ -3,6 +3,7 @@ const ControladorConvenio = require('../controllers/convenio.controller');
 const ControladorAutorizador = require('../controllers/autorizador.controller');
 const ControladorMba3 = require('../controllers/mba3.controller');
 const ControladorMovimiento = require('../controllers/movimiento.controller');
+const ControladorSincronizacionMba3 = require('../controllers/sincronizacionMba3.controller');
 const { authenticateJWT } = require('../../../portal/backend/middleware/auth.middleware');
 const { verificarPermiso } = require('../../../portal/backend/middleware/permisos.middleware');
 
@@ -22,6 +23,9 @@ function soloSuperAdmin(req, res, next) {
 router.get('/convenios', verificarPermiso(MODULO, OPCION, 'consulta'), ControladorConvenio.listar);
 // Fase 5 — antes de '/convenios/:id': de otro modo Express la capturaría como id="dashboard".
 router.get('/convenios/dashboard', verificarPermiso(MODULO, OPCION, 'consulta'), ControladorConvenio.dashboard);
+// Consumo automático desde MBA3 — también antes de '/convenios/:id'.
+router.get('/convenios/sincronizacion-mba3', verificarPermiso(MODULO, OPCION, 'consulta'), ControladorSincronizacionMba3.estado);
+router.post('/convenios/sincronizacion-mba3', verificarPermiso(MODULO, OPCION, 'edicion'), ControladorSincronizacionMba3.ejecutar);
 router.get('/convenios/:id', verificarPermiso(MODULO, OPCION, 'consulta'), ControladorConvenio.obtener);
 router.post('/convenios', verificarPermiso(MODULO, OPCION, 'edicion'), ControladorConvenio.crear);
 router.put('/convenios/:id', verificarPermiso(MODULO, OPCION, 'edicion'), ControladorConvenio.actualizar);

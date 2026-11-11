@@ -1546,3 +1546,27 @@ Al desactivar (o registrar inactiva/sábado/domingo/sobre festivo) una actividad
 **Qué se hizo:** PR #29 salió `CONFLICTING` (main avanzó con PR #27/#28; solo `memory/INDEX.md` y `decisions.md`, append-only, resueltos conservando ambos lados) — GitHub no dispara CI sobre PRs con conflicto. Tras resolver: CI verde (3660/3660, 0 errores de eslint), merge, CI de `main` construyó las imágenes `64dc6fd`. Staging (`prometeo`, `/home/jamejia/intranet-stagging`): respaldo previo (`backup.sh`, sin cifrar), checkout `64dc6fd`, `IMAGE_TAG` actualizado, `pull` + `up -d`.
 
 **Verificado:** migración `comercial-005-convenio-movimientos.sql` aplicada sin error (tabla vacía, 0 filas); contenedores `intranet_*` arriba; backend en producción sin errores; `https://staging.rayhsa.net/` → 200; `/api/comercial/convenios/dashboard` sin sesión → 401. NO verificado: UI en navegador con usuario real (pendiente del humano).
+
+---
+
+### [2026-11-10] [coder] — Consumo automático de Convenios desde MBA3 (construido y verificado en BD local aislada; sin push/despliegue)
+
+**Decisiones del humano:** (1) cantidad de consumo = "facturados"; (2) las devoluciones se restan del consumo; (3) una vez al día. Convenios históricos sin código de cliente/producto: sin respuesta todavía → por omisión quedan **manuales** (la sincronización los omite y los cuenta en el reporte `lineas_omitidas.sin_codigo`).
+
+**Interpretación que NO fue literal (avisar al humano):** el campo `FACTURADOS` de `pedidos-detalle` vale 0 en el 100 % de una muestra real (60 pedidos, 398 renglones; 261 con `FACTURADO=true` y número de factura). Se mantiene la regla "solo cuenta lo facturado" usando `FACTURADO=true` + `DESPACHADOS` (= `CANT_PEDIDO` en 369/398); si MBA3 llenara `FACTURADOS`, tiene prioridad. Un solo lugar: `cantidadFacturada()` en `convenioConsumoMba3.service.js`.
+
+**Diseño:**
+- Migración `006-convenio-movimientos-mba3.sql` (idempotente; replicada en init.sql y en supabase-db-init): tipo `devolucion`; columnas `origen` ('manual'|'mba3') y `referencia_externa`; índice único `(convenio_producto_id, referencia_externa)`; `registrado_por_id` opcional solo para origen mba3; tabla de una fila `comercial_convenio_sync_mba3` (punto cubierto + resultado de la última vuelta).
+- Flujo: `facturas(FECHA_INI,FECHA_FIN)` en trozos de 7 días (solo pedidos de clientes con convenio) → `pedidos-detalle(pedido)` → renglones por (CLIENTE, PRODUCTO) → upsert con referencia `PED:pedido:línea`. Devoluciones: `notascredito` solo concepto `DEVV` (las demás NC — anticipos, saldos a favor — son financieras), cliente sin sufijo `-R0001`, referencia `NC:documento:producto`.
+- Solo líneas de convenio **autorizado**, con cliente y producto codificados y **compra inicial** registrada; solo movimientos con fecha ≥ fecha de la compra inicial. Si dos convenios comparten cliente+producto, gana el de compra inicial más reciente no posterior al movimiento.
+- Idempotencia: volver a correr actualiza o no hace nada (verificado 3 corridas reales); si MBA3 deja de reportar un renglón facturado (FACTURADO vuelve a false) el movimiento automático se retira; nunca toca movimientos manuales.
+- Consumo neto = consumo − devoluciones (modelo, SQL del dashboard y detalle). El ritmo para el estimado sigue siendo el promedio del consumo bruto.
+- Planificador en proceso (`planificadorConsumoMba3.js`, cableado en app.js): apagado por omisión (`CONVENIOS_MBA3_SYNC_ACTIVO=false` en dev/staging/prod; **activarlo es decisión explícita**), revisa cada 30 min, corre una vez al día después de `CONVENIOS_MBA3_SYNC_HORA` (3, hora de México) si aún no hubo vuelta exitosa hoy; tras fallo espera ≥60 min (el login de MBA3 bloquea 15 min tras 5 fallos); candado consultivo 4601.
+- Endpoints: `GET /api/comercial/convenios/sincronizacion-mba3` (estado, permiso consulta) y `POST` (dispara en segundo plano, 202; `{desde}` opcional para reprocesar histórico; permiso edición).
+- Frontend: el detalle etiqueta "Devolución (resta del consumo)" y "MBA3 (automático)" en vez de usuario.
+
+**Verificación real:** migración aplicada x2 en la BD aislada; con 2 convenios sembrados con cliente/producto reales (y luego borrados) la vuelta contra MBA3 real tardó 14 s para 6 semanas (2 800 facturas revisadas, 6 pedidos consultados); insertó 1 consumo y 1 devolución reales que se cancelan (1152−1152, nota de crédito 1006352), y una 2.ª y 3.ª corrida no duplicaron (3 s con traslape de 5 días). jest portal+comercial 923/923, eslint sin errores nuevos.
+
+**Límites conocidos (decididos por mí, revisables):** el punto cubierto avanza solo; una línea nueva con compra inicial anterior a ese punto no retrocede sola → usar `POST {desde}`. `FACTURADO` parcial usa `DESPACHADOS`. Facturas tipo FACIN (sin pedido) no se consideran. No hay interfaz con botón "Sincronizar ahora" (solo API). No se probó en navegador. Sin revisor/tester separados.
+
+**Puerta:** GO del humano para commit/push/PR/despliegue y para activar `CONVENIOS_MBA3_SYNC_ACTIVO` en staging.

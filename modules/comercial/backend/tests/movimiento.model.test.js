@@ -102,6 +102,53 @@ describe("Movimiento.calcularEstado (lógica pura sobre la lista de movimientos)
   });
 });
 
+describe("Movimiento.calcularEstado — devoluciones (decisión del humano 2026-11-10: se restan del consumo)", () => {
+  it("el consumo neto resta las devoluciones y el stock restante las recupera", async () => {
+    grupo.query.mockResolvedValue({
+      rows: [
+        { tipo: "compra_inicial", cantidad: "1000", fecha_movimiento: "2026-09-01" },
+        { tipo: "consumo", cantidad: "300", fecha_movimiento: "2026-10-01" },
+        { tipo: "consumo", cantidad: "200", fecha_movimiento: "2026-11-01" },
+        { tipo: "devolucion", cantidad: "100", fecha_movimiento: "2026-11-05" },
+      ],
+    });
+    const estado = await Movimiento.calcularEstado(5);
+    expect(estado.stock_consumido).toBe(400);
+    expect(estado.stock_restante).toBe(600);
+    // El ritmo sigue siendo el promedio del consumo facturado (bruto), no baja por la devolución.
+    expect(estado.movimientos_consumo).toBe(2);
+    expect(estado.ritmo_promedio_real).toBe(250);
+  });
+});
+
+describe("Movimiento.upsertAutomatico / eliminarAutomatico (sincronización MBA3)", () => {
+  it("inserta con origen mba3, sin usuario, con ON CONFLICT por (línea, referencia) y devuelve 'insertado'", async () => {
+    grupo.query.mockResolvedValue({ rows: [{ insertado: true }] });
+    const r = await Movimiento.upsertAutomatico(5, {
+      tipo: "consumo", cantidad: 400, fecha_movimiento: "2026-10-12", comentario: "MBA3: pedido 500", referencia_externa: "PED:500:1",
+    });
+    const [sql, params] = grupo.query.mock.calls[0];
+    expect(sql).toMatch(/'mba3'/);
+    expect(sql).toMatch(/registrado_por_id/);
+    expect(sql).toMatch(/ON CONFLICT \(convenio_producto_id, referencia_externa\) WHERE referencia_externa IS NOT NULL/);
+    expect(params).toEqual([5, "consumo", 400, "2026-10-12", null, "MBA3: pedido 500", "PED:500:1"]);
+    expect(r).toBe("insertado");
+  });
+
+  it("si la fila ya existía y cambió, devuelve 'actualizado'; si no cambió nada (sin fila) 'sin_cambios'", async () => {
+    grupo.query.mockResolvedValueOnce({ rows: [{ insertado: false }] });
+    await expect(Movimiento.upsertAutomatico(5, { tipo: "consumo", cantidad: 1, fecha_movimiento: "2026-10-12", referencia_externa: "A" })).resolves.toBe("actualizado");
+    grupo.query.mockResolvedValueOnce({ rows: [] });
+    await expect(Movimiento.upsertAutomatico(5, { tipo: "consumo", cantidad: 1, fecha_movimiento: "2026-10-12", referencia_externa: "A" })).resolves.toBe("sin_cambios");
+  });
+
+  it("eliminarAutomatico solo borra movimientos de origen mba3", async () => {
+    grupo.query.mockResolvedValue({ rowCount: 1 });
+    await expect(Movimiento.eliminarAutomatico(5, "PED:500:1")).resolves.toBe(true);
+    expect(grupo.query.mock.calls[0][0]).toMatch(/origen = 'mba3'/);
+  });
+});
+
 describe("Movimiento.proyectarEstimado (lógica pura, sin BD)", () => {
   const lineaMensual = { cantidad_periodica: 10, periodo: "mensual" };
   const lineaUnico = { cantidad_periodica: 10, periodo: "unico" };

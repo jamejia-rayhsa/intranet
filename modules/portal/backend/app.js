@@ -4,6 +4,7 @@ const { probarConexion } = require("./config/database");
 const Storage = require("./services/storage.service");
 const { manejadorErrores } = require("./middleware/errores.middleware");
 const { iniciarPlanificadorAsistencia } = require("../../rh/backend/services/asistencia/planificador");
+const { iniciarPlanificadorConsumoMba3 } = require("../../comercial/backend/services/planificadorConsumoMba3");
 const { leerTrustProxy } = require("../../rh/backend/utils/trustProxy");
 const {
   resolverConfigIngesta,
@@ -188,6 +189,14 @@ async function iniciar() {
     console.error(`[Asistencia] no se pudo iniciar el planificador del motor (${(error && (error.code || error.name)) || "Error"})`);
   }
 
+  // Sincronización diaria de consumo de Convenios desde MBA3: solo con CONVENIOS_MBA3_SYNC_ACTIVO=true
+  let planificadorConvenios = { detener: async () => {} };
+  try {
+    planificadorConvenios = iniciarPlanificadorConsumoMba3({ env: process.env });
+  } catch (error) {
+    console.error(`[Convenios] no se pudo iniciar el planificador de consumo (${(error && (error.code || error.name)) || "Error"})`);
+  }
+
   // Cierre ordenado de ambos servidores
   let cerrando = false;
   const apagar = async (senal) => {
@@ -196,6 +205,7 @@ async function iniciar() {
     console.log(`${senal} recibida: cerrando servidores`);
     puerta.detener();
     await planificadorAsistencia.detener().catch(() => {});
+    await planificadorConvenios.detener().catch(() => {});
     await cerrarTodos([principal, puerta.servidor()]);
     process.exit(0);
   };

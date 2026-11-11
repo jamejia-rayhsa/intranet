@@ -716,6 +716,47 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_comercial_convenio_movimientos_compra_inici
   WHERE tipo = 'compra_inicial';
 
 -- ============================================
+-- MÓDULO COMERCIAL: consumo automático desde MBA3 (origen: modules/comercial/backend/migrations/006-convenio-movimientos-mba3.sql)
+-- ============================================
+
+ALTER TABLE comercial_convenio_movimientos
+  DROP CONSTRAINT IF EXISTS comercial_convenio_movimientos_tipo_check;
+ALTER TABLE comercial_convenio_movimientos
+  ADD CONSTRAINT comercial_convenio_movimientos_tipo_check
+  CHECK (tipo IN ('compra_inicial', 'consumo', 'devolucion'));
+
+ALTER TABLE comercial_convenio_movimientos
+  ADD COLUMN IF NOT EXISTS origen TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE comercial_convenio_movimientos
+  ADD COLUMN IF NOT EXISTS referencia_externa TEXT;
+
+ALTER TABLE comercial_convenio_movimientos
+  DROP CONSTRAINT IF EXISTS comercial_convenio_movimientos_origen_check;
+ALTER TABLE comercial_convenio_movimientos
+  ADD CONSTRAINT comercial_convenio_movimientos_origen_check
+  CHECK (origen IN ('manual', 'mba3'));
+
+ALTER TABLE comercial_convenio_movimientos ALTER COLUMN registrado_por_id DROP NOT NULL;
+ALTER TABLE comercial_convenio_movimientos
+  DROP CONSTRAINT IF EXISTS comercial_convenio_movimientos_registrado_chk;
+ALTER TABLE comercial_convenio_movimientos
+  ADD CONSTRAINT comercial_convenio_movimientos_registrado_chk
+  CHECK (origen = 'mba3' OR registrado_por_id IS NOT NULL);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_comercial_convenio_movimientos_referencia
+  ON comercial_convenio_movimientos(convenio_producto_id, referencia_externa)
+  WHERE referencia_externa IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS comercial_convenio_sync_mba3 (
+  id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  ultima_fecha_cubierta DATE,
+  ultima_ejecucion TIMESTAMPTZ,
+  ultima_ejecucion_ok TIMESTAMPTZ,
+  ultimo_resultado JSONB
+);
+INSERT INTO comercial_convenio_sync_mba3 (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+-- ============================================
 -- MÓDULO RH: Vacaciones (origen: modules/rh/backend/migrations/002-solicitudes-vacaciones.sql)
 -- ============================================
 CREATE TABLE IF NOT EXISTS tabla_calculo_vacaciones (

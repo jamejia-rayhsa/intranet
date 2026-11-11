@@ -319,3 +319,6 @@
 - [2026-11-10] [coder] → decisions.md — Convenios de compra Fase 5 CERRADA (código): dashboard global (KPIs activos/por vencer 30d/vencidos/sin movimiento 60d), ConveniosDashboard.jsx, BarraProgreso.jsx (componente reutilizable nuevo); verificado contra Postgres real (datos sembrados y limpiados); pendiente PR/merge/despliegue
 - [2026-11-10] orquestador → decisions.md — Despliegue a staging de Convenios Fases 4 y 5 (PR #29, merge 64dc6fd): migración 005 aplicada, front 200, dashboard 401 sin sesión; falta confirmación visual del humano
 - [2026-11-10] [coder] → research.md — Consumo automático desde MBA3: ningún endpoint actual trae cliente+producto+cantidad (facturas solo encabezado; pedidos-detalle/ventas fallan en servidor); se propone endpoint nuevo
+- [2026-11-10] [coder] → research.md — CORRECCIÓN: `pedidos-detalle` SÍ funciona (param `pedido`); `notascredito` trae devoluciones por renglón; `FACTURADOS` siempre 0
+- [2026-11-10] [coder] → decisions.md — Consumo automático de Convenios desde MBA3 construido (migración 006, sincronización diaria, devoluciones restan, planificador apagado por omisión); verificado con MBA3 real en BD aislada; pendiente GO para push/despliegue y para activarlo
+- [2026-11-10] [coder] → code-notes.md — Consumo automático MBA3: trampas (FACTURADOS=0, sufijo -R0001, tope 2000 de paginarTodo, no loguear errores de axios)

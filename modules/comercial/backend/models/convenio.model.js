@@ -99,7 +99,8 @@ const Convenio = {
       LEFT JOIN (
         SELECT p.convenio_id,
                SUM(m.cantidad) FILTER (WHERE m.tipo = 'compra_inicial') AS stock_comprado,
-               SUM(m.cantidad) FILTER (WHERE m.tipo = 'consumo')        AS stock_consumido,
+               COALESCE(SUM(m.cantidad) FILTER (WHERE m.tipo = 'consumo'), 0)
+                 - COALESCE(SUM(m.cantidad) FILTER (WHERE m.tipo = 'devolucion'), 0) AS stock_consumido,
                MAX(m.fecha_movimiento) AS fecha_ultimo_movimiento
         FROM comercial_convenio_productos p
         JOIN comercial_convenio_movimientos m ON m.convenio_producto_id = p.id

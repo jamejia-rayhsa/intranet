@@ -61,6 +61,50 @@ const Movimiento = {
     return res.rows[0];
   },
 
+  // Escritura de la sincronización con MBA3: idempotente por (línea, referencia_externa). Inserta
+  // si no existe; si ya existe y cambió cantidad/fecha (p. ej. se facturó más del mismo renglón de
+  // pedido) lo actualiza; si no cambió nada no devuelve fila. No lleva usuario (origen 'mba3').
+  // Devuelve 'insertado' | 'actualizado' | 'sin_cambios'.
+  async upsertAutomatico(convenioProductoId, datos) {
+    const res = await grupo.query(
+      `
+      INSERT INTO comercial_convenio_movimientos AS m (
+        convenio_producto_id, tipo, cantidad, fecha_movimiento, orden_compra, comentario,
+        registrado_por_id, origen, referencia_externa
+      ) VALUES ($1,$2,$3,$4,$5,$6,NULL,'mba3',$7)
+      ON CONFLICT (convenio_producto_id, referencia_externa) WHERE referencia_externa IS NOT NULL
+      DO UPDATE SET cantidad = EXCLUDED.cantidad,
+                    fecha_movimiento = EXCLUDED.fecha_movimiento,
+                    comentario = EXCLUDED.comentario
+      WHERE m.cantidad IS DISTINCT FROM EXCLUDED.cantidad
+         OR m.fecha_movimiento IS DISTINCT FROM EXCLUDED.fecha_movimiento
+      RETURNING (xmax = 0) AS insertado
+    `,
+      [
+        convenioProductoId,
+        datos.tipo,
+        datos.cantidad,
+        datos.fecha_movimiento,
+        datos.orden_compra || null,
+        datos.comentario || null,
+        datos.referencia_externa,
+      ],
+    );
+    if (!res.rows[0]) return 'sin_cambios';
+    return res.rows[0].insertado ? 'insertado' : 'actualizado';
+  },
+
+  // Si MBA3 deja de reportar un renglón (p. ej. factura cancelada: FACTURADOS vuelve a 0) el
+  // movimiento automático que lo reflejaba se retira. Nunca toca movimientos manuales.
+  async eliminarAutomatico(convenioProductoId, referenciaExterna) {
+    const res = await grupo.query(
+      `DELETE FROM comercial_convenio_movimientos
+       WHERE convenio_producto_id = $1 AND referencia_externa = $2 AND origen = 'mba3'`,
+      [convenioProductoId, referenciaExterna],
+    );
+    return res.rowCount > 0;
+  },
+
   // Decisión del humano (2026-11-10): el ritmo de consumo para el estimado es el promedio REAL de
   // los movimientos de consumo ya registrados; si todavía no hay ninguno, el llamador (que tiene
   // cantidad_periodica/periodo de la línea) decide el respaldo — este cálculo no lo conoce.
@@ -68,13 +112,17 @@ const Movimiento = {
     const movimientos = await Movimiento.listar(convenioProductoId, cliente);
     const compraInicial = movimientos.find((m) => m.tipo === 'compra_inicial') || null;
     const consumos = movimientos.filter((m) => m.tipo === 'consumo');
+    const devoluciones = movimientos.filter((m) => m.tipo === 'devolucion');
 
+    const suma = (lista) => lista.reduce((acc, m) => acc + Number(m.cantidad), 0);
+    const consumoBruto = suma(consumos);
     const stockComprado = compraInicial ? Number(compraInicial.cantidad) : 0;
-    const stockConsumido = consumos.reduce((acc, m) => acc + Number(m.cantidad), 0);
+    // Decisión del humano (2026-11-10): las devoluciones se restan del consumo.
+    const stockConsumido = consumoBruto - suma(devoluciones);
     const stockRestante = stockComprado - stockConsumido;
-    const ritmoPromedioReal = consumos.length
-      ? consumos.reduce((acc, m) => acc + Number(m.cantidad), 0) / consumos.length
-      : null;
+    // El ritmo se mide sobre el consumo facturado (bruto): una devolución corrige el stock, no
+    // significa que el cliente consuma más lento.
+    const ritmoPromedioReal = consumos.length ? consumoBruto / consumos.length : null;
     const ultimoMovimiento = movimientos.length ? movimientos[movimientos.length - 1] : null;
 
     return {

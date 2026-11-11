@@ -123,7 +123,9 @@ describe("Convenio.listarConResumenConsumo — Fase 5 (dashboard): agregado sin 
     expect(params).toBeUndefined();
     expect(sql).toMatch(/America\/Mexico_City/);
     expect(sql).toMatch(/SUM\(m\.cantidad\) FILTER \(WHERE m\.tipo = 'compra_inicial'\)\s+AS stock_comprado/);
-    expect(sql).toMatch(/SUM\(m\.cantidad\) FILTER \(WHERE m\.tipo = 'consumo'\)\s+AS stock_consumido/);
+    // Consumo NETO: consumo menos devoluciones (decisión del humano 2026-11-10).
+    expect(sql).toMatch(/FILTER \(WHERE m\.tipo = 'consumo'\)/);
+    expect(sql).toMatch(/FILTER \(WHERE m\.tipo = 'devolucion'\)\s*,\s*0\)\s+AS stock_consumido/);
     expect(sql).toMatch(/AS dias_para_vencer/);
     expect(sql).toMatch(/AS dias_sin_movimiento/);
     expect(sql).toMatch(/GROUP BY p\.convenio_id/);

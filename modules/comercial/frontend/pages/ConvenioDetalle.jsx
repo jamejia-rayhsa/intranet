@@ -11,7 +11,13 @@ import PageHeader from '../../../portal/frontend/components/PageHeader';
 import TarjetaKPI from '../../../portal/frontend/components/TarjetaKPI';
 import '../styles/comercial.css';
 
-const MOVIMIENTO_VACIO = { cantidad: '', fecha_movimiento: '', orden_compra: '', comentario: '' };
+const ETIQUETA_TIPO_MOVIMIENTO = {
+  compra_inicial: 'Compra inicial',
+  consumo: 'Consumo',
+  devolucion: 'Devolución (resta del consumo)',
+};
+
+const MOVIMIENTO_VACIO ={ cantidad: '', fecha_movimiento: '', orden_compra: '', comentario: '' };
 
 function fmt(n) {
   if (n === null || n === undefined) return '—';
@@ -193,11 +199,15 @@ export default function ConvenioDetalle() {
                   {estado.movimientos.map((m) => (
                     <tr key={m.id}>
                       <td style={{ fontSize: '0.78rem' }}>{String(m.fecha_movimiento).slice(0, 10)}</td>
-                      <td>{m.tipo === 'compra_inicial' ? 'Compra inicial' : 'Consumo'}</td>
+                      <td>{ETIQUETA_TIPO_MOVIMIENTO[m.tipo] || m.tipo}</td>
                       <td>{fmt(m.cantidad)}</td>
                       <td>{m.orden_compra || '—'}</td>
                       <td>{m.comentario || '—'}</td>
-                      <td>{[m.registrado_por_nombre, m.registrado_por_apellido].filter(Boolean).join(' ') || '—'}</td>
+                      <td>
+                        {m.origen === 'mba3'
+                          ? 'MBA3 (automático)'
+                          : [m.registrado_por_nombre, m.registrado_por_apellido].filter(Boolean).join(' ') || '—'}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

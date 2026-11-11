@@ -1989,3 +1989,12 @@ async actualizar(req, res) {
 - Existe `/v1/admin/endpoints` (los endpoints se definen como consultas sobre fuentes/tablas): crear uno nuevo es viable para quien administre MBA3; nuestra cuenta de servicio es rol `usuario`, no admin.
 
 **Conclusión:** hoy no hay forma de obtener "cliente X compró producto Y, cantidad Z, fecha F" desde MBA3. Hace falta (a) arreglar `pedidos-detalle`/`ventas`, o (b) un endpoint nuevo. Especificación propuesta en el mensaje al humano.
+
+### [2026-11-10] [coder] — CORRECCIÓN: `pedidos-detalle` SÍ funciona (revalidado en vivo)
+
+~~`pedidos-detalle` responde "Error ejecutando la consulta"~~ → **falso positivo mío**: el parámetro obligatorio es `pedido` (único requerido según openapi) y con un número real tomado de `facturas.NUMERO_PEDIDO` (p. ej. 246814) responde con renglones.
+- Campos por renglón: `PEDIDO`, `PEDIDOLINEA`, `FECHA_PEDIDO`, `FECHA_ENTREGA`, `CLIENTE`, `NOMBRE_CLIENTE`, `PRODUCTO`, `NOM_PRODPED`, `CANT_PEDIDO`, `DESPACHADOS`, `POR_DESPACHAR`, `FACTURADOS`, `FACTURADO` (bool), `FACTURA`, `FECHA_FACTURA`, `PRECIO_UNITARIO`, `TOTAL_LINEA`, `MONEDA`, `VENDEDOR_PED`, `MARCA`.
+- Es **por pedido** (no por cliente/rango): flujo viable = `facturas(FECHA_INI, FECHA_FIN)` → por cada `NUMERO_PEDIDO` nuevo → `pedidos-detalle(pedido)` → filtrar por `CLIENTE`+`PRODUCTO` de las líneas de convenio. Idempotencia natural: (`PEDIDO`, `PEDIDOLINEA`).
+- `facturas` usa `FECHA_INI`/`FECHA_FIN` (no `FechaDesde`). Las pruebas fallidas anteriores de `ventas`/`ventas-utilidad` quedan sin revalidar.
+- ~~Pendiente de decidir con el humano: qué cantidad cuenta como consumo (`FACTURADOS` vs `CANT_PEDIDO`), notas de crédito/devoluciones, frecuencia de sincronización.~~ Decidido 2026-11-10: facturados, devoluciones restan, una vez al día (ver decisions.md).
+- **Hallazgo posterior:** `FACTURADOS` vale 0 en 398/398 renglones muestreados (261 con `FACTURADO=true`); `notascredito` (`FECHA_INI`,`FECHA_FIN`) SÍ trae producto y `CANTIDAD` por renglón; solo `CONCEPTO='DEVV'` son devoluciones físicas. `facturas` solo trae tipos FE, ANT y FACIN (FACIN sin pedido).

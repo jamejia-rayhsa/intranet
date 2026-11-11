@@ -18,6 +18,7 @@ describe("convenios.routes: autorización por ruta", () => {
       listar: jest.fn(), obtener: jest.fn(), crear: jest.fn(), actualizar: jest.fn(),
       autorizar: jest.fn(), rechazar: jest.fn(), cancelar: jest.fn(), dashboard: jest.fn(),
     }));
+    jest.doMock("../controllers/sincronizacionMba3.controller", () => ({ estado: jest.fn(), ejecutar: jest.fn() }));
     jest.doMock("../controllers/autorizador.controller", () => ({
       listar: jest.fn(), agregar: jest.fn(), quitar: jest.fn(),
     }));
@@ -46,9 +47,18 @@ describe("convenios.routes: autorización por ruta", () => {
     expect(idxDashboard).toBeLessThan(idxPorId);
   });
 
+  it("consumo MBA3: /convenios/sincronizacion-mba3 (GET) está declarada antes de /convenios/:id", () => {
+    const { router } = montarRouter();
+    const rutasGet = router.stack.filter((l) => l.route && l.route.methods.get).map((l) => l.route.path);
+    expect(rutasGet.indexOf("/convenios/sincronizacion-mba3")).toBeGreaterThanOrEqual(0);
+    expect(rutasGet.indexOf("/convenios/sincronizacion-mba3")).toBeLessThan(rutasGet.indexOf("/convenios/:id"));
+  });
+
   it.each([
     ["/convenios", "get", "consulta"],
     ["/convenios/dashboard", "get", "consulta"],
+    ["/convenios/sincronizacion-mba3", "get", "consulta"],
+    ["/convenios/sincronizacion-mba3", "post", "edicion"],
     ["/convenios/:id", "get", "consulta"],
     ["/convenios", "post", "edicion"],
     ["/convenios/:id", "put", "edicion"],
