@@ -321,4 +321,5 @@
 - [2026-11-10] [coder] → research.md — Consumo automático desde MBA3: ningún endpoint actual trae cliente+producto+cantidad (facturas solo encabezado; pedidos-detalle/ventas fallan en servidor); se propone endpoint nuevo
 - [2026-11-10] [coder] → research.md — CORRECCIÓN: `pedidos-detalle` SÍ funciona (param `pedido`); `notascredito` trae devoluciones por renglón; `FACTURADOS` siempre 0
 - [2026-11-10] [coder] → decisions.md — Consumo automático de Convenios desde MBA3 construido (migración 006, sincronización diaria, devoluciones restan, planificador apagado por omisión); verificado con MBA3 real en BD aislada; pendiente GO para push/despliegue y para activarlo
+- [2026-11-12] orquestador → decisions.md — Despliegue a staging del consumo automático MBA3 (PR #30, merge d73574e): migración 006 aplicada, sitio 200, API 401 sin sesión; sincronización diaria apagada
 - [2026-11-10] [coder] → code-notes.md — Consumo automático MBA3: trampas (FACTURADOS=0, sufijo -R0001, tope 2000 de paginarTodo, no loguear errores de axios)
