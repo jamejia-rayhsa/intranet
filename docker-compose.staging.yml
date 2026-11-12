@@ -71,6 +71,9 @@ services:
       MBA3_LECTURA_CF_ACCESS_CLIENT_SECRET: ${MBA3_LECTURA_CF_ACCESS_CLIENT_SECRET:-}
       # Proxies de confianza para req.ip (lista de IP de las llaves de ingesta): vacío = ninguno
       TRUST_PROXY: ${TRUST_PROXY:-}
+      # Consumo automático de Convenios desde MBA3 (una vez al día, después de CONVENIOS_MBA3_SYNC_HORA hora de México). Apagado por omisión: se activa a propósito con CONVENIOS_MBA3_SYNC_ACTIVO=true
+      CONVENIOS_MBA3_SYNC_ACTIVO: ${CONVENIOS_MBA3_SYNC_ACTIVO:-false}
+      CONVENIOS_MBA3_SYNC_HORA: ${CONVENIOS_MBA3_SYNC_HORA:-3}
       # Motor de análisis de asistencia (planificador en proceso, una vuelta cada ASISTENCIA_MOTOR_INTERVALO_MIN min; el candado de PostgreSQL evita que corra en dos réplicas). Apágalo con ASISTENCIA_MOTOR_ACTIVO=false
       ASISTENCIA_MOTOR_ACTIVO: ${ASISTENCIA_MOTOR_ACTIVO:-true}
       ASISTENCIA_MOTOR_INTERVALO_MIN: ${ASISTENCIA_MOTOR_INTERVALO_MIN:-15}
