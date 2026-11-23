@@ -4,6 +4,7 @@ const ControladorAutorizador = require('../controllers/autorizador.controller');
 const ControladorMba3 = require('../controllers/mba3.controller');
 const ControladorMovimiento = require('../controllers/movimiento.controller');
 const ControladorSincronizacionMba3 = require('../controllers/sincronizacionMba3.controller');
+const ControladorDetalleMba3 = require('../controllers/detalleMba3.controller');
 const { authenticateJWT } = require('../../../portal/backend/middleware/auth.middleware');
 const { verificarPermiso } = require('../../../portal/backend/middleware/permisos.middleware');
 
@@ -44,6 +45,13 @@ router.post(
   '/convenios/:id/productos/:productoId/movimientos',
   verificarPermiso(MODULO, OPCION, 'edicion'),
   ControladorMovimiento.registrar,
+);
+
+// Detalle en vivo desde MBA3: órdenes de compra, facturas y existencias de una línea.
+router.get(
+  '/convenios/:id/productos/:productoId/mba3',
+  verificarPermiso(MODULO, OPCION, 'consulta'),
+  ControladorDetalleMba3.obtener,
 );
 
 router.get('/autorizadores', soloSuperAdmin, ControladorAutorizador.listar);
