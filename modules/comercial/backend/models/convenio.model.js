@@ -88,22 +88,45 @@ const Convenio = {
              (vigente_hasta - ${SQL_HOY_MX}) AS dias_para_vencer,
              uc.nombre AS creado_por_nombre, uc.apellido AS creado_por_apellido,
              (SELECT COUNT(*) FROM comercial_convenio_productos p WHERE p.convenio_id = c.id) AS total_productos,
-             COALESCE(rc.stock_comprado, 0) AS stock_comprado,
-             COALESCE(rc.stock_consumido, 0) AS stock_consumido,
-             rc.fecha_ultimo_movimiento,
-             CASE WHEN rc.fecha_ultimo_movimiento IS NOT NULL
-                  THEN (${SQL_HOY_MX} - rc.fecha_ultimo_movimiento)
+             COALESCE(rc.comprado, 0) AS comprado,
+             COALESCE(rc.vendido, 0) AS vendido,
+             COALESCE(rc.existencia, 0) AS existencia,
+             COALESCE(rc.lineas_calculadas, 0) AS lineas_calculadas,
+             COALESCE(rc.lineas_con_diferencia, 0) AS lineas_con_diferencia,
+             COALESCE(rc.lineas_sin_oc, 0) AS lineas_sin_oc,
+             COALESCE(rc.lineas_sin_facturas, 0) AS lineas_sin_facturas,
+             COALESCE(rc.lineas_con_error, 0) AS lineas_con_error,
+             rc.esperado_plan, rc.ultima_factura, rc.calculado_en,
+             CASE WHEN rc.ultima_factura IS NOT NULL
+                  THEN (${SQL_HOY_MX} - rc.ultima_factura)
                   ELSE NULL END AS dias_sin_movimiento
       FROM comercial_convenios c
       LEFT JOIN usuarios uc ON uc.id = c.creado_por_id
       LEFT JOIN (
+        -- Foto del resumen MBA3 por línea (migración 007), agregada por convenio. El plan esperado
+        -- es cantidad_periodica × periodos transcurridos desde fecha_inicio ('unico' = la cantidad).
         SELECT p.convenio_id,
-               SUM(m.cantidad) FILTER (WHERE m.tipo = 'compra_inicial') AS stock_comprado,
-               COALESCE(SUM(m.cantidad) FILTER (WHERE m.tipo = 'consumo'), 0)
-                 - COALESCE(SUM(m.cantidad) FILTER (WHERE m.tipo = 'devolucion'), 0) AS stock_consumido,
-               MAX(m.fecha_movimiento) AS fecha_ultimo_movimiento
+               SUM(r.comprado) AS comprado,
+               SUM(r.vendido) AS vendido,
+               SUM(r.existencia) AS existencia,
+               COUNT(*) FILTER (WHERE r.error IS NULL) AS lineas_calculadas,
+               COUNT(*) FILTER (WHERE r.error IS NULL
+                                AND ABS(r.existencia - (r.comprado - r.vendido)) > 0.0001) AS lineas_con_diferencia,
+               COUNT(*) FILTER (WHERE r.error IS NULL AND r.ordenes_compra = 0) AS lineas_sin_oc,
+               COUNT(*) FILTER (WHERE r.error IS NULL AND r.facturas = 0) AS lineas_sin_facturas,
+               COUNT(*) FILTER (WHERE r.error IS NOT NULL) AS lineas_con_error,
+               SUM(CASE WHEN r.error IS NULL THEN
+                     CASE p.periodo
+                       WHEN 'unico' THEN p.cantidad_periodica
+                       ELSE p.cantidad_periodica * GREATEST(${SQL_HOY_MX} - c2.fecha_inicio, 1)::numeric
+                            / CASE p.periodo WHEN 'mensual' THEN 30 WHEN 'bimestral' THEN 60 ELSE 90 END
+                     END
+                   END) AS esperado_plan,
+               MAX(r.ultima_factura) AS ultima_factura,
+               MAX(r.calculado_en) AS calculado_en
         FROM comercial_convenio_productos p
-        JOIN comercial_convenio_movimientos m ON m.convenio_producto_id = p.id
+        JOIN comercial_convenios c2 ON c2.id = p.convenio_id
+        JOIN comercial_convenio_resumen_mba3 r ON r.convenio_producto_id = p.id
         GROUP BY p.convenio_id
       ) rc ON rc.convenio_id = c.id
       ORDER BY c.fecha_creacion DESC

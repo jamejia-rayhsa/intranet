@@ -4,12 +4,14 @@
 // se toca aquí: ver la prueba de integración real documentada en code-notes.md).
 jest.mock("../models/convenio.model");
 jest.mock("../models/autorizador.model");
+jest.mock("../services/resumenConveniosMba3.service");
 jest.mock("../../../portal/backend/models/usuario.model");
 jest.mock("../../../auditoria/backend/services/auditoria.service", () => ({
   registrarAccion: jest.fn().mockResolvedValue(null),
 }));
 
 const Convenio = require("../models/convenio.model");
+const ResumenConvenios = require("../services/resumenConveniosMba3.service");
 const Autorizador = require("../models/autorizador.model");
 const Usuario = require("../../../portal/backend/models/usuario.model");
 const { registrarAccion } = require("../../../auditoria/backend/services/auditoria.service");
@@ -184,25 +186,29 @@ describe("ControladorConvenio.listar", () => {
   });
 });
 
+const ESTADO_ACT = { en_curso: false, procesadas: 0, total: 0, ultima_ejecucion: null, ultima_ejecucion_ok: null, ultimo_resultado: null };
+
 describe("ControladorConvenio.dashboard — Fase 5: KPIs (umbrales humanos: 30 días por vencer, 60 sin movimiento)", () => {
+  beforeEach(() => { ResumenConvenios.estado.mockResolvedValue(ESTADO_ACT); });
+
   it("cuenta activos/por_vencer/vencidos/sin_movimientos_recientes según cada caso, sin tocar lo no autorizado", async () => {
     const filas = [
       // No autorizado: no cuenta en ningún KPI (solo en total).
-      { id: 1, estatus: "pendiente_autorizacion", vencido: false, dias_para_vencer: 5, dias_sin_movimiento: null },
+      { id: 1, estatus: "pendiente_autorizacion", vencido: false, dias_para_vencer: 5, calculado_en: "2026-11-23", dias_sin_movimiento: null },
       // Autorizado + vencido: cuenta vencidos, nunca activos/por_vencer/sin_movimiento (aunque calificaría).
-      { id: 2, estatus: "autorizado", vencido: true, dias_para_vencer: -3, dias_sin_movimiento: 100 },
+      { id: 2, estatus: "autorizado", vencido: true, dias_para_vencer: -3, calculado_en: "2026-11-23", dias_sin_movimiento: 100 },
       // Autorizado, no vencido, dentro de la ventana de 30 días -> activos + por_vencer.
-      { id: 3, estatus: "autorizado", vencido: false, dias_para_vencer: 10, dias_sin_movimiento: 5 },
+      { id: 3, estatus: "autorizado", vencido: false, dias_para_vencer: 10, calculado_en: "2026-11-23", dias_sin_movimiento: 5 },
       // Autorizado, no vencido, fuera de la ventana -> activos, no por_vencer.
-      { id: 4, estatus: "autorizado", vencido: false, dias_para_vencer: 40, dias_sin_movimiento: 5 },
+      { id: 4, estatus: "autorizado", vencido: false, dias_para_vencer: 40, calculado_en: "2026-11-23", dias_sin_movimiento: 5 },
       // Autorizado, abierta (sin vigente_hasta) -> activos, no por_vencer (dias_para_vencer null).
-      { id: 5, estatus: "autorizado", vencido: false, dias_para_vencer: null, dias_sin_movimiento: 5 },
+      { id: 5, estatus: "autorizado", vencido: false, dias_para_vencer: null, calculado_en: "2026-11-23", dias_sin_movimiento: 5 },
       // Autorizado, nunca tuvo movimiento (dias_sin_movimiento null) -> cuenta sin_movimientos_recientes.
-      { id: 6, estatus: "autorizado", vencido: false, dias_para_vencer: null, dias_sin_movimiento: null },
+      { id: 6, estatus: "autorizado", vencido: false, dias_para_vencer: null, calculado_en: "2026-11-23", dias_sin_movimiento: null },
       // Autorizado, último movimiento hace exactamente 60 días -> sí cuenta (>=).
-      { id: 7, estatus: "autorizado", vencido: false, dias_para_vencer: null, dias_sin_movimiento: 60 },
+      { id: 7, estatus: "autorizado", vencido: false, dias_para_vencer: null, calculado_en: "2026-11-23", dias_sin_movimiento: 60 },
       // Autorizado, movimiento reciente -> no cuenta.
-      { id: 8, estatus: "autorizado", vencido: false, dias_para_vencer: null, dias_sin_movimiento: 10 },
+      { id: 8, estatus: "autorizado", vencido: false, dias_para_vencer: null, calculado_en: "2026-11-23", dias_sin_movimiento: 10 },
     ];
     Convenio.listarConResumenConsumo.mockResolvedValue(filas);
     const req = {};
@@ -212,8 +218,12 @@ describe("ControladorConvenio.dashboard — Fase 5: KPIs (umbrales humanos: 30 d
     expect(res.json).toHaveBeenCalledWith({
       exito: true,
       datos: {
-        kpis: { total: 8, activos: 6, por_vencer: 1, vencidos: 1, sin_movimientos_recientes: 2 },
-        convenios: filas,
+        kpis: {
+          total: 8, activos: 6, por_vencer: 1, vencidos: 1, sin_movimientos_recientes: 2,
+          lineas_con_diferencia: 0, lineas_sin_oc: 0, lineas_sin_facturas: 0,
+        },
+        convenios: filas.map((c) => ({ ...c, cumplimiento_plan: null })),
+        actualizacion: ESTADO_ACT,
       },
     });
   });
@@ -225,7 +235,14 @@ describe("ControladorConvenio.dashboard — Fase 5: KPIs (umbrales humanos: 30 d
     await Controlador.dashboard(req, res);
     expect(res.json).toHaveBeenCalledWith({
       exito: true,
-      datos: { kpis: { total: 0, activos: 0, por_vencer: 0, vencidos: 0, sin_movimientos_recientes: 0 }, convenios: [] },
+      datos: {
+        kpis: {
+          total: 0, activos: 0, por_vencer: 0, vencidos: 0, sin_movimientos_recientes: 0,
+          lineas_con_diferencia: 0, lineas_sin_oc: 0, lineas_sin_facturas: 0,
+        },
+        convenios: [],
+        actualizacion: ESTADO_ACT,
+      },
     });
   });
 
@@ -539,5 +556,45 @@ describe("ControladorConvenio.cancelar", () => {
     await Controlador.cancelar({ params: { id: "abc" }, user: { usuario_id: 1 } }, res);
     expect(res.status).toHaveBeenCalledWith(400);
     expect(Convenio.obtener).not.toHaveBeenCalled();
+  });
+});
+
+describe("ControladorConvenio.dashboard — datos de MBA3", () => {
+  beforeEach(() => { ResumenConvenios.estado.mockResolvedValue(ESTADO_ACT); });
+
+  it("suma líneas con diferencia / sin OC / sin facturas solo de convenios activos y calcula el cumplimiento", async () => {
+    Convenio.listarConResumenConsumo.mockResolvedValue([
+      { id: 1, estatus: "autorizado", vencido: false, dias_para_vencer: null, dias_sin_movimiento: 5, calculado_en: "x", lineas_con_diferencia: 2, lineas_sin_oc: 1, lineas_sin_facturas: 0, vendido: 50, esperado_plan: 100 },
+      { id: 2, estatus: "autorizado", vencido: true, dias_para_vencer: -1, dias_sin_movimiento: 5, calculado_en: "x", lineas_con_diferencia: 9, lineas_sin_oc: 9, lineas_sin_facturas: 9, vendido: 0, esperado_plan: null },
+      { id: 3, estatus: "autorizado", vencido: false, dias_para_vencer: null, dias_sin_movimiento: null, calculado_en: null, lineas_con_diferencia: 0, lineas_sin_oc: 0, lineas_sin_facturas: 3, vendido: 0, esperado_plan: null },
+    ]);
+    const res = crearRes();
+    await Controlador.dashboard({}, res);
+    const { kpis, convenios } = res.json.mock.calls[0][0].datos;
+    expect(kpis).toMatchObject({ lineas_con_diferencia: 2, lineas_sin_oc: 1, lineas_sin_facturas: 3 });
+    // Sin foto MBA3 todavía (id 3) no cuenta como "sin ventas".
+    expect(kpis.sin_movimientos_recientes).toBe(0);
+    expect(convenios[0].cumplimiento_plan).toBe(0.5);
+    expect(convenios[1].cumplimiento_plan).toBeNull();
+  });
+});
+
+describe("ControladorConvenio.actualizarDashboard", () => {
+  it("202 e inicia el recálculo en segundo plano", async () => {
+    ResumenConvenios.estado.mockResolvedValue(ESTADO_ACT);
+    ResumenConvenios.recalcular.mockResolvedValue({});
+    const res = crearRes();
+    await Controlador.actualizarDashboard({}, res);
+    expect(ResumenConvenios.recalcular).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(202);
+  });
+
+  it("409 si ya hay una actualización en curso", async () => {
+    ResumenConvenios.estado.mockResolvedValue({ ...ESTADO_ACT, en_curso: true });
+    ResumenConvenios.recalcular.mockClear();
+    const res = crearRes();
+    await Controlador.actualizarDashboard({}, res);
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(ResumenConvenios.recalcular).not.toHaveBeenCalled();
   });
 });
