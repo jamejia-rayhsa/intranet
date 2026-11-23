@@ -1581,3 +1581,6 @@ CONFLICTO (decidido por el humano, no por el agente): reemplaza el enfoque "cons
 - Sin copiar datos a nuestra BD: todo en vivo. Primera carga ~14 s (arma caché de inventarios de ~54 almacenes), siguientes <1 s.
 - **Pendiente de retirar** (no hecho, sigue APAGADO en staging): sync diaria `convenioConsumoMba3.service`, `planificadorConsumoMba3`, endpoint `sincronizacion-mba3`. Decidir con el humano si se borra el código.
 - Verificado con MBA3 real (cliente C04649, producto R-033-05-00079): 8 OC (960), 13 facturas (950), existencia 109 → diferencia +99. jest comercial 372/372; build de Vite OK. NO probado en navegador ni desplegado.
+
+### [2026-11-23] [coder] — Retirada del código de sincronización diaria MBA3 (GO del humano)
+Eliminados: `convenioConsumoMba3.service`, `planificadorConsumoMba3`, `sincronizacionMba3.controller/model`, sus rutas `/convenios/sincronizacion-mba3`, el arranque en `app.js`, las variables `CONVENIOS_MBA3_SYNC_*` de los compose y `Movimiento.upsertAutomatico/eliminarAutomatico` (+ tests). Se CONSERVA la migración 006 (ya aplicada en staging; `origen`, `referencia_externa`, tipo `devolucion` y la tabla `comercial_convenio_sync_mba3` quedan sin uso, sin riesgo). Las entradas del 2026-11-10/12 sobre la sync quedan como histórico (obsoletas). jest comercial+portal 888/888.

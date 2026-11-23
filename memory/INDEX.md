@@ -324,3 +324,4 @@
 - [2026-11-12] orquestador → decisions.md — Despliegue a staging del consumo automático MBA3 (PR #30, merge d73574e): migración 006 aplicada, sitio 200, API 401 sin sesión; sincronización diaria apagada
 - [2026-11-10] [coder] → code-notes.md — Consumo automático MBA3: trampas (FACTURADOS=0, sufijo -R0001, tope 2000 de paginarTodo, no loguear errores de axios)
 - [2026-11-23] [coder] → decisions.md — Detalle de convenio en vivo desde MBA3: pestañas OC/facturas/resumen vs existencias (reemplaza consumo automático; sin desplegar)
+- [2026-11-23] [coder] → decisions.md — Código de sync diaria MBA3 retirado (migración 006 se conserva)
