@@ -23,6 +23,7 @@ function soloSuperAdmin(req, res, next) {
 router.get('/convenios', verificarPermiso(MODULO, OPCION, 'consulta'), ControladorConvenio.listar);
 // Fase 5 — antes de '/convenios/:id': de otro modo Express la capturaría como id="dashboard".
 router.get('/convenios/dashboard', verificarPermiso(MODULO, OPCION, 'consulta'), ControladorConvenio.dashboard);
+router.post('/convenios/dashboard/actualizar', verificarPermiso(MODULO, OPCION, 'edicion'), ControladorConvenio.actualizarDashboard);
 router.get('/convenios/:id', verificarPermiso(MODULO, OPCION, 'consulta'), ControladorConvenio.obtener);
 router.post('/convenios', verificarPermiso(MODULO, OPCION, 'edicion'), ControladorConvenio.crear);
 router.put('/convenios/:id', verificarPermiso(MODULO, OPCION, 'edicion'), ControladorConvenio.actualizar);

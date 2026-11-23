@@ -18,6 +18,10 @@ export async function obtenerDashboardConvenios() {
   return solicitar('/comercial/convenios/dashboard');
 }
 
+export async function actualizarDashboardConvenios() {
+  return solicitar('/comercial/convenios/dashboard/actualizar', { method: 'POST' });
+}
+
 export async function crearConvenio(datos) {
   return solicitar('/comercial/convenios', { method: 'POST', body: JSON.stringify(datos) });
 }

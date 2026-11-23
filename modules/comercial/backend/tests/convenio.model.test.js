@@ -122,10 +122,13 @@ describe("Convenio.listarConResumenConsumo — Fase 5 (dashboard): agregado sin 
     const [sql, params] = grupo.query.mock.calls[0];
     expect(params).toBeUndefined();
     expect(sql).toMatch(/America\/Mexico_City/);
-    expect(sql).toMatch(/SUM\(m\.cantidad\) FILTER \(WHERE m\.tipo = 'compra_inicial'\)\s+AS stock_comprado/);
-    // Consumo NETO: consumo menos devoluciones (decisión del humano 2026-11-10).
-    expect(sql).toMatch(/FILTER \(WHERE m\.tipo = 'consumo'\)/);
-    expect(sql).toMatch(/FILTER \(WHERE m\.tipo = 'devolucion'\)\s*,\s*0\)\s+AS stock_consumido/);
+    // Foto MBA3 por línea (migración 007), agregada por convenio.
+    expect(sql).toMatch(/JOIN comercial_convenio_resumen_mba3 r ON r\.convenio_producto_id = p\.id/);
+    expect(sql).toMatch(/SUM\(r\.comprado\) AS comprado/);
+    expect(sql).toMatch(/SUM\(r\.vendido\) AS vendido/);
+    expect(sql).toMatch(/SUM\(r\.existencia\) AS existencia/);
+    expect(sql).toMatch(/AS lineas_con_diferencia/);
+    expect(sql).toMatch(/AS esperado_plan/);
     expect(sql).toMatch(/AS dias_para_vencer/);
     expect(sql).toMatch(/AS dias_sin_movimiento/);
     expect(sql).toMatch(/GROUP BY p\.convenio_id/);

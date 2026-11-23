@@ -16,7 +16,7 @@ describe("convenios.routes: autorización por ruta", () => {
     }));
     jest.doMock("../controllers/convenio.controller", () => ({
       listar: jest.fn(), obtener: jest.fn(), crear: jest.fn(), actualizar: jest.fn(),
-      autorizar: jest.fn(), rechazar: jest.fn(), cancelar: jest.fn(), dashboard: jest.fn(),
+      autorizar: jest.fn(), rechazar: jest.fn(), cancelar: jest.fn(), dashboard: jest.fn(), actualizarDashboard: jest.fn(),
     }));
     jest.doMock("../controllers/autorizador.controller", () => ({
       listar: jest.fn(), agregar: jest.fn(), quitar: jest.fn(),
@@ -49,6 +49,7 @@ describe("convenios.routes: autorización por ruta", () => {
   it.each([
     ["/convenios", "get", "consulta"],
     ["/convenios/dashboard", "get", "consulta"],
+    ["/convenios/dashboard/actualizar", "post", "edicion"],
     ["/convenios/:id", "get", "consulta"],
     ["/convenios", "post", "edicion"],
     ["/convenios/:id", "put", "edicion"],

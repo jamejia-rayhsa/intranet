@@ -4,6 +4,7 @@ const Usuario = require('../../../portal/backend/models/usuario.model');
 const { registrarAccion } = require('../../../auditoria/backend/services/auditoria.service');
 const { idValido, fechaValida, numeroValido } = require('../utils/validacion');
 const Mba3Catalogo = require('../services/mba3Catalogo.service');
+const ResumenConvenios = require('../services/resumenConveniosMba3.service');
 
 // Lista corta validada en el backend (periodo es texto libre en BD, no hay CHECK): cantidad a
 // facturar al cliente por periodo.
@@ -188,12 +189,21 @@ const ControladorConvenio = {
     }
   },
 
-  // Fase 5 — KPIs globales + resumen de consumo por convenio (para la pantalla de dashboard).
+  // Fase 5 — KPIs globales + resumen por convenio. Desde 2026-11-23 el comprado/vendido/existencia
+  // sale de la foto MBA3 guardada por línea (se refresca con POST /convenios/dashboard/actualizar).
   async dashboard(req, res) {
     try {
-      const convenios = await Convenio.listarConResumenConsumo();
+      const filas = await Convenio.listarConResumenConsumo();
+      // Cumplimiento = vendido / plan esperado a la fecha (null si no hay plan calculable).
+      const convenios = filas.map((c) => ({
+        ...c,
+        cumplimiento_plan: Number(c.esperado_plan) > 0 ? Number(c.vendido) / Number(c.esperado_plan) : null,
+      }));
 
-      const kpis = { total: convenios.length, activos: 0, por_vencer: 0, vencidos: 0, sin_movimientos_recientes: 0 };
+      const kpis = {
+        total: convenios.length, activos: 0, por_vencer: 0, vencidos: 0, sin_movimientos_recientes: 0,
+        lineas_con_diferencia: 0, lineas_sin_oc: 0, lineas_sin_facturas: 0,
+      };
       for (const c of convenios) {
         if (c.estatus !== 'autorizado') continue;
         if (c.vencido) {
@@ -204,15 +214,39 @@ const ControladorConvenio = {
         if (c.dias_para_vencer !== null && Number(c.dias_para_vencer) <= DIAS_POR_VENCER) {
           kpis.por_vencer += 1;
         }
-        if (c.dias_sin_movimiento === null || Number(c.dias_sin_movimiento) >= DIAS_SIN_MOVIMIENTO) {
+        // Sin ventas en 60 días (o ninguna): solo si ya hay foto MBA3 de ese convenio.
+        if (c.calculado_en && (c.dias_sin_movimiento === null || Number(c.dias_sin_movimiento) >= DIAS_SIN_MOVIMIENTO)) {
           kpis.sin_movimientos_recientes += 1;
         }
+        kpis.lineas_con_diferencia += Number(c.lineas_con_diferencia) || 0;
+        kpis.lineas_sin_oc += Number(c.lineas_sin_oc) || 0;
+        kpis.lineas_sin_facturas += Number(c.lineas_sin_facturas) || 0;
       }
 
-      return res.json({ exito: true, datos: { kpis, convenios } });
+      const actualizacion = await ResumenConvenios.estado();
+      return res.json({ exito: true, datos: { kpis, convenios, actualizacion } });
     } catch (error) {
       console.error('Error al generar el dashboard de convenios:', error.message);
       return res.status(500).json({ exito: false, mensaje: 'Error al generar el dashboard de convenios' });
+    }
+  },
+
+  // Recalcula en segundo plano la foto MBA3 de todas las líneas (tarda minutos). 202 al iniciar;
+  // 409 si ya hay una corrida en curso.
+  async actualizarDashboard(req, res) {
+    try {
+      const actual = await ResumenConvenios.estado();
+      if (actual.en_curso) {
+        return res.status(409).json({ exito: false, mensaje: 'Ya hay una actualización en curso' });
+      }
+      ResumenConvenios.recalcular().catch((error) => {
+        console.error('Error al actualizar el resumen MBA3 de convenios:', error.message);
+      });
+      await registrarAccion(req, 'comercial', 'comercial_convenio_resumen_mba3', null, 'actualizar', null, null);
+      return res.status(202).json({ exito: true, datos: { iniciado: true } });
+    } catch (error) {
+      console.error('Error al iniciar la actualización del dashboard:', error.message);
+      return res.status(500).json({ exito: false, mensaje: 'Error al iniciar la actualización' });
     }
   },
 
