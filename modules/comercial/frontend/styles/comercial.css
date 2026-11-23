@@ -375,3 +375,15 @@
   border-radius: 6px;
   font-size: 0.85rem;
 }
+
+/* Pestañas del detalle de cada línea de convenio */
+.convenio-pestanas { display: flex; flex-wrap: wrap; gap: 0.25rem; border-bottom: 2px solid var(--color-borde); margin: 0.75rem 0 1rem; }
+.convenio-pestana {
+  background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -2px;
+  padding: 0.5rem 0.9rem; cursor: pointer; color: var(--color-texto-claro); font: inherit; min-height: 40px;
+}
+.convenio-pestana[aria-selected="true"] { color: var(--color-primario); border-bottom-color: var(--color-primario); font-weight: 600; }
+.convenio-pestana:focus-visible { outline: 2px solid var(--color-primario); outline-offset: 2px; }
+.convenio-comparativo { margin-top: 0.75rem; padding: 0.6rem 0.9rem; border-radius: 6px; border: 1px solid var(--color-borde); }
+.convenio-comparativo--ok { border-color: var(--color-exito, #2e7d32); }
+.convenio-comparativo--alerta { border-color: var(--color-advertencia, #ed6c02); }

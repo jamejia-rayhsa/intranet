@@ -74,6 +74,11 @@ export async function obtenerEstadoConsumoConvenio(convenioId) {
   return solicitar(`/comercial/convenios/${convenioId}/consumo`);
 }
 
+// Detalle en vivo desde MBA3: órdenes de compra, facturas, existencias y resumen de una línea.
+export async function obtenerDetalleMba3Linea(convenioId, productoId, { refrescar = false } = {}) {
+  return solicitar(`/comercial/convenios/${convenioId}/productos/${productoId}/mba3${refrescar ? '?refrescar=1' : ''}`);
+}
+
 export async function listarMovimientos(convenioId, productoId) {
   return solicitar(`/comercial/convenios/${convenioId}/productos/${productoId}/movimientos`);
 }
